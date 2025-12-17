@@ -71,7 +71,7 @@ class MainWindow(QMainWindow):
 
         # Create the three panes
         self.tags_pane = TagsPane(self.db)
-        self.notes_list_pane = NotesListPane(self.db)
+        self.notes_list_pane = NotesListPane(self.config, self.db)
         self.note_pane = NotePane(self.db)
 
         # Add panes to splitter

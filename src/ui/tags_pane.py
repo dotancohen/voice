@@ -58,6 +58,7 @@ class TagsPane(QWidget):
         # Create tree view
         self.tree_view = QTreeView()
         self.tree_view.setHeaderHidden(True)  # Hide column header
+        self.tree_view.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)  # Read-only
         self.tree_view.clicked.connect(self.on_tag_clicked)
 
         # Create model

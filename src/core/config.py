@@ -71,6 +71,11 @@ class Config:
             "database_file": str(self.config_dir / "notes.db"),
             "window_geometry": None,
             "implementations": {},  # Future: component implementation selections
+            "themes": {
+                "colours": {
+                    "warnings": "#FFFF00"  # Yellow for highlighting ambiguous tags
+                }
+            },
         }
 
     def save_config(self, config: Dict[str, Any]) -> None:
@@ -115,3 +120,14 @@ class Config:
             Path object pointing to the config directory.
         """
         return self.config_dir
+
+    def get_warning_color(self) -> str:
+        """Get the warning color from config.
+
+        Returns:
+            Hex color string for warnings (default: "#FFFF00" yellow).
+        """
+        try:
+            return self.config_data.get("themes", {}).get("colours", {}).get("warnings", "#FFFF00")
+        except (AttributeError, TypeError):
+            return "#FFFF00"

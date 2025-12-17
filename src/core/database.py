@@ -265,6 +265,142 @@ class Database:
             cursor.execute(query, tag_ids)
             return cursor.fetchall()
 
+    def get_tag(self, tag_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single tag by ID.
+
+        Args:
+            tag_id: Tag ID to retrieve
+
+        Returns:
+            Dictionary with tag data, or None if not found.
+        """
+        query = "SELECT id, name, parent_id FROM tags WHERE id = ?"
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(query, (tag_id,))
+            return cursor.fetchone()
+
+    def get_tags_by_name(self, name: str) -> List[Dict[str, Any]]:
+        """Get all tags with a given name (case-insensitive).
+
+        Args:
+            name: Tag name to search for
+
+        Returns:
+            List of tag dictionaries matching the name.
+        """
+        query = "SELECT id, name, parent_id FROM tags WHERE LOWER(name) = LOWER(?)"
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(query, (name,))
+            return cursor.fetchall()
+
+    def get_tag_by_path(self, path: str) -> Optional[Dict[str, Any]]:
+        """Get a tag by hierarchical path (case-insensitive).
+
+        Args:
+            path: Tag path like "Europe/France/Paris" or just "Work"
+
+        Returns:
+            Dictionary with tag data, or None if path not found.
+        """
+        parts = path.split("/")
+        current_parent_id: Optional[int] = None
+
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            # Find tag with this name and current parent
+            if current_parent_id is None:
+                query = "SELECT id, name, parent_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id IS NULL"
+                params = (part,)
+            else:
+                query = "SELECT id, name, parent_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id = ?"
+                params = (part, current_parent_id)
+
+            with self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+
+                if result is None:
+                    return None
+
+                current_parent_id = result["id"]
+
+        # Return the final tag
+        if current_parent_id is not None:
+            return self.get_tag(current_parent_id)
+
+        return None
+
+    def search_notes(
+        self, text_query: Optional[str] = None, tag_id_groups: Optional[List[List[int]]] = None
+    ) -> List[Dict[str, Any]]:
+        """Search notes by text content and/or tags using AND logic.
+
+        All search criteria are combined with AND logic:
+        - The text query (if provided) AND
+        - Each tag group (note must have at least one tag from each group)
+
+        Tag groups represent hierarchical searches. For example:
+        - tag:Foo expands to [1,2,3] (Foo and descendants)
+        - tag:bar expands to [2] (just bar)
+        - Note must have (1 OR 2 OR 3) AND (2)
+
+        Args:
+            text_query: Text to search in note content (case-insensitive)
+            tag_id_groups: List of tag ID groups - note must have at least one tag from EACH group
+
+        Returns:
+            List of note dictionaries matching ALL criteria.
+        """
+        query = """
+            SELECT DISTINCT
+                n.id,
+                n.created_at,
+                n.content,
+                n.modified_at,
+                n.deleted_at,
+                GROUP_CONCAT(t.name, ', ') as tag_names
+            FROM notes n
+            LEFT JOIN note_tags nt ON n.id = nt.note_id
+            LEFT JOIN tags t ON nt.tag_id = t.id
+            WHERE n.deleted_at IS NULL
+        """
+
+        params: List[Any] = []
+
+        # Add text search condition
+        if text_query and text_query.strip():
+            query += " AND LOWER(n.content) LIKE LOWER(?)"
+            params.append(f"%{text_query}%")
+
+        # Add tag filter condition (AND logic - note must have at least one tag from EACH group)
+        if tag_id_groups:
+            for tag_group in tag_id_groups:
+                if tag_group:  # Skip empty groups
+                    placeholders = ",".join("?" * len(tag_group))
+                    query += f"""
+                        AND EXISTS (
+                            SELECT 1 FROM note_tags
+                            WHERE note_id = n.id AND tag_id IN ({placeholders})
+                        )
+                    """
+                    params.extend(tag_group)
+
+        query += """
+            GROUP BY n.id
+            ORDER BY n.created_at DESC
+        """
+
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(query, params)
+            return cursor.fetchall()
+
     def close(self) -> None:
         """Close the database connection."""
         if self.conn:
