@@ -21,14 +21,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Optional
+
+# Add src to path for both direct execution and module execution
+_src_path = Path(__file__).parent
+if str(_src_path) not in sys.path:
+    sys.path.insert(0, str(_src_path))
 
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
-from src.core.config import Config
-from src.core.database import Database
+from core.config import Config
+from core.database import Database
 
 # Configure logging
 logging.basicConfig(
