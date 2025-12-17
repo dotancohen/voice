@@ -97,6 +97,9 @@ def main() -> NoReturn:
     app = QApplication(sys.argv)
     app.setApplicationName("Voice Rewrite")
 
+    # Close database on application exit
+    app.aboutToQuit.connect(db.close)
+
     # Apply theme using qdarktheme
     theme_stylesheet = qdarktheme.load_stylesheet(theme=args.theme)
     app.setStyleSheet(theme_stylesheet)
