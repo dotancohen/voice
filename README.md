@@ -1,22 +1,24 @@
 # Voice Rewrite
 
-Note-taking application with hierarchical tags, available as both GUI and CLI.
+Note-taking application with hierarchical tags, available as GUI, CLI, and Web API.
 
 ## Features
 - Hierarchical tag system with unlimited nesting
 - **GUI Mode**: Three-pane PySide6 interface
 - **CLI Mode**: Command-line interface with JSON/CSV export
+- **Web API Mode**: RESTful HTTP API with JSON responses
 - SQLite database backend
 - Fully typed Python code
 - Clean architecture with complete core/UI separation
 - Search with tag: syntax and free-text
 - Hierarchical tag filtering (parent includes children)
 - AND logic for multiple search terms
-- Comprehensive test suite (unit + GUI + CLI tests)
+- Comprehensive test suite (unit + GUI + CLI + web tests)
 
 ## Requirements
 - Python 3.10 or higher
-- PySide6 (for GUI mode only)
+- PySide6 (for GUI mode)
+- Flask + Flask-CORS (for Web API mode)
 
 ## Installation
 
@@ -98,13 +100,74 @@ Custom configuration directory (all commands):
 python -m src.cli -d /path/to/config list-notes
 ```
 
+### Web API Mode
+
+Start the Flask web server:
+```bash
+python -m src.web
+```
+
+Server runs on `http://127.0.0.1:5000` by default.
+
+Custom host/port:
+```bash
+python -m src.web --host 0.0.0.0 --port 8080
+```
+
+Enable debug mode:
+```bash
+python -m src.web --debug
+```
+
+**API Endpoints:**
+
+List all notes:
+```bash
+curl http://127.0.0.1:5000/api/notes
+```
+
+Get specific note:
+```bash
+curl http://127.0.0.1:5000/api/notes/1
+```
+
+List all tags:
+```bash
+curl http://127.0.0.1:5000/api/tags
+```
+
+Search notes:
+```bash
+# Search by text
+curl "http://127.0.0.1:5000/api/search?text=meeting"
+
+# Search by tag
+curl "http://127.0.0.1:5000/api/search?tag=Work"
+
+# Search by hierarchical tag
+curl "http://127.0.0.1:5000/api/search?tag=Geography/Europe/France/Paris"
+
+# Multiple tags (AND logic)
+curl "http://127.0.0.1:5000/api/search?tag=Work&tag=Work/Projects"
+
+# Combined text and tags
+curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work"
+```
+
+Health check:
+```bash
+curl http://127.0.0.1:5000/api/health
+```
+
+All endpoints return JSON. CORS is enabled for cross-origin requests.
+
 ## Testing
 
 The test suite is organized by interface type for clean separation:
 - **Unit tests** (`tests/unit/`) - Core functionality, no dependencies
 - **GUI tests** (`tests/gui/`) - GUI components, requires Qt/PySide6
 - **CLI tests** (`tests/cli/`) - Command-line interface
-- **Web tests** (`tests/web/`) - Placeholder for future web API
+- **Web tests** (`tests/web/`) - Flask REST API endpoints
 
 ### Run All Tests
 ```bash
@@ -113,7 +176,7 @@ pytest
 
 ### Run Tests by Type
 ```bash
-# Unit tests only (fast, no UI dependencies)
+# Unit tests only (fast, no dependencies)
 pytest tests/unit
 
 # GUI tests only (requires Qt/PySide6)
@@ -122,14 +185,14 @@ pytest tests/gui
 # CLI tests only
 pytest tests/cli
 
-# Unit tests by marker
-pytest -m unit
+# Web API tests only (Flask)
+pytest tests/web
 
-# GUI tests by marker
-pytest -m gui
-
-# CLI tests by marker
-pytest -m cli
+# By marker
+pytest -m unit   # Unit tests
+pytest -m gui    # GUI tests
+pytest -m cli    # CLI tests
+pytest -m web    # Web API tests
 ```
 
 ### Run with Coverage Report
@@ -227,10 +290,12 @@ Multiple terms are combined with AND logic:
 - `src/core/` - Business logic and data access (zero Qt dependencies)
 - `src/ui/` - GUI components (PySide6)
 - `src/cli.py` - Command-line interface
+- `src/web.py` - Flask REST API
 - `src/main.py` - GUI entry point
 - `tests/unit/` - Core functionality tests
 - `tests/gui/` - GUI integration tests
 - `tests/cli/` - CLI tests
+- `tests/web/` - Web API tests
 - All code is fully typed and documented
 
 ## Architecture
@@ -239,13 +304,13 @@ Multiple terms are combined with AND logic:
 The application has three modes:
 1. **GUI mode** - PySide6 interface (three-pane layout)
 2. **CLI mode** - Command-line interface with JSON/CSV/text output
-3. **Web server mode** (future) - HTTP API
+3. **Web API mode** - Flask REST API with JSON responses
 
-Therefore, `src/core/` has **zero Qt dependencies** and can be imported by CLI/web modes.
+Therefore, `src/core/` has **zero Qt dependencies** and can be imported by all interface modes.
 
 ### Test Organization
-Tests are separated by interface type:
-- `tests/unit/` - Core functionality (database, config)
-- `tests/gui/` - GUI components (requires Qt)
-- `tests/cli/` - CLI commands
-- `tests/web/` - Future web API tests
+Tests are separated by interface type for complete independence:
+- `tests/unit/` - Core functionality (database, config) - 55 tests
+- `tests/gui/` - GUI components (requires Qt) - 49 tests
+- `tests/cli/` - CLI commands (subprocess) - 38 tests
+- `tests/web/` - Web API endpoints (Flask test client) - 38 tests

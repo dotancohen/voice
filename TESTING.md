@@ -2,7 +2,7 @@
 
 ## Test Suite Overview
 
-The Voice Rewrite test suite provides comprehensive coverage across three interfaces: GUI, CLI, and Web (future). Tests are organized by interface type to ensure clean separation and allow independent testing.
+The Voice Rewrite test suite provides comprehensive coverage across three interfaces: GUI, CLI, and Web API. Tests are organized by interface type to ensure clean separation and allow independent testing.
 
 ## Test Structure
 
@@ -24,8 +24,13 @@ tests/
 │   ├── test_cli_list.py            # list-notes, list-tags commands
 │   ├── test_cli_show.py            # show-note command
 │   └── test_cli_search.py          # search command
-└── web/                            # Web API tests (placeholder for future)
-    └── __init__.py
+└── web/                            # Web API tests (Flask REST API)
+    ├── __init__.py
+    ├── conftest.py                  # Web-specific fixtures
+    ├── test_api_notes.py            # GET /api/notes endpoints
+    ├── test_api_tags.py             # GET /api/tags endpoint
+    ├── test_api_search.py           # GET /api/search endpoint
+    └── test_api_general.py          # Health check, CORS, errors
 ```
 
 ## Running Tests
@@ -44,7 +49,7 @@ pytest --cov=src --cov-report=html
 
 ### Selective Testing by Directory
 ```bash
-# Unit tests only (fast, no GUI/CLI dependencies)
+# Unit tests only (fast, no dependencies)
 pytest tests/unit
 
 # GUI tests only (requires Qt/PySide6)
@@ -53,14 +58,20 @@ pytest tests/gui
 # CLI tests only (command-line interface)
 pytest tests/cli
 
+# Web API tests only (Flask REST API)
+pytest tests/web
+
 # Specific test file
 pytest tests/unit/test_database.py
+pytest tests/web/test_api_search.py
 
 # Specific test class
 pytest tests/unit/test_database.py::TestSearchNotes
+pytest tests/web/test_api_search.py::TestSearchText
 
 # Specific test function
 pytest tests/unit/test_database.py::TestSearchNotes::test_text_search_only
+pytest tests/web/test_api_search.py::TestSearchText::test_search_by_text
 
 # Tests matching pattern
 pytest -k "search"
@@ -77,11 +88,14 @@ pytest -m gui
 # Run tests marked as "cli"
 pytest -m cli
 
+# Run tests marked as "web"
+pytest -m web
+
 # Run only core tests (unit tests)
 pytest -m "unit"
 
-# Run all interface tests (GUI + CLI)
-pytest -m "gui or cli"
+# Run all interface tests (GUI + CLI + Web)
+pytest -m "gui or cli or web"
 
 # Skip slow tests
 pytest -m "not slow"
@@ -330,6 +344,73 @@ pytest -m "not slow"
 - ✓ show-note help
 - ✓ list-tags help
 - ✓ search help
+
+### Web API Tests for `src/web.py`
+
+**TestGetNotes** - GET /api/notes endpoint
+- ✓ Get all notes
+- ✓ Notes have required fields
+- ✓ Notes include tags
+- ✓ Notes ordered by created_at
+
+**TestGetNote** - GET /api/notes/<id> endpoint
+- ✓ Get note by ID
+- ✓ Get note includes tags
+- ✓ Get note with Hebrew content
+- ✓ Get nonexistent note returns 404
+- ✓ Invalid ID returns 404
+
+**TestGetTags** - GET /api/tags endpoint
+- ✓ Get all tags
+- ✓ Tags have required fields
+- ✓ Tags include hierarchy info
+- ✓ Tags include all hierarchy levels
+- ✓ JSON serializable
+
+**TestSearchText** - GET /api/search with text queries
+- ✓ Search by text
+- ✓ Case-insensitive search
+- ✓ Hebrew text search
+- ✓ No results handling
+
+**TestSearchTags** - GET /api/search with tag filters
+- ✓ Single tag search
+- ✓ Hierarchical tag paths
+- ✓ Parent includes children
+- ✓ Multiple tags AND logic
+- ✓ Nonexistent tag returns empty
+
+**TestSearchCombined** - combined search
+- ✓ Text and tag
+- ✓ Text and multiple tags
+- ✓ Empty query returns all
+
+**TestSearchResponseFormat** - response format
+- ✓ Returns JSON
+- ✓ Notes have required fields
+- ✓ Response is always a list
+
+**TestHealthCheck** - health check
+- ✓ Health check endpoint
+
+**TestErrorHandling** - error responses
+- ✓ Nonexistent endpoint returns 404
+- ✓ Invalid route returns 404
+
+**TestCORS** - CORS support
+- ✓ CORS headers present
+- ✓ OPTIONS request supported
+
+**TestHTTPMethods** - HTTP method handling
+- ✓ GET method allowed
+- ✓ POST method not allowed (read-only API)
+- ✓ PUT method not allowed
+- ✓ DELETE method not allowed
+
+**TestJSONResponses** - JSON formatting
+- ✓ All responses are JSON
+- ✓ Error responses are JSON
+- ✓ UTF-8 encoding (Hebrew text)
 
 ## Test Data
 
