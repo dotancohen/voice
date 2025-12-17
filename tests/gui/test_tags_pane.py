@@ -16,7 +16,7 @@ from core.database import Database
 from ui.tags_pane import TagsPane
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestTagsPaneInit:
     """Test TagsPane initialization."""
 
@@ -34,7 +34,7 @@ class TestTagsPaneInit:
         assert pane.model.rowCount() > 0
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestTagTreeDisplay:
     """Test tag tree display."""
 
@@ -131,7 +131,7 @@ class TestTagTreeDisplay:
             assert pane.tree_view.isExpanded(first_index)
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestTagSelection:
     """Test tag selection functionality."""
 
@@ -215,7 +215,7 @@ class TestTagSelection:
         assert args[0] == 2
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestTagsPaneReadOnly:
     """Test that tags pane is read-only."""
 

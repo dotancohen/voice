@@ -2,22 +2,30 @@
 
 ## Test Suite Overview
 
-The Voice Rewrite test suite provides comprehensive coverage of both core functionality and UI components using pytest, pytest-qt, and pytest-cov.
+The Voice Rewrite test suite provides comprehensive coverage across three interfaces: GUI, CLI, and Web (future). Tests are organized by interface type to ensure clean separation and allow independent testing.
 
 ## Test Structure
 
 ```
 tests/
 ├── conftest.py                      # Shared fixtures and configuration
-├── unit/                           # Unit tests (no UI)
+├── unit/                           # Unit tests (core functionality, no dependencies)
 │   ├── __init__.py
 │   ├── test_database.py            # Database operations
 │   └── test_config.py              # Configuration management
-└── integration/                    # Integration tests (with Qt)
-    ├── __init__.py
-    ├── test_tags_pane.py           # Tags pane functionality
-    ├── test_notes_list_pane.py     # Notes list and display
-    └── test_search.py              # Complete search flow
+├── gui/                            # GUI integration tests (requires Qt/PySide6)
+│   ├── __init__.py
+│   ├── test_tags_pane.py           # Tags pane functionality
+│   ├── test_notes_list_pane.py     # Notes list and display
+│   └── test_search.py              # Complete search flow
+├── cli/                            # CLI tests (command-line interface)
+│   ├── __init__.py
+│   ├── test_cli_args.py            # Argument parsing
+│   ├── test_cli_list.py            # list-notes, list-tags commands
+│   ├── test_cli_show.py            # show-note command
+│   └── test_cli_search.py          # search command
+└── web/                            # Web API tests (placeholder for future)
+    └── __init__.py
 ```
 
 ## Running Tests
@@ -34,13 +42,16 @@ pytest
 pytest --cov=src --cov-report=html
 ```
 
-### Selective Testing
+### Selective Testing by Directory
 ```bash
-# Unit tests only (fast)
+# Unit tests only (fast, no GUI/CLI dependencies)
 pytest tests/unit
 
-# Integration tests only (requires Qt)
-pytest tests/integration
+# GUI tests only (requires Qt/PySide6)
+pytest tests/gui
+
+# CLI tests only (command-line interface)
+pytest tests/cli
 
 # Specific test file
 pytest tests/unit/test_database.py
@@ -55,13 +66,22 @@ pytest tests/unit/test_database.py::TestSearchNotes::test_text_search_only
 pytest -k "search"
 ```
 
-### Test Markers
+### Selective Testing by Marker
 ```bash
 # Run tests marked as "unit"
 pytest -m unit
 
-# Run tests marked as "integration"
-pytest -m integration
+# Run tests marked as "gui"
+pytest -m gui
+
+# Run tests marked as "cli"
+pytest -m cli
+
+# Run only core tests (unit tests)
+pytest -m "unit"
+
+# Run all interface tests (GUI + CLI)
+pytest -m "gui or cli"
 
 # Skip slow tests
 pytest -m "not slow"
@@ -162,7 +182,7 @@ pytest -m "not slow"
 - ✓ Default themes structure
 - ✓ Database file path is absolute
 
-### Integration Tests for `ui/tags_pane.py`
+### GUI Tests for `ui/tags_pane.py`
 
 **TestTagsPaneInit**
 - ✓ Creates tags pane
@@ -182,7 +202,7 @@ pytest -m "not slow"
 **TestTagsPaneReadOnly**
 - ✓ Tree is not editable (NoEditTriggers)
 
-### Integration Tests for `ui/notes_list_pane.py`
+### GUI Tests for `ui/notes_list_pane.py`
 
 **TestNotesListPaneInit**
 - ✓ Creates notes list pane
@@ -218,7 +238,7 @@ pytest -m "not slow"
 - ✓ Default text color is white
 - ✓ Editing restores white color
 
-### Integration Tests for Search Functionality
+### GUI Tests for Search Functionality
 
 **TestTagSyntax**
 - ✓ Single tag search
@@ -250,6 +270,66 @@ pytest -m "not slow"
 - ✓ Empty search shows all notes
 - ✓ Tag with no matching notes
 - ✓ Conflicting criteria returns nothing
+
+### CLI Tests for `src/cli.py`
+
+**TestListNotes** - list-notes command
+- ✓ Text format output
+- ✓ JSON format output
+- ✓ CSV format output
+- ✓ Empty database handling
+
+**TestListTags** - list-tags command
+- ✓ Text format with hierarchy
+- ✓ JSON format output
+- ✓ CSV format output
+- ✓ Hierarchical indentation
+
+**TestShowNote** - show-note command
+- ✓ Text format output
+- ✓ JSON format output
+- ✓ CSV format output
+- ✓ Show note with tags
+- ✓ Non-existent note error
+- ✓ Hebrew content support
+
+**TestSearchText** - search with text queries
+- ✓ Search by text
+- ✓ Case-insensitive search
+- ✓ Hebrew text search
+- ✓ No results handling
+
+**TestSearchTags** - search with tag filters
+- ✓ Single tag search
+- ✓ Hierarchical tag paths
+- ✓ Parent includes children
+- ✓ Multiple tags AND logic
+- ✓ Non-existent tag warning
+
+**TestSearchCombined** - combined text and tag search
+- ✓ Text and single tag
+- ✓ Text and multiple tags
+
+**TestSearchOutputFormats** - output formats
+- ✓ JSON output
+- ✓ CSV output
+
+**TestCLIArguments** - argument parsing
+- ✓ No command shows help
+- ✓ Help flag
+- ✓ Custom config directory
+- ✓ Invalid command handling
+- ✓ Missing required arguments
+
+**TestCLIOutputFormats** - format options
+- ✓ Invalid format rejection
+- ✓ Format flag positioning
+
+**TestCLISubcommandHelp** - subcommand help
+- ✓ list-notes help
+- ✓ show-note help
+- ✓ list-tags help
+- ✓ search help
 
 ## Test Data
 

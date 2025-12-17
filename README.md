@@ -1,21 +1,22 @@
 # Voice Rewrite
 
-Minimal MVP for note-taking application with hierarchical tags.
+Note-taking application with hierarchical tags, available as both GUI and CLI.
 
 ## Features
-- Hierarchical tag system
-- Three-pane interface (Tags, Notes List, Note Detail)
+- Hierarchical tag system with unlimited nesting
+- **GUI Mode**: Three-pane PySide6 interface
+- **CLI Mode**: Command-line interface with JSON/CSV export
 - SQLite database backend
 - Fully typed Python code
-- Clean architecture with separation of concerns
+- Clean architecture with complete core/UI separation
 - Search with tag: syntax and free-text
 - Hierarchical tag filtering (parent includes children)
 - AND logic for multiple search terms
-- Comprehensive test suite (unit and integration tests)
+- Comprehensive test suite (unit + GUI + CLI tests)
 
 ## Requirements
 - Python 3.10 or higher
-- PySide6
+- PySide6 (for GUI mode only)
 
 ## Installation
 
@@ -39,42 +40,96 @@ pip install -r requirements-dev.txt
 
 ## Usage
 
-### Basic Usage
+### GUI Mode
+
+Launch the graphical interface:
 ```bash
 python -m src.main
 ```
 
-### Custom Configuration Directory
+With custom configuration directory:
 ```bash
 python -m src.main -d /path/to/custom/config
-# or
-python -m src.main --config-dir /path/to/custom/config
 ```
 
-### Future: Implementation Selection (not yet implemented)
-```bash
-# Example: Select media player implementation
-python -m src.main --player=vlc
+### CLI Mode
 
-# Example: Select waveform display implementation
-python -m src.main --waveform=matplotlib
+List all notes:
+```bash
+python -m src.cli list-notes
+python -m src.cli --format json list-notes  # JSON output
+python -m src.cli --format csv list-notes   # CSV output
+```
+
+Show specific note:
+```bash
+python -m src.cli show-note 1
+python -m src.cli --format json show-note 1
+```
+
+List tags (hierarchical):
+```bash
+python -m src.cli list-tags
+```
+
+Search notes:
+```bash
+# Search by text
+python -m src.cli search --text "meeting"
+
+# Search by tag
+python -m src.cli search --tag Work
+
+# Search by hierarchical tag path
+python -m src.cli search --tag Geography/Europe/France/Paris
+
+# Multiple tags (AND logic)
+python -m src.cli search --tag Work --tag Work/Projects
+
+# Combined text and tags
+python -m src.cli search --text "meeting" --tag Work
+
+# JSON output
+python -m src.cli --format json search --tag Personal
+```
+
+Custom configuration directory (all commands):
+```bash
+python -m src.cli -d /path/to/config list-notes
 ```
 
 ## Testing
+
+The test suite is organized by interface type for clean separation:
+- **Unit tests** (`tests/unit/`) - Core functionality, no dependencies
+- **GUI tests** (`tests/gui/`) - GUI components, requires Qt/PySide6
+- **CLI tests** (`tests/cli/`) - Command-line interface
+- **Web tests** (`tests/web/`) - Placeholder for future web API
 
 ### Run All Tests
 ```bash
 pytest
 ```
 
-### Run Unit Tests Only
+### Run Tests by Type
 ```bash
-pytest tests/unit -m unit
-```
+# Unit tests only (fast, no UI dependencies)
+pytest tests/unit
 
-### Run Integration Tests Only
-```bash
-pytest tests/integration -m integration
+# GUI tests only (requires Qt/PySide6)
+pytest tests/gui
+
+# CLI tests only
+pytest tests/cli
+
+# Unit tests by marker
+pytest -m unit
+
+# GUI tests by marker
+pytest -m gui
+
+# CLI tests by marker
+pytest -m cli
 ```
 
 ### Run with Coverage Report
@@ -86,12 +141,13 @@ pytest --cov=src --cov-report=html
 ### Run Specific Test File
 ```bash
 pytest tests/unit/test_database.py
+pytest tests/cli/test_cli_search.py
 ```
 
 ### Run Specific Test Class or Function
 ```bash
 pytest tests/unit/test_database.py::TestSearchNotes
-pytest tests/unit/test_database.py::TestSearchNotes::test_text_search_only
+pytest tests/cli/test_cli_search.py::TestSearchText::test_search_by_text
 ```
 
 ### Test Data
@@ -100,6 +156,8 @@ The test suite uses a pre-populated database with:
 - 6 notes with various tag combinations
 - Hebrew text support testing
 - Multiple notes per tag for comprehensive testing
+
+See `TESTING.md` for detailed test documentation.
 
 ## Development
 
@@ -167,16 +225,27 @@ Multiple terms are combined with AND logic:
 
 ## Project Structure
 - `src/core/` - Business logic and data access (zero Qt dependencies)
-- `src/ui/` - User interface components (PySide6)
-- `tests/` - Test suite (unit and integration tests)
+- `src/ui/` - GUI components (PySide6)
+- `src/cli.py` - Command-line interface
+- `src/main.py` - GUI entry point
+- `tests/unit/` - Core functionality tests
+- `tests/gui/` - GUI integration tests
+- `tests/cli/` - CLI tests
 - All code is fully typed and documented
 
 ## Architecture
 
 ### Critical Design Principle
-The application has three modes (current and future):
-1. **GUI mode** (current) - PySide6 interface
-2. **CLI mode** (future) - Command-line interface
+The application has three modes:
+1. **GUI mode** - PySide6 interface (three-pane layout)
+2. **CLI mode** - Command-line interface with JSON/CSV/text output
 3. **Web server mode** (future) - HTTP API
 
 Therefore, `src/core/` has **zero Qt dependencies** and can be imported by CLI/web modes.
+
+### Test Organization
+Tests are separated by interface type:
+- `tests/unit/` - Core functionality (database, config)
+- `tests/gui/` - GUI components (requires Qt)
+- `tests/cli/` - CLI commands
+- `tests/web/` - Future web API tests

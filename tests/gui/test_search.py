@@ -16,7 +16,7 @@ from core.database import Database
 from ui.notes_list_pane import NotesListPane
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestTagSyntax:
     """Test tag: syntax parsing and search."""
 
@@ -59,7 +59,7 @@ class TestTagSyntax:
             assert pane.list_widget.count() >= 2
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestHierarchicalSearch:
     """Test hierarchical tag search (parent includes children)."""
 
@@ -91,7 +91,7 @@ class TestHierarchicalSearch:
         assert pane.list_widget.count() == 2
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestMultipleTagsAND:
     """Test AND logic for multiple tag terms."""
 
@@ -141,7 +141,7 @@ class TestMultipleTagsAND:
         assert "reunion" in item.text()
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestCombinedSearch:
     """Test combined text and tag search."""
 
@@ -199,7 +199,7 @@ class TestCombinedSearch:
         assert pane.list_widget.count() == 1
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestSearchParsing:
     """Test search input parsing."""
 
@@ -242,7 +242,7 @@ class TestSearchParsing:
         assert free_text == ""
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestSearchEdgeCases:
     """Test edge cases in search functionality."""
 

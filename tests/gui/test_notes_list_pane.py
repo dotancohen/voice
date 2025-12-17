@@ -18,7 +18,7 @@ from core.database import Database
 from ui.notes_list_pane import NotesListPane
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestNotesListPaneInit:
     """Test NotesListPane initialization."""
 
@@ -41,7 +41,7 @@ class TestNotesListPaneInit:
         assert pane.list_widget.count() == 6  # 6 notes in fixture
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestNoteDisplay:
     """Test note display formatting."""
 
@@ -122,7 +122,7 @@ class TestNoteDisplay:
         assert found_hebrew
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestNoteSelection:
     """Test note selection functionality."""
 
@@ -164,7 +164,7 @@ class TestNoteSelection:
         assert args[0] == 1
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestSearchField:
     """Test search field functionality."""
 
@@ -227,7 +227,7 @@ class TestSearchField:
         assert pane.list_widget.count() == 6
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestFreeTextSearch:
     """Test free-text search functionality."""
 
@@ -271,7 +271,7 @@ class TestFreeTextSearch:
         assert "שלום עולם" in item.text()
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestTagFiltering:
     """Test tag filtering from sidebar."""
 
@@ -320,7 +320,7 @@ class TestTagFiltering:
         assert "tag:" in search_text
 
 
-@pytest.mark.integration
+@pytest.mark.gui
 class TestColorManagement:
     """Test search field color management."""
 

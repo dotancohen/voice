@@ -186,7 +186,24 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
 
         db.conn.commit()
 
+    # Create config.json for CLI tests
+    import json
+    config_file = test_db_path.parent / "config.json"
+    config_data = {
+        "database_file": str(test_db_path),
+        "window_geometry": None,
+        "themes": {
+            "dark": {
+                "warning_color": "#FFFF00"
+            }
+        }
+    }
+    with open(config_file, "w") as f:
+        json.dump(config_data, f, indent=2)
+
     yield db
     db.close()
     if test_db_path.exists():
         test_db_path.unlink()
+    if config_file.exists():
+        config_file.unlink()
