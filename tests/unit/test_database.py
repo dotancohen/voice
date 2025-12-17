@@ -60,7 +60,7 @@ class TestGetAllNotes:
     def test_returns_all_notes(self, populated_db: Database) -> None:
         """Test that all non-deleted notes are returned."""
         notes = populated_db.get_all_notes()
-        assert len(notes) == 6
+        assert len(notes) == 8
         assert all("id" in note for note in notes)
         assert all("content" in note for note in notes)
         assert all("created_at" in note for note in notes)
@@ -76,7 +76,7 @@ class TestGetAllNotes:
             )
 
         notes = populated_db.get_all_notes()
-        assert len(notes) == 5
+        assert len(notes) == 7
         assert not any(note["id"] == 1 for note in notes)
 
     def test_returns_empty_for_empty_db(self, empty_db: Database) -> None:
@@ -122,7 +122,7 @@ class TestGetAllTags:
     def test_returns_all_tags(self, populated_db: Database) -> None:
         """Test that all tags are returned."""
         tags = populated_db.get_all_tags()
-        assert len(tags) == 14  # We created 14 tags in fixture
+        assert len(tags) == 18  # We created 18 tags in fixture
 
     def test_returns_hierarchy_info(self, populated_db: Database) -> None:
         """Test that parent_id is included."""
@@ -336,4 +336,4 @@ class TestFilterNotes:
     def test_returns_all_for_empty_list(self, populated_db: Database) -> None:
         """Test that empty tag list returns all notes."""
         notes = populated_db.filter_notes([])
-        assert len(notes) == 6  # All notes
+        assert len(notes) == 8  # All notes

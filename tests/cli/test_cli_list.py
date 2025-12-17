@@ -32,7 +32,7 @@ class TestListNotes:
         assert "ID:" in result.stdout
         assert "Created:" in result.stdout
         # Should show multiple notes
-        assert result.stdout.count("ID:") == 6
+        assert result.stdout.count("ID:") == 8
 
     def test_list_notes_json_format(
         self, test_db_path: Path, populated_db: Database
@@ -52,7 +52,7 @@ class TestListNotes:
         assert result.returncode == 0
         notes = json.loads(result.stdout)
         assert isinstance(notes, list)
-        assert len(notes) == 6
+        assert len(notes) == 8
         assert all("id" in note for note in notes)
         assert all("content" in note for note in notes)
 
@@ -74,7 +74,7 @@ class TestListNotes:
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")
         assert lines[0] == "id,created_at,content,tags"
-        assert len(lines) == 7  # Header + 6 notes
+        assert len(lines) == 9  # Header + 8 notes
 
     def test_list_notes_empty_database(self, test_db_path: Path) -> None:
         """Test listing notes from empty database."""
@@ -134,7 +134,7 @@ class TestListTags:
         assert result.returncode == 0
         tags = json.loads(result.stdout)
         assert isinstance(tags, list)
-        assert len(tags) == 14  # All tags from fixture
+        assert len(tags) == 18  # All tags from fixture
         assert all("id" in tag for tag in tags)
         assert all("name" in tag for tag in tags)
 
@@ -156,7 +156,7 @@ class TestListTags:
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")
         assert lines[0] == "id,name,parent_id"
-        assert len(lines) == 15  # Header + 14 tags
+        assert len(lines) == 19  # Header + 18 tags
 
     def test_list_tags_shows_hierarchy(
         self, test_db_path: Path, populated_db: Database

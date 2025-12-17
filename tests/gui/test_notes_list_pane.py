@@ -38,7 +38,7 @@ class TestNotesListPaneInit:
     ) -> None:
         """Test that notes are loaded on initialization."""
         pane = NotesListPane(test_config, populated_db)
-        assert pane.list_widget.count() == 6  # 6 notes in fixture
+        assert pane.list_widget.count() == 8  # 8 notes in fixture
 
 
 @pytest.mark.gui
@@ -50,7 +50,7 @@ class TestNoteDisplay:
     ) -> None:
         """Test that all notes are displayed."""
         pane = NotesListPane(test_config, populated_db)
-        assert pane.list_widget.count() == 6
+        assert pane.list_widget.count() == 8
 
     def test_note_format_two_lines(
         self, qapp, test_config: Config, populated_db: Database
@@ -183,7 +183,7 @@ class TestSearchField:
         pane = NotesListPane(test_config, populated_db)
 
         # Enter search text
-        pane.search_field.setText("meeting")
+        pane.search_field.setPlainText("meeting")
 
         # Click search button
         pane.search_button.click()
@@ -200,7 +200,7 @@ class TestSearchField:
         pane = NotesListPane(test_config, populated_db)
 
         # Enter search text
-        pane.search_field.setText("reunion")
+        pane.search_field.setPlainText("reunion")
 
         # Simulate Return key
         QTest.keyClick(pane.search_field, Qt.Key.Key_Return)
@@ -215,7 +215,7 @@ class TestSearchField:
         pane = NotesListPane(test_config, populated_db)
 
         # Enter search and execute
-        pane.search_field.setText("meeting")
+        pane.search_field.setPlainText("meeting")
         pane.search_button.click()
         assert pane.list_widget.count() == 1
 
@@ -223,8 +223,8 @@ class TestSearchField:
         pane.clear_button.click()
 
         # Search field should be empty and all notes shown
-        assert pane.search_field.text() == ""
-        assert pane.list_widget.count() == 6
+        assert pane.search_field.toPlainText() == ""
+        assert pane.list_widget.count() == 8
 
 
 @pytest.mark.gui
@@ -237,7 +237,7 @@ class TestFreeTextSearch:
         """Test free-text search in note content."""
         pane = NotesListPane(test_config, populated_db)
 
-        pane.search_field.setText("doctor")
+        pane.search_field.setPlainText("doctor")
         pane.perform_search()
 
         assert pane.list_widget.count() == 1
@@ -253,7 +253,7 @@ class TestFreeTextSearch:
         # Try different cases
         test_cases = ["MEETING", "meeting", "MeEtInG"]
         for query in test_cases:
-            pane.search_field.setText(query)
+            pane.search_field.setPlainText(query)
             pane.perform_search()
             assert pane.list_widget.count() == 1
 
@@ -263,7 +263,7 @@ class TestFreeTextSearch:
         """Test search with Hebrew text."""
         pane = NotesListPane(test_config, populated_db)
 
-        pane.search_field.setText("שלום")
+        pane.search_field.setPlainText("שלום")
         pane.perform_search()
 
         assert pane.list_widget.count() == 1
@@ -285,7 +285,7 @@ class TestTagFiltering:
         pane.filter_by_tag(1)
 
         # Should add to search field and perform search
-        assert "tag:Work" in pane.search_field.text()
+        assert "tag:Work" in pane.search_field.toPlainText()
         # Work has 2 notes directly tagged
         assert pane.list_widget.count() >= 2
 
@@ -309,13 +309,13 @@ class TestTagFiltering:
         pane = NotesListPane(test_config, populated_db)
 
         # Start with text search
-        pane.search_field.setText("reunion")
+        pane.search_field.setPlainText("reunion")
 
         # Click tag
         pane.filter_by_tag(5)  # Personal
 
         # Should have both
-        search_text = pane.search_field.text()
+        search_text = pane.search_field.toPlainText()
         assert "reunion" in search_text
         assert "tag:" in search_text
 
@@ -334,20 +334,106 @@ class TestColorManagement:
     def test_editing_restores_white_color(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
-        """Test that editing search field restores white color."""
+        """Test that editing search field with non-ambiguous text uses plain white text."""
+        from PySide6.QtGui import QColor
         pane = NotesListPane(test_config, populated_db)
 
-        # Simulate yellow highlighting
+        # Enter an ambiguous tag first (should be highlighted)
+        pane.search_field.setPlainText("tag:bar")
+        # Manually trigger the highlighting since setPlainText won't trigger textChanged
+        pane.on_search_field_edited()
+
+        # Check that "tag:bar" has yellow color
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(4)  # Position in "tag:bar"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Now edit to non-ambiguous text (should use plain text with white color)
+        pane.search_field.setPlainText("test")
+        pane.on_search_field_edited()
+
+        # Should be plain text now
+        plain_text = pane.search_field.toPlainText()
+        assert plain_text == "test"
+
+        # Check that all text is white
+        cursor.setPosition(0)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+    def test_warning_color_removed_when_text_becomes_non_ambiguous(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that warning color is removed when ambiguous text is changed to non-ambiguous."""
         from PySide6.QtGui import QColor
-        palette = pane.search_field.palette()
-        palette.setColor(pane.search_field.foregroundRole(), QColor("#FFFF00"))
-        pane.search_field.setPalette(palette)
+        pane = NotesListPane(test_config, populated_db)
 
-        # Edit field (triggers textChanged)
-        pane.search_field.setText("test")
+        # Enter ambiguous tag
+        pane.search_field.setPlainText("tag:bar")
+        pane.on_search_field_edited()
 
-        # Color should be restored to white
-        current_color = pane.search_field.palette().color(
-            pane.search_field.foregroundRole()
-        )
-        assert current_color.name().upper() == "#FFFFFF"
+        # Should be highlighted (check character in the middle of "bar")
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(5)  # Position in "tag:bar"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Change to non-ambiguous tag (Work is unique)
+        pane.search_field.setPlainText("tag:Work")
+        pane.on_search_field_edited()
+
+        # Warning color should be removed - all text should be white
+        cursor.setPosition(5)  # Position in "tag:Work"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+    def test_undo_enabled_in_search_field(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that undo/redo is enabled in search field."""
+        pane = NotesListPane(test_config, populated_db)
+
+        # Verify undo is enabled
+        assert pane.search_field.isUndoRedoEnabled() is True
+
+    def test_typing_in_ambiguous_tag_removes_highlighting_when_becomes_nonexistent(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that typing in an ambiguous tag to make it non-existent removes all highlighting."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Set up: "tag:Foo tag:Boom tag:bar tag:baz"
+        # Only "tag:bar" should be highlighted (ambiguous)
+        pane.search_field.setPlainText("tag:Foo tag:Boom tag:bar tag:baz")
+        pane.on_search_field_edited()
+
+        # Verify "tag:bar" is highlighted (check position in "bar")
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(22)  # Position in "tag:bar"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Verify "tag:Foo" is NOT highlighted (white)
+        cursor.setPosition(4)  # Position in "tag:Foo"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+        # Change "tag:bar" to "tag:baar" (non-existent tag)
+        pane.search_field.setPlainText("tag:Foo tag:Boom tag:baar tag:baz")
+        pane.on_search_field_edited()
+
+        # Verify NO yellow highlighting - all should be white
+        # Check position in "baar"
+        cursor.setPosition(23)  # Position in "tag:baar"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+        # Check position in "Foo"
+        cursor.setPosition(4)  # Position in "tag:Foo"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+        # Verify plain text is correct
+        assert pane.search_field.toPlainText() == "tag:Foo tag:Boom tag:baar tag:baz"

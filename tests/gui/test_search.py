@@ -26,7 +26,7 @@ class TestTagSyntax:
         """Test search with single tag: syntax."""
         pane = NotesListPane(test_config, populated_db)
 
-        pane.search_field.setText("tag:Work")
+        pane.search_field.setPlainText("tag:Work")
         pane.perform_search()
 
         # Should find Work-tagged notes (1, 2)
@@ -38,7 +38,7 @@ class TestTagSyntax:
         """Test tag: with hierarchical path."""
         pane = NotesListPane(test_config, populated_db)
 
-        pane.search_field.setText("tag:Geography/Europe/France/Paris")
+        pane.search_field.setPlainText("tag:Geography/Europe/France/Paris")
         pane.perform_search()
 
         # Should find note 4 (Paris)
@@ -54,7 +54,7 @@ class TestTagSyntax:
 
         test_cases = ["tag:work", "tag:WORK", "tag:WoRk"]
         for query in test_cases:
-            pane.search_field.setText(query)
+            pane.search_field.setPlainText(query)
             pane.perform_search()
             assert pane.list_widget.count() >= 2
 
@@ -71,7 +71,7 @@ class TestHierarchicalSearch:
 
         # Search for Personal (should include Family, Health children)
         # Note 4 has Family, Note 3 has Health, Notes 5 and 6 have Personal
-        pane.search_field.setText("tag:Personal")
+        pane.search_field.setPlainText("tag:Personal")
         pane.perform_search()
 
         # Should find 4 notes (3, 4, 5, 6)
@@ -84,7 +84,7 @@ class TestHierarchicalSearch:
         pane = NotesListPane(test_config, populated_db)
 
         # Search for Geography (root of Europe->France->Paris)
-        pane.search_field.setText("tag:Geography")
+        pane.search_field.setPlainText("tag:Geography")
         pane.perform_search()
 
         # Should find notes 4, 5 (Paris and Israel paths)
@@ -104,7 +104,7 @@ class TestMultipleTagsAND:
         # Search for Work AND Projects
         # Note 1 has Work, Projects, Meetings
         # Note 2 has Work, Projects, VoiceRewrite
-        pane.search_field.setText("tag:Work tag:Work/Projects")
+        pane.search_field.setPlainText("tag:Work tag:Work/Projects")
         pane.perform_search()
 
         # Notes 1 and 2 have both Work and Projects
@@ -118,7 +118,7 @@ class TestMultipleTagsAND:
 
         # Search for Work AND Meetings (child of Work)
         # Note 1 has Work, Projects, Meetings
-        pane.search_field.setText("tag:Work tag:Work/Meetings")
+        pane.search_field.setPlainText("tag:Work tag:Work/Meetings")
         pane.perform_search()
 
         # Should find note 1 only
@@ -132,7 +132,7 @@ class TestMultipleTagsAND:
 
         # Note 4 has Personal (5), Family (6), France (10), Paris (11)
         # Search for three tags it has
-        pane.search_field.setText("tag:Personal tag:Geography tag:Geography/Europe/France/Paris")
+        pane.search_field.setPlainText("tag:Personal tag:Geography tag:Geography/Europe/France/Paris")
         pane.perform_search()
 
         # Should find only note 4
@@ -152,7 +152,7 @@ class TestCombinedSearch:
         pane = NotesListPane(test_config, populated_db)
 
         # Search for "meeting" in Work notes
-        pane.search_field.setText("meeting tag:Work")
+        pane.search_field.setPlainText("meeting tag:Work")
         pane.perform_search()
 
         # Should find only note 1
@@ -168,7 +168,7 @@ class TestCombinedSearch:
 
         # Search for "reunion" in Personal + Geography notes
         # Note 4 has "reunion" and tags Personal, Family, France, Paris
-        pane.search_field.setText("reunion tag:Personal tag:Geography")
+        pane.search_field.setPlainText("reunion tag:Personal tag:Geography")
         pane.perform_search()
 
         # Should find note 4
@@ -180,7 +180,7 @@ class TestCombinedSearch:
         """Test text search with hierarchical tag path."""
         pane = NotesListPane(test_config, populated_db)
 
-        pane.search_field.setText("reunion tag:Geography/Europe/France/Paris")
+        pane.search_field.setPlainText("reunion tag:Geography/Europe/France/Paris")
         pane.perform_search()
 
         # Should find note 4
@@ -193,7 +193,7 @@ class TestCombinedSearch:
         pane = NotesListPane(test_config, populated_db)
 
         # Both words must be in content
-        pane.search_field.setText("Family reunion tag:Personal")
+        pane.search_field.setPlainText("Family reunion tag:Personal")
         pane.perform_search()
 
         assert pane.list_widget.count() == 1
@@ -252,7 +252,7 @@ class TestSearchEdgeCases:
         """Test search with non-existent tag."""
         pane = NotesListPane(test_config, populated_db)
 
-        pane.search_field.setText("tag:NonExistentTag")
+        pane.search_field.setPlainText("tag:NonExistentTag")
         pane.perform_search()
 
         # Should return no results
@@ -265,7 +265,7 @@ class TestSearchEdgeCases:
         pane = NotesListPane(test_config, populated_db)
 
         # Start with filtered view
-        pane.search_field.setText("tag:Work")
+        pane.search_field.setPlainText("tag:Work")
         pane.perform_search()
         assert pane.list_widget.count() < 6
 
@@ -274,7 +274,7 @@ class TestSearchEdgeCases:
         pane.perform_search()
 
         # Should show all notes
-        assert pane.list_widget.count() == 6
+        assert pane.list_widget.count() == 8
 
     def test_tag_with_no_matching_notes(
         self, qapp, test_config: Config, populated_db: Database
@@ -283,7 +283,7 @@ class TestSearchEdgeCases:
         pane = NotesListPane(test_config, populated_db)
 
         # Germany (12) has no notes
-        pane.search_field.setText("tag:Germany")
+        pane.search_field.setPlainText("tag:Germany")
         pane.perform_search()
 
         assert pane.list_widget.count() == 0
@@ -295,7 +295,7 @@ class TestSearchEdgeCases:
         pane = NotesListPane(test_config, populated_db)
 
         # No note has both VoiceRewrite (work child) and Health (personal child)
-        pane.search_field.setText("tag:VoiceRewrite tag:Health")
+        pane.search_field.setPlainText("tag:VoiceRewrite tag:Health")
         pane.perform_search()
 
         assert pane.list_widget.count() == 0

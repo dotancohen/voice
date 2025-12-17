@@ -148,7 +148,7 @@ class TestSearchCombined:
         notes = json.loads(response.data)
 
         # Should return all notes
-        assert len(notes) == 6
+        assert len(notes) == 8
 
 
 @pytest.mark.web

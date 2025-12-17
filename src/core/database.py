@@ -79,7 +79,7 @@ class Database:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tags (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
                     parent_id INTEGER,
                     FOREIGN KEY (parent_id) REFERENCES tags (id) ON DELETE CASCADE,
                     CHECK (parent_id IS NULL OR parent_id != id)
@@ -335,6 +335,72 @@ class Database:
             return self.get_tag(current_parent_id)
 
         return None
+
+    def get_all_tags_by_path(self, path: str) -> List[Dict[str, Any]]:
+        """Get all tags matching a path (case-insensitive).
+
+        This is similar to get_tag_by_path but returns ALL matching tags.
+        For simple names (no '/'), returns all tags with that name.
+        For full paths, returns the specific tag if unique, or all matches if ambiguous.
+
+        Args:
+            path: Tag path like "bar" (could match Foo/bar and Boom/bar) or "Foo/bar" (specific)
+
+        Returns:
+            List of tag dictionaries matching the path. Empty if not found.
+        """
+        parts = path.split("/")
+
+        # If just a simple name (no slashes), return all tags with that name
+        if len(parts) == 1:
+            return self.get_tags_by_name(parts[0].strip())
+
+        # For full paths, navigate through hierarchy
+        # Start with all root tags matching the first part
+        current_tags = []
+        first_part = parts[0].strip()
+
+        query = "SELECT id, name, parent_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id IS NULL"
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(query, (first_part,))
+            current_tags = cursor.fetchall()
+
+        if not current_tags:
+            return []
+
+        # Navigate through remaining parts
+        for part in parts[1:]:
+            part = part.strip()
+            if not part:
+                continue
+
+            next_tags = []
+            for tag in current_tags:
+                query = "SELECT id, name, parent_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id = ?"
+                with self.conn:
+                    cursor = self.conn.cursor()
+                    cursor.execute(query, (part, tag["id"]))
+                    matches = cursor.fetchall()
+                    next_tags.extend(matches)
+
+            current_tags = next_tags
+            if not current_tags:
+                return []
+
+        return current_tags
+
+    def is_tag_name_ambiguous(self, name: str) -> bool:
+        """Check if a tag name is ambiguous (appears more than once).
+
+        Args:
+            name: Tag name to check (without path)
+
+        Returns:
+            True if multiple tags have this name, False otherwise.
+        """
+        tags = self.get_tags_by_name(name)
+        return len(tags) > 1
 
     def search_notes(
         self, text_query: Optional[str] = None, tag_id_groups: Optional[List[List[int]]] = None

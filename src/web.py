@@ -131,6 +131,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
         Query parameters:
             text: Text to search for (optional)
             tag: Tag path to filter by (can specify multiple, AND logic)
+                 Ambiguous tags (matching multiple tags) use OR logic within the group
 
         Returns:
             JSON response with matching notes
@@ -141,14 +142,28 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             tag_paths = request.args.getlist("tag")  # Get all 'tag' parameters
 
             # Build tag_id_groups
+            # For ambiguous tags, all matching tags' descendants go into ONE group (OR logic)
             tag_id_groups: List[List[int]] = []
             any_tag_not_found = False
 
             for tag_path in tag_paths:
-                tag = db.get_tag_by_path(tag_path)
-                if tag:
-                    descendants = db.get_tag_descendants(tag["id"])
-                    tag_id_groups.append(descendants)
+                # Get ALL tags matching this path
+                matching_tags = db.get_all_tags_by_path(tag_path)
+
+                if matching_tags:
+                    # Collect all descendants from all matching tags into ONE group (OR logic)
+                    all_descendants: List[int] = []
+                    for tag in matching_tags:
+                        descendants = db.get_tag_descendants(tag["id"])
+                        all_descendants.extend(descendants)
+
+                    # Remove duplicates
+                    all_descendants = list(set(all_descendants))
+                    tag_id_groups.append(all_descendants)
+
+                    # Log if ambiguous (multiple matches)
+                    if len(matching_tags) > 1:
+                        logger.info(f"Tag '{tag_path}' is ambiguous - matching {len(matching_tags)} tags (using OR logic)")
                 else:
                     logger.warning(f"Tag path '{tag_path}' not found")
                     any_tag_not_found = True

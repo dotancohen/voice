@@ -112,6 +112,10 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         │   └── Germany (12)
         └── Asia (13)
             └── Israel (14)
+        Foo (15)
+        └── bar (16)
+        Boom (17)
+        └── bar (18)
 
     Notes:
         1. "Meeting notes from project kickoff" (Work, Projects, Meetings)
@@ -120,6 +124,8 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         4. "Family reunion in Paris" (Personal, Family, France, Paris)
         5. "Trip to Israel planning" (Personal, Asia, Israel)
         6. "שלום עולם - Hebrew text test" (Personal)
+        7. "Testing ambiguous tag with Foo/bar" (Foo, bar under Foo)
+        8. "Another note with Boom/bar" (Boom, bar under Boom)
 
     Args:
         test_db_path: Path to test database
@@ -148,6 +154,11 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         (12, "Germany", 9),
         (13, "Asia", 8),
         (14, "Israel", 13),
+        # Ambiguous tag test: Two different "bar" tags
+        (15, "Foo", None),
+        (16, "bar", 15),
+        (17, "Boom", None),
+        (18, "bar", 17),
     ]
 
     with db.conn:
@@ -167,6 +178,8 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
             (4, "Family reunion in Paris", [5, 6, 10, 11]),
             (5, "Trip to Israel planning", [5, 13, 14]),
             (6, "שלום עולם - Hebrew text test", [5]),
+            (7, "Testing ambiguous tag with Foo/bar", [15, 16]),
+            (8, "Another note with Boom/bar", [17, 18]),
         ]
 
         for i, (note_id, content, tag_ids) in enumerate(notes):

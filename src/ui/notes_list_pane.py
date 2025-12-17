@@ -10,13 +10,13 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeyEvent, QTextCharFormat, QTextCursor, QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +29,22 @@ logger = logging.getLogger(__name__)
 # Constants
 CONTENT_TRUNCATE_LENGTH = 100
 DEFAULT_TEXT_COLOR = "#FFFFFF"  # White
+
+
+class SearchTextEdit(QTextEdit):
+    """Custom QTextEdit that triggers search on Enter key."""
+
+    returnPressed = Signal()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle key press events."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # Trigger search on Enter, don't insert newline
+            if event.modifiers() == Qt.KeyboardModifier.NoModifier:
+                self.returnPressed.emit()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class NotesListPane(QWidget):
@@ -71,6 +87,7 @@ class NotesListPane(QWidget):
         self.config = config
         self.db = db
         self.warning_color = self.config.get_warning_color()
+        self._updating_search_field = False  # Flag to prevent recursive updates
 
         self.setup_ui()
         self.load_notes()
@@ -85,10 +102,18 @@ class NotesListPane(QWidget):
         # Create search toolbar
         toolbar = QHBoxLayout()
 
-        self.search_field = QLineEdit()
+        self.search_field = SearchTextEdit()
         self.search_field.setPlaceholderText("Search notes... (use tag:tagname for tags)")
-        self.search_field.returnPressed.connect(self.perform_search)
+        self.search_field.setAcceptRichText(False)  # Use plain text to prevent formatting inheritance
+        # Configure as single-line input
+        self.search_field.setMaximumHeight(35)
+        self.search_field.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.search_field.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.search_field.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        # Enable undo/redo functionality
+        self.search_field.setUndoRedoEnabled(True)
         self.search_field.textChanged.connect(self.on_search_field_edited)
+        self.search_field.returnPressed.connect(self.perform_search)
 
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_search)
@@ -167,9 +192,9 @@ class NotesListPane(QWidget):
     def filter_by_tag(self, tag_id: int) -> None:
         """Handle tag selection from sidebar.
 
-        Finds tag name and full path, then adds to search field.
-        If multiple tags share the name, adds all paths with yellow highlighting.
-        If single tag, appends to search and runs search immediately.
+        Adds the clicked tag to search field.
+        If ambiguous (multiple tags with same name): adds full path with yellow highlighting.
+        If not ambiguous (single tag): uses just the tag name and runs search immediately.
 
         Args:
             tag_id: Tag ID from sidebar selection
@@ -183,52 +208,38 @@ class NotesListPane(QWidget):
         tag_name = tag["name"]
         logger.info(f"Sidebar tag clicked: {tag_name} (ID: {tag_id})")
 
-        # Find ALL tags with this name (case-insensitive)
+        # Check if this tag name is ambiguous (appears more than once)
         matching_tags = self.db.get_tags_by_name(tag_name)
+        is_ambiguous = len(matching_tags) > 1
 
-        if len(matching_tags) == 0:
-            logger.warning(f"No tags found matching '{tag_name}'")
-            return
-        elif len(matching_tags) == 1:
-            # Single match: append to search and run immediately
-            tag_path = self._get_tag_full_path(matching_tags[0]["id"])
+        if is_ambiguous:
+            # Tag name is ambiguous: use full path for THIS specific tag
+            tag_path = self._get_tag_full_path(tag_id)
             tag_search = f"tag:{tag_path}"
+            logger.info(f"Tag name '{tag_name}' is ambiguous, using full path: {tag_path}")
 
             # Check if already in search field
-            current_text = self.search_field.text()
+            current_text = self.search_field.toPlainText()
             if tag_search.lower() not in current_text.lower():
                 # Append to search field
                 new_text = f"{current_text} {tag_search}".strip()
-                self.search_field.setText(new_text)
+                self.search_field.setPlainText(new_text)
+
+            # Run search immediately (highlighting will happen in on_search_field_edited)
+            self.perform_search()
+        else:
+            # Tag name is not ambiguous: use just the tag name
+            tag_search = f"tag:{tag_name}"
+
+            # Check if already in search field
+            current_text = self.search_field.toPlainText()
+            if tag_search.lower() not in current_text.lower():
+                # Append to search field
+                new_text = f"{current_text} {tag_search}".strip()
+                self.search_field.setPlainText(new_text)
 
             # Run search immediately
             self.perform_search()
-        else:
-            # Multiple matches: add all paths with yellow highlighting, don't run search
-            logger.info(f"Found {len(matching_tags)} tags named '{tag_name}'")
-
-            current_text = self.search_field.text()
-            new_tags: List[str] = []
-
-            for tag_match in matching_tags:
-                tag_path = self._get_tag_full_path(tag_match["id"])
-                tag_search = f"tag:{tag_path}"
-
-                # Check if already in search field (case-insensitive)
-                if tag_search.lower() not in current_text.lower():
-                    new_tags.append(tag_search)
-
-            if new_tags:
-                # Append new tags
-                all_new_tags = " ".join(new_tags)
-                new_text = f"{current_text} {all_new_tags}".strip()
-                self.search_field.setText(new_text)
-
-                # Highlight the newly added tags in yellow
-                self._highlight_new_tags(new_tags)
-
-                # Focus the search field
-                self.search_field.setFocus()
 
     def _get_tag_full_path(self, tag_id: int) -> str:
         """Get the full hierarchical path for a tag.
@@ -251,23 +262,115 @@ class NotesListPane(QWidget):
 
         return "/".join(path_parts)
 
-    def _highlight_new_tags(self, new_tags: List[str]) -> None:
-        """Highlight newly added tags in the search field with warning color.
+    def on_search_field_edited(self) -> None:
+        """Handle search field text changes and highlight ambiguous tags."""
+        # Prevent recursive updates
+        if self._updating_search_field:
+            return
+
+        self._updating_search_field = True
+        try:
+            # Get plain text to avoid recursive updates
+            text = self.search_field.toPlainText()
+
+            # Parse to find tag terms
+            tag_names, _ = self._parse_search_input(text)
+
+            # Check which tags are ambiguous
+            ambiguous_tag_terms: List[str] = []
+            for tag_name in tag_names:
+                matching_tags = self.db.get_all_tags_by_path(tag_name)
+                if len(matching_tags) > 1:
+                    ambiguous_tag_terms.append(f"tag:{tag_name}")
+
+            # Save cursor position before making changes
+            cursor_position = self.search_field.textCursor().position()
+
+            # Block signals to prevent recursive updates
+            self.search_field.blockSignals(True)
+
+            # Apply highlighting if there are ambiguous tags
+            if ambiguous_tag_terms:
+                self._apply_highlighting(text, ambiguous_tag_terms, cursor_position)
+            else:
+                # No ambiguous tags - ensure all text is white
+                self._clear_all_formatting(text, cursor_position)
+
+            self.search_field.blockSignals(False)
+        finally:
+            self._updating_search_field = False
+
+    def _clear_all_formatting(self, text: str, cursor_position: int) -> None:
+        """Clear all formatting and set text to white.
 
         Args:
-            new_tags: List of tag search strings that were just added
+            text: The text to set
+            cursor_position: Position to restore cursor to
         """
-        # Set text color for the search field
-        palette = self.search_field.palette()
-        palette.setColor(self.search_field.foregroundRole(), QColor(self.warning_color))
-        self.search_field.setPalette(palette)
+        # Set the text
+        self.search_field.setPlainText(text)
 
-    def on_search_field_edited(self) -> None:
-        """Handle search field text changes - restore default color on edit."""
-        # Restore default text color
-        palette = self.search_field.palette()
-        palette.setColor(self.search_field.foregroundRole(), QColor(DEFAULT_TEXT_COLOR))
-        self.search_field.setPalette(palette)
+        # Create white color format for all text
+        white_format = QTextCharFormat()
+        white_format.setForeground(QColor("#FFFFFF"))
+
+        # Apply white color to entire document
+        cursor = self.search_field.textCursor()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.setCharFormat(white_format)
+
+        # Restore cursor position
+        cursor.clearSelection()
+        cursor.setPosition(min(cursor_position, len(text)))
+        self.search_field.setTextCursor(cursor)
+
+    def _apply_highlighting(self, text: str, ambiguous_terms: List[str], cursor_position: int) -> None:
+        """Apply yellow highlighting to ambiguous tag terms in the search field.
+
+        Args:
+            text: The full search text
+            ambiguous_terms: List of ambiguous tag terms (e.g., ["tag:bar"])
+            cursor_position: Position to restore cursor to
+        """
+        # Set the plain text first
+        self.search_field.setPlainText(text)
+
+        # Create text formats
+        white_format = QTextCharFormat()
+        white_format.setForeground(QColor("#FFFFFF"))
+
+        yellow_format = QTextCharFormat()
+        yellow_format.setForeground(QColor(self.warning_color))
+
+        # Get cursor for formatting
+        cursor = self.search_field.textCursor()
+
+        # First, set all text to white
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.setCharFormat(white_format)
+
+        # Find and highlight ambiguous terms
+        text_lower = text.lower()
+        for term in ambiguous_terms:
+            term_lower = term.lower()
+            pos = 0
+            while True:
+                # Find next occurrence of this term (case-insensitive)
+                idx = text_lower.find(term_lower, pos)
+                if idx == -1:
+                    break
+
+                # Select the match and apply yellow format
+                cursor.setPosition(idx)
+                cursor.setPosition(idx + len(term), QTextCursor.MoveMode.KeepAnchor)
+                cursor.setCharFormat(yellow_format)
+
+                pos = idx + len(term)
+
+        # Restore cursor position
+        cursor.clearSelection()
+        cursor.setPosition(min(cursor_position, len(text)))
+        self.search_field.setTextCursor(cursor)
 
     def clear_search(self) -> None:
         """Clear the search field and show all notes."""
@@ -279,30 +382,49 @@ class NotesListPane(QWidget):
         """Perform search based on search field content.
 
         Parses tag: keywords and free text, then searches database.
+        Ambiguous tags (matching multiple tags) use OR logic within the group.
         """
-        search_text = self.search_field.text().strip()
+        search_text = self.search_field.toPlainText().strip()
         logger.info(f"Performing search: '{search_text}'")
 
         # Parse search input
         tag_names, free_text = self._parse_search_input(search_text)
 
         # Collect tag ID groups (each tag term with its descendants is one group)
+        # For ambiguous tags, all matching tags' descendants go into ONE group (OR logic)
         tag_id_groups: List[List[int]] = []
         any_tag_not_found = False
 
         for tag_name in tag_names:
-            # Get tag by path (handles hierarchical paths like Europe/France/Paris)
-            tag = self.db.get_tag_by_path(tag_name)
-            if tag:
-                # Get this tag and all descendants as a group
-                descendants = self.db.get_tag_descendants(tag["id"])
-                tag_id_groups.append(descendants)
-                logger.info(
-                    f"Tag '{tag_name}' matched {len(descendants)} tags (including descendants)"
-                )
+            # Get ALL tags matching this path (handles hierarchical paths and ambiguous names)
+            matching_tags = self.db.get_all_tags_by_path(tag_name)
+
+            if matching_tags:
+                # Collect all descendants from all matching tags into ONE group (OR logic)
+                all_descendants: List[int] = []
+                for tag in matching_tags:
+                    descendants = self.db.get_tag_descendants(tag["id"])
+                    all_descendants.extend(descendants)
+
+                # Remove duplicates
+                all_descendants = list(set(all_descendants))
+                tag_id_groups.append(all_descendants)
+
+                # Check if ambiguous (multiple matches)
+                if len(matching_tags) > 1:
+                    logger.info(
+                        f"Tag '{tag_name}' is ambiguous - matched {len(matching_tags)} tags, "
+                        f"total {len(all_descendants)} tag IDs with descendants (OR logic)"
+                    )
+                else:
+                    logger.info(
+                        f"Tag '{tag_name}' matched {len(all_descendants)} tags (including descendants)"
+                    )
             else:
                 logger.warning(f"Tag path '{tag_name}' not found")
                 any_tag_not_found = True
+
+        # Note: Highlighting of ambiguous tags is now handled in on_search_field_edited()
 
         # If any requested tag was not found, return empty results
         if any_tag_not_found:
