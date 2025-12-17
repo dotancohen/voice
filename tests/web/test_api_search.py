@@ -148,7 +148,7 @@ class TestSearchCombined:
         notes = json.loads(response.data)
 
         # Should return all notes
-        assert len(notes) == 8
+        assert len(notes) == 9
 
 
 @pytest.mark.web
@@ -182,3 +182,56 @@ class TestSearchResponseFormat:
         # Search with no results
         response2 = client.get("/api/search?tag=NonExistent")
         assert isinstance(json.loads(response2.data), list)
+
+
+@pytest.mark.web
+class TestAmbiguousTagAPISearch:
+    """Test API search with ambiguous tag names (multiple tags with same name)."""
+
+    def test_search_ambiguous_paris_finds_both_locations(self, client: FlaskClient) -> None:
+        """Test that ambiguous 'Paris' search finds notes from both France and Texas."""
+        response = client.get("/api/search?tag=Paris")
+
+        assert response.status_code == 200
+        notes = json.loads(response.data)
+
+        # Should find notes 4 (France Paris) and 9 (Texas Paris)
+        assert len(notes) == 2
+        contents = [n["content"] for n in notes]
+        assert any("reunion" in content for content in contents)
+        assert any("Cowboys" in content for content in contents)
+
+    def test_search_full_path_france_paris_finds_one(self, client: FlaskClient) -> None:
+        """Test that full path 'Geography/Europe/France/Paris' finds only France Paris."""
+        response = client.get("/api/search?tag=Geography/Europe/France/Paris")
+
+        assert response.status_code == 200
+        notes = json.loads(response.data)
+
+        # Should find only note 4 (France Paris)
+        assert len(notes) == 1
+        assert "reunion" in notes[0]["content"]
+
+    def test_search_full_path_texas_paris_finds_one(self, client: FlaskClient) -> None:
+        """Test that full path 'Geography/US/Texas/Paris' finds only Texas Paris."""
+        response = client.get("/api/search?tag=Geography/US/Texas/Paris")
+
+        assert response.status_code == 200
+        notes = json.loads(response.data)
+
+        # Should find only note 9 (Texas Paris)
+        assert len(notes) == 1
+        assert "Cowboys" in notes[0]["content"]
+
+    def test_search_ambiguous_bar_finds_both(self, client: FlaskClient) -> None:
+        """Test that ambiguous 'Bar' search finds notes from both Foo/Bar and Boom/Bar."""
+        response = client.get("/api/search?tag=Bar")
+
+        assert response.status_code == 200
+        notes = json.loads(response.data)
+
+        # Should find notes 7 (Foo/Bar) and 8 (Boom/Bar)
+        assert len(notes) == 2
+        contents = [n["content"] for n in notes]
+        assert any("Testing ambiguous tag with Foo/bar" in content for content in contents)
+        assert any("Another note with Boom/bar" in content for content in contents)

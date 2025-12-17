@@ -83,12 +83,12 @@ class TestHierarchicalSearch:
         """Test that parent includes deeply nested children."""
         pane = NotesListPane(test_config, populated_db)
 
-        # Search for Geography (root of Europe->France->Paris)
+        # Search for Geography (root of Europe->France->Paris, Asia->Israel, US->Texas->Paris)
         pane.search_field.setPlainText("tag:Geography")
         pane.perform_search()
 
-        # Should find notes 4, 5 (Paris and Israel paths)
-        assert pane.list_widget.count() == 2
+        # Should find notes 4, 5, 9 (France Paris, Israel, Texas Paris paths)
+        assert pane.list_widget.count() == 3
 
 
 @pytest.mark.gui
@@ -274,7 +274,7 @@ class TestSearchEdgeCases:
         pane.perform_search()
 
         # Should show all notes
-        assert pane.list_widget.count() == 8
+        assert pane.list_widget.count() == 9
 
     def test_tag_with_no_matching_notes(
         self, qapp, test_config: Config, populated_db: Database
@@ -299,3 +299,70 @@ class TestSearchEdgeCases:
         pane.perform_search()
 
         assert pane.list_widget.count() == 0
+
+
+@pytest.mark.gui
+class TestAmbiguousTagSearch:
+    """Test search with ambiguous tag names (multiple tags with same name)."""
+
+    def test_search_ambiguous_paris_finds_both_locations(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that ambiguous 'Paris' search finds notes from both France and Texas."""
+        pane = NotesListPane(test_config, populated_db)
+
+        # Search for ambiguous "Paris" - should match both locations with OR logic
+        pane.search_field.setPlainText("tag:Paris")
+        pane.perform_search()
+
+        # Should find notes 4 (France Paris) and 9 (Texas Paris)
+        assert pane.list_widget.count() == 2
+        texts = [pane.list_widget.item(i).text() for i in range(pane.list_widget.count())]
+        assert any("reunion" in text for text in texts)  # Note 4
+        assert any("Cowboys" in text for text in texts)  # Note 9
+
+    def test_search_full_path_france_paris_finds_one(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that full path 'Geography/Europe/France/Paris' finds only France Paris."""
+        pane = NotesListPane(test_config, populated_db)
+
+        # Use full path to disambiguate
+        pane.search_field.setPlainText("tag:Geography/Europe/France/Paris")
+        pane.perform_search()
+
+        # Should find only note 4 (France Paris)
+        assert pane.list_widget.count() == 1
+        item_text = pane.list_widget.item(0).text()
+        assert "reunion" in item_text
+
+    def test_search_full_path_texas_paris_finds_one(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that full path 'Geography/US/Texas/Paris' finds only Texas Paris."""
+        pane = NotesListPane(test_config, populated_db)
+
+        # Use full path to disambiguate
+        pane.search_field.setPlainText("tag:Geography/US/Texas/Paris")
+        pane.perform_search()
+
+        # Should find only note 9 (Texas Paris)
+        assert pane.list_widget.count() == 1
+        item_text = pane.list_widget.item(0).text()
+        assert "Cowboys" in item_text
+
+    def test_search_ambiguous_bar_finds_both(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that ambiguous 'Bar' search finds notes from both Foo/Bar and Boom/Bar."""
+        pane = NotesListPane(test_config, populated_db)
+
+        # Search for ambiguous "Bar"
+        pane.search_field.setPlainText("tag:Bar")
+        pane.perform_search()
+
+        # Should find notes 7 (Foo/Bar) and 8 (Boom/Bar)
+        assert pane.list_widget.count() == 2
+        texts = [pane.list_widget.item(i).text() for i in range(pane.list_widget.count())]
+        assert any("Testing ambiguous tag with Foo/bar" in text for text in texts)  # Note 7
+        assert any("Another note with Boom/bar" in text for text in texts)  # Note 8

@@ -275,3 +275,110 @@ class TestSearchOutputFormats:
         lines = result.stdout.strip().split("\n")
         assert lines[0] == "id,created_at,content,tags"
         assert "Doctor" in result.stdout
+
+
+@pytest.mark.cli
+class TestAmbiguousTagCLISearch:
+    """Test CLI search with ambiguous tag names (multiple tags with same name)."""
+
+    def test_search_ambiguous_paris_finds_both_locations(
+        self, test_db_path: Path, populated_db: Database
+    ) -> None:
+        """Test that ambiguous 'Paris' search finds notes from both France and Texas."""
+        result = subprocess.run(
+            [
+                "python3", "-m", "src.cli",
+                "-d", str(test_db_path.parent),
+                "search", "--tag", "Paris"
+            ],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        # Should find notes 4 (France Paris) and 9 (Texas Paris)
+        assert "reunion" in result.stdout
+        assert "Cowboys" in result.stdout
+        assert "Found 2 note(s)" in result.stdout
+
+    def test_search_full_path_france_paris_finds_one(
+        self, test_db_path: Path, populated_db: Database
+    ) -> None:
+        """Test that full path 'Geography/Europe/France/Paris' finds only France Paris."""
+        result = subprocess.run(
+            [
+                "python3", "-m", "src.cli",
+                "-d", str(test_db_path.parent),
+                "search", "--tag", "Geography/Europe/France/Paris"
+            ],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        # Should find only note 4 (France Paris)
+        assert "reunion" in result.stdout
+        assert "Cowboys" not in result.stdout
+        assert "Found 1 note(s)" in result.stdout
+
+    def test_search_full_path_texas_paris_finds_one(
+        self, test_db_path: Path, populated_db: Database
+    ) -> None:
+        """Test that full path 'Geography/US/Texas/Paris' finds only Texas Paris."""
+        result = subprocess.run(
+            [
+                "python3", "-m", "src.cli",
+                "-d", str(test_db_path.parent),
+                "search", "--tag", "Geography/US/Texas/Paris"
+            ],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        # Should find only note 9 (Texas Paris)
+        assert "Cowboys" in result.stdout
+        assert "reunion" not in result.stdout
+        assert "Found 1 note(s)" in result.stdout
+
+    def test_search_ambiguous_bar_finds_both(
+        self, test_db_path: Path, populated_db: Database
+    ) -> None:
+        """Test that ambiguous 'Bar' search finds notes from both Foo/Bar and Boom/Bar."""
+        result = subprocess.run(
+            [
+                "python3", "-m", "src.cli",
+                "-d", str(test_db_path.parent),
+                "search", "--tag", "Bar"
+            ],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        # Should find notes 7 (Foo/Bar) and 8 (Boom/Bar)
+        assert "Testing ambiguous tag with Foo/bar" in result.stdout
+        assert "Another note with Boom/bar" in result.stdout
+        assert "Found 2 note(s)" in result.stdout
+
+    def test_search_ambiguous_paris_with_text(
+        self, test_db_path: Path, populated_db: Database
+    ) -> None:
+        """Test ambiguous tag search combined with text search."""
+        result = subprocess.run(
+            [
+                "python3", "-m", "src.cli",
+                "-d", str(test_db_path.parent),
+                "search",
+                "--text", "Cowboys",
+                "--tag", "Paris"
+            ],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        # Should find only note 9 (Texas Paris with "Cowboys")
+        assert "Cowboys" in result.stdout
+        assert "reunion" not in result.stdout
+        assert "Found 1 note(s)" in result.stdout

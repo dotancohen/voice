@@ -60,7 +60,7 @@ class TestGetAllNotes:
     def test_returns_all_notes(self, populated_db: Database) -> None:
         """Test that all non-deleted notes are returned."""
         notes = populated_db.get_all_notes()
-        assert len(notes) == 8
+        assert len(notes) == 9
         assert all("id" in note for note in notes)
         assert all("content" in note for note in notes)
         assert all("created_at" in note for note in notes)
@@ -76,7 +76,7 @@ class TestGetAllNotes:
             )
 
         notes = populated_db.get_all_notes()
-        assert len(notes) == 7
+        assert len(notes) == 8  # 9 notes - 1 deleted
         assert not any(note["id"] == 1 for note in notes)
 
     def test_returns_empty_for_empty_db(self, empty_db: Database) -> None:
@@ -122,7 +122,7 @@ class TestGetAllTags:
     def test_returns_all_tags(self, populated_db: Database) -> None:
         """Test that all tags are returned."""
         tags = populated_db.get_all_tags()
-        assert len(tags) == 18  # We created 18 tags in fixture
+        assert len(tags) == 21  # We created 21 tags in fixture
 
     def test_returns_hierarchy_info(self, populated_db: Database) -> None:
         """Test that parent_id is included."""
@@ -336,4 +336,97 @@ class TestFilterNotes:
     def test_returns_all_for_empty_list(self, populated_db: Database) -> None:
         """Test that empty tag list returns all notes."""
         notes = populated_db.filter_notes([])
-        assert len(notes) == 8  # All notes
+        assert len(notes) == 9  # All notes
+
+
+class TestAmbiguousTagHandling:
+    """Test handling of ambiguous tag names (same name, different hierarchy)."""
+
+    def test_get_tags_by_name_finds_multiple_paris(self, populated_db: Database) -> None:
+        """Test that get_tags_by_name finds both Paris tags."""
+        tags = populated_db.get_tags_by_name("Paris")
+        assert len(tags) == 2
+
+        # Should find both Paris tags
+        tag_ids = {tag["id"] for tag in tags}
+        assert 11 in tag_ids  # France/Paris
+        assert 21 in tag_ids  # Texas/Paris
+
+    def test_get_tags_by_name_finds_multiple_bar(self, populated_db: Database) -> None:
+        """Test that get_tags_by_name finds both bar tags."""
+        tags = populated_db.get_tags_by_name("bar")
+        assert len(tags) == 2
+
+        tag_ids = {tag["id"] for tag in tags}
+        assert 16 in tag_ids  # Foo/bar
+        assert 18 in tag_ids  # Boom/bar
+
+    def test_get_all_tags_by_path_with_ambiguous_paris(self, populated_db: Database) -> None:
+        """Test get_all_tags_by_path returns both Paris tags when searching for 'Paris'."""
+        tags = populated_db.get_all_tags_by_path("Paris")
+        assert len(tags) == 2
+
+        tag_ids = {tag["id"] for tag in tags}
+        assert 11 in tag_ids  # France/Paris
+        assert 21 in tag_ids  # Texas/Paris
+
+    def test_get_all_tags_by_path_with_full_path_france_paris(self, populated_db: Database) -> None:
+        """Test get_all_tags_by_path with full path returns only France/Paris."""
+        tags = populated_db.get_all_tags_by_path("Geography/Europe/France/Paris")
+        assert len(tags) == 1
+        assert tags[0]["id"] == 11
+        assert tags[0]["name"] == "Paris"
+
+    def test_get_all_tags_by_path_with_full_path_texas_paris(self, populated_db: Database) -> None:
+        """Test get_all_tags_by_path with full path returns only Texas/Paris."""
+        tags = populated_db.get_all_tags_by_path("Geography/US/Texas/Paris")
+        assert len(tags) == 1
+        assert tags[0]["id"] == 21
+        assert tags[0]["name"] == "Paris"
+
+    def test_search_with_ambiguous_paris_uses_or_logic(self, populated_db: Database) -> None:
+        """Test that searching for ambiguous 'Paris' finds notes from both hierarchies."""
+        # Get descendants for both Paris tags
+        france_paris_descendants = populated_db.get_tag_descendants(11)
+        texas_paris_descendants = populated_db.get_tag_descendants(21)
+
+        # Search with just "Paris" - should use OR logic
+        notes = populated_db.search_notes(
+            tag_id_groups=[france_paris_descendants + texas_paris_descendants]
+        )
+
+        # Should find note 4 (France/Paris) and note 9 (Texas/Paris)
+        assert len(notes) == 2
+        note_ids = {n["id"] for n in notes}
+        assert 4 in note_ids  # Family reunion in Paris (France)
+        assert 9 in note_ids  # Cowboys in Paris, Texas
+
+    def test_search_with_specific_france_paris_path(self, populated_db: Database) -> None:
+        """Test searching with full France/Paris path finds only French Paris note."""
+        # Get the specific France/Paris tag
+        tags = populated_db.get_all_tags_by_path("Geography/Europe/France/Paris")
+        assert len(tags) == 1
+        france_paris_id = tags[0]["id"]
+
+        # Search with this specific tag
+        descendants = populated_db.get_tag_descendants(france_paris_id)
+        notes = populated_db.search_notes(tag_id_groups=[descendants])
+
+        # Should find only note 4
+        assert len(notes) == 1
+        assert notes[0]["id"] == 4
+        assert "Family reunion" in notes[0]["content"]
+
+    def test_search_with_specific_texas_paris_path(self, populated_db: Database) -> None:
+        """Test searching with full Texas/Paris path finds only Texas Paris note."""
+        tags = populated_db.get_all_tags_by_path("Geography/US/Texas/Paris")
+        assert len(tags) == 1
+        texas_paris_id = tags[0]["id"]
+
+        descendants = populated_db.get_tag_descendants(texas_paris_id)
+        notes = populated_db.search_notes(tag_id_groups=[descendants])
+
+        # Should find only note 9
+        assert len(notes) == 1
+        assert notes[0]["id"] == 9
+        assert "Cowboys" in notes[0]["content"]

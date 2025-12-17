@@ -24,7 +24,7 @@ class TestGetNotes:
 
         notes = json.loads(response.data)
         assert isinstance(notes, list)
-        assert len(notes) == 8  # 8 notes in fixture
+        assert len(notes) == 9  # 9 notes in fixture
 
     def test_notes_have_required_fields(self, client: FlaskClient) -> None:
         """Test that notes have all required fields."""

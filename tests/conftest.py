@@ -110,8 +110,11 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         │   ├── France (10)
         │   │   └── Paris (11)
         │   └── Germany (12)
-        └── Asia (13)
-            └── Israel (14)
+        ├── Asia (13)
+        │   └── Israel (14)
+        └── US (19)
+            └── Texas (20)
+                └── Paris (21)
         Foo (15)
         └── bar (16)
         Boom (17)
@@ -126,6 +129,7 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         6. "שלום עולם - Hebrew text test" (Personal)
         7. "Testing ambiguous tag with Foo/bar" (Foo, bar under Foo)
         8. "Another note with Boom/bar" (Boom, bar under Boom)
+        9. "Cowboys in Paris, Texas" (US, Texas, Paris under Texas)
 
     Args:
         test_db_path: Path to test database
@@ -159,6 +163,10 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         (16, "bar", 15),
         (17, "Boom", None),
         (18, "bar", 17),
+        # Ambiguous tag test: Two different "Paris" tags
+        (19, "US", 8),
+        (20, "Texas", 19),
+        (21, "Paris", 20),
     ]
 
     with db.conn:
@@ -180,6 +188,7 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
             (6, "שלום עולם - Hebrew text test", [5]),
             (7, "Testing ambiguous tag with Foo/bar", [15, 16]),
             (8, "Another note with Boom/bar", [17, 18]),
+            (9, "Cowboys in Paris, Texas", [19, 20, 21]),
         ]
 
         for i, (note_id, content, tag_ids) in enumerate(notes):

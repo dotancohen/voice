@@ -38,7 +38,7 @@ class TestNotesListPaneInit:
     ) -> None:
         """Test that notes are loaded on initialization."""
         pane = NotesListPane(test_config, populated_db)
-        assert pane.list_widget.count() == 8  # 8 notes in fixture
+        assert pane.list_widget.count() == 9  # 9 notes in fixture
 
 
 @pytest.mark.gui
@@ -50,7 +50,7 @@ class TestNoteDisplay:
     ) -> None:
         """Test that all notes are displayed."""
         pane = NotesListPane(test_config, populated_db)
-        assert pane.list_widget.count() == 8
+        assert pane.list_widget.count() == 9
 
     def test_note_format_two_lines(
         self, qapp, test_config: Config, populated_db: Database
@@ -224,7 +224,7 @@ class TestSearchField:
 
         # Search field should be empty and all notes shown
         assert pane.search_field.toPlainText() == ""
-        assert pane.list_widget.count() == 8
+        assert pane.list_widget.count() == 9
 
 
 @pytest.mark.gui
@@ -319,6 +319,31 @@ class TestTagFiltering:
         assert "reunion" in search_text
         assert "tag:" in search_text
 
+    def test_filter_by_ambiguous_tag_uses_full_path(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that clicking an ambiguous tag in sidebar uses full path."""
+        pane = NotesListPane(test_config, populated_db)
+
+        # Click France/Paris (ID 11) - should use full path since "Paris" is ambiguous
+        pane.filter_by_tag(11)
+
+        # Should add full path to search field
+        search_text = pane.search_field.toPlainText()
+        assert "tag:Geography/Europe/France/Paris" in search_text
+
+    def test_search_ambiguous_paris_finds_both_notes(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that searching for ambiguous 'Paris' finds notes from both hierarchies."""
+        pane = NotesListPane(test_config, populated_db)
+
+        pane.search_field.setPlainText("tag:Paris")
+        pane.perform_search()
+
+        # Should find 2 notes: France/Paris and Texas/Paris
+        assert pane.list_widget.count() == 2
+
 
 @pytest.mark.gui
 class TestColorManagement:
@@ -345,7 +370,7 @@ class TestColorManagement:
 
         # Check that "tag:bar" has yellow color
         cursor = pane.search_field.textCursor()
-        cursor.setPosition(4)  # Position in "tag:bar"
+        cursor.setPosition(0)  # Position 0 is 't' in "tag:bar"
         char_format = cursor.charFormat()
         assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
 
@@ -437,3 +462,198 @@ class TestColorManagement:
 
         # Verify plain text is correct
         assert pane.search_field.toPlainText() == "tag:Foo tag:Boom tag:baar tag:baz"
+
+    def test_ambiguous_paris_is_highlighted_yellow(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that ambiguous 'Paris' tag is highlighted in yellow."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Enter "tag:Paris" - should be highlighted because it's ambiguous
+        pane.search_field.setPlainText("tag:Paris")
+        pane.on_search_field_edited()
+
+        # Check that "Paris" has yellow color
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(8)  # Position in "Paris"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+    def test_full_path_france_paris_not_highlighted(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that full path 'Geography/Europe/France/Paris' is NOT highlighted."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Enter full path - should NOT be highlighted (not ambiguous)
+        pane.search_field.setPlainText("tag:Geography/Europe/France/Paris")
+        pane.on_search_field_edited()
+
+        # Check that entire text is white (no highlighting)
+        cursor = pane.search_field.textCursor()
+
+        # Check various positions in the path
+        for pos in [5, 15, 25, 35]:  # Different parts of the path
+            cursor.setPosition(pos)
+            char_format = cursor.charFormat()
+            assert char_format.foreground().color() == QColor("#FFFFFF")
+
+    def test_full_path_texas_paris_not_highlighted(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that full path 'Geography/US/Texas/Paris' is NOT highlighted."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Enter full path - should NOT be highlighted (not ambiguous)
+        pane.search_field.setPlainText("tag:Geography/US/Texas/Paris")
+        pane.on_search_field_edited()
+
+        # Check that entire text is white
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(20)  # Position in "Paris"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+    def test_typing_paris_to_pari_removes_highlighting(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that changing 'tag:Paris' to 'tag:Pari' removes yellow highlighting."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Start with "tag:Paris" (highlighted)
+        pane.search_field.setPlainText("tag:Paris")
+        pane.on_search_field_edited()
+
+        # Verify it's highlighted
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(8)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Change to "tag:Pari" (non-existent tag)
+        pane.search_field.setPlainText("tag:Pari")
+        pane.on_search_field_edited()
+
+        # Should be white now (no highlighting)
+        cursor.setPosition(8)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+    def test_changing_ambiguous_to_full_path_removes_highlighting(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that changing 'tag:Paris' to full path removes highlighting."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Start with ambiguous "tag:Paris"
+        pane.search_field.setPlainText("tag:Paris")
+        pane.on_search_field_edited()
+
+        # Verify yellow highlighting
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(8)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Change to full path (no longer ambiguous)
+        pane.search_field.setPlainText("tag:Geography/Europe/France/Paris")
+        pane.on_search_field_edited()
+
+        # Should be white now
+        cursor.setPosition(25)  # Position in "Paris"
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+    def test_mixed_search_only_paris_highlighted(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test mixed search where only 'Paris' is ambiguous and highlighted."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Search: "tag:Work reunion tag:Paris tag:Health"
+        # Only "tag:Paris" should be yellow
+        pane.search_field.setPlainText("tag:Work reunion tag:Paris tag:Health")
+        pane.on_search_field_edited()
+
+        cursor = pane.search_field.textCursor()
+
+        # Check "Work" is white
+        cursor.setPosition(5)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+        # Check "reunion" is white
+        cursor.setPosition(12)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+        # Check "Paris" is yellow
+        cursor.setPosition(25)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Check "Health" is white
+        cursor.setPosition(36)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor("#FFFFFF")
+
+    def test_both_bar_and_paris_highlighted_together(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that both 'bar' and 'Paris' are highlighted when both are ambiguous."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Both "bar" and "Paris" are ambiguous
+        pane.search_field.setPlainText("tag:bar tag:Paris")
+        pane.on_search_field_edited()
+
+        cursor = pane.search_field.textCursor()
+
+        # Check "bar" is yellow
+        cursor.setPosition(6)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Check "Paris" is yellow
+        cursor.setPosition(15)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+    def test_removing_one_ambiguous_tag_removes_its_highlighting(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """Test that removing one ambiguous tag removes only its highlighting."""
+        from PySide6.QtGui import QColor
+        pane = NotesListPane(test_config, populated_db)
+
+        # Start with two ambiguous tags
+        pane.search_field.setPlainText("tag:bar tag:Paris")
+        pane.on_search_field_edited()
+
+        # Verify both are highlighted
+        cursor = pane.search_field.textCursor()
+        cursor.setPosition(6)
+        assert cursor.charFormat().foreground().color() == QColor(pane.config.get_warning_color())
+        cursor.setPosition(15)
+        assert cursor.charFormat().foreground().color() == QColor(pane.config.get_warning_color())
+
+        # Remove "bar", keep "Paris"
+        pane.search_field.setPlainText("tag:Paris")
+        pane.on_search_field_edited()
+
+        # The entire "tag:Paris" should still be highlighted (ambiguous)
+        cursor.setPosition(8)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+
+        # The "tag:" prefix should also be highlighted (part of the ambiguous term)
+        cursor.setPosition(2)
+        char_format = cursor.charFormat()
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
