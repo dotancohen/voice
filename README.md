@@ -4,7 +4,7 @@ Note-taking application with hierarchical tags, available as GUI, CLI, and Web A
 
 ## Features
 - Hierarchical tag system with unlimited nesting
-- **GUI Mode**: Three-pane PySide6 interface
+- **GUI Mode**: Three-pane PySide6 interface with dark/light theme support
 - **CLI Mode**: Command-line interface with JSON/CSV export
 - **Web API Mode**: RESTful HTTP API with JSON responses
 - SQLite database backend
@@ -17,7 +17,7 @@ Note-taking application with hierarchical tags, available as GUI, CLI, and Web A
 
 ## Requirements
 - Python 3.10 or higher
-- PySide6 (for GUI mode)
+- PySide6 + pyqtdarktheme (for GUI mode)
 - Flask + Flask-CORS (for Web API mode)
 
 ## Installation
@@ -44,14 +44,29 @@ pip install -r requirements-dev.txt
 
 ### GUI Mode
 
-Launch the graphical interface:
+Launch the graphical interface (default dark theme):
 ```bash
 python -m src.main
+```
+
+Launch in light theme:
+```bash
+python -m src.main --theme light
+```
+
+Launch in dark theme (explicit):
+```bash
+python -m src.main --theme dark
 ```
 
 With custom configuration directory:
 ```bash
 python -m src.main -d /path/to/custom/config
+```
+
+Combine options:
+```bash
+python -m src.main --theme light -d /path/to/custom/config
 ```
 
 ### CLI Mode

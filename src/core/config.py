@@ -121,13 +121,29 @@ class Config:
         """
         return self.config_dir
 
-    def get_warning_color(self) -> str:
-        """Get the warning color from config.
+    def get_warning_color(self, theme: str = "dark") -> str:
+        """Get the warning color from config based on theme.
+
+        Args:
+            theme: UI theme ("dark" or "light")
 
         Returns:
-            Hex color string for warnings (default: "#FFFF00" yellow).
+            Hex color string for warnings (yellow for dark, orange for light).
         """
         try:
-            return self.config_data.get("themes", {}).get("colours", {}).get("warnings", "#FFFF00")
+            # Get theme-specific colors from config
+            themes = self.config_data.get("themes", {})
+            colours = themes.get("colours", {})
+
+            # Check for generic "warnings" key first (backward compatibility)
+            if "warnings" in colours:
+                return colours["warnings"]
+
+            # Otherwise use theme-specific keys
+            if theme == "light":
+                return colours.get("warnings_light", "#FF8C00")  # Dark orange for light theme
+            else:
+                return colours.get("warnings_dark", "#FFFF00")  # Yellow for dark theme
         except (AttributeError, TypeError):
-            return "#FFFF00"
+            # Fallback defaults
+            return "#FF8C00" if theme == "light" else "#FFFF00"

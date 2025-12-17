@@ -9,8 +9,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QTextCharFormat, QTextCursor, QFont
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import (
+    QColor,
+    QKeyEvent,
+    QTextCharFormat,
+    QTextCursor,
+    QFont,
+    QTextDocument,
+    QAbstractTextDocumentLayout,
+    QPalette,
+)
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidget,
@@ -19,6 +28,9 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QStyle,
 )
 
 from core.config import Config
@@ -28,7 +40,6 @@ logger = logging.getLogger(__name__)
 
 # Constants
 CONTENT_TRUNCATE_LENGTH = 100
-DEFAULT_TEXT_COLOR = "#FFFFFF"  # White
 
 
 class SearchTextEdit(QTextEdit):
@@ -45,6 +56,102 @@ class SearchTextEdit(QTextEdit):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+
+class HTMLDelegate(QStyledItemDelegate):
+    """Custom delegate to render HTML in list widget items."""
+
+    def __init__(self, parent=None, theme: str = "dark"):
+        """Initialize the delegate.
+
+        Args:
+            parent: Parent widget
+            theme: UI theme ("dark" or "light")
+        """
+        super().__init__(parent)
+        self.theme = theme
+
+    def paint(self, painter, option: QStyleOptionViewItem, index):
+        """Paint the item with HTML rendering."""
+        # Get the HTML text from UserRole+1
+        html_text = index.data(Qt.ItemDataRole.UserRole + 1)
+        if not html_text:
+            super().paint(painter, option, index)
+            return
+
+        # Save painter state
+        painter.save()
+
+        # Draw selection background if selected (leave space for divider line at bottom)
+        if option.state & QStyle.StateFlag.State_Selected:
+            # Reduce rect height by 2 pixels to leave space for the 1px divider
+            selection_rect = option.rect.adjusted(0, 0, 0, -2)
+            painter.fillRect(selection_rect, option.palette.highlight())
+
+        # Create text document for rendering
+        doc = QTextDocument()
+        doc.setHtml(html_text)
+        doc.setTextWidth(option.rect.width() - 2)  # Ultra-minimal margin
+
+        # Set default font
+        doc.setDefaultFont(option.font)
+
+        # Determine text color based on selection state
+        if option.state & QStyle.StateFlag.State_Selected:
+            text_color = option.palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.HighlightedText)
+        else:
+            text_color = option.palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Text)
+
+        # Update HTML with proper text color and ultra-tight line height
+        html_with_color = f'<div style="color: {text_color.name()}; line-height: 1.0;">{html_text}</div>'
+        doc.setHtml(html_with_color)
+
+        # Translate painter to item position with ultra-minimal padding
+        painter.translate(option.rect.left() + 1, option.rect.top())
+
+        # Draw the document
+        context = QAbstractTextDocumentLayout.PaintContext()
+        doc.documentLayout().draw(painter, context)
+
+        # Restore painter state
+        painter.restore()
+
+        # Draw subtle dividing line at bottom with theme-appropriate color
+        painter.save()
+        from PySide6.QtGui import QPen
+        # Choose color based on theme
+        if self.theme == "light":
+            line_color = QColor("#cccccc")  # Medium gray for light theme
+        else:
+            line_color = QColor("#505050")  # Lighter gray for dark theme
+        pen = QPen(line_color)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        # Draw 1px line near the bottom
+        painter.drawLine(
+            option.rect.left(),
+            option.rect.bottom() - 1,
+            option.rect.right(),
+            option.rect.bottom() - 1
+        )
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index):
+        """Calculate size hint for item."""
+        html_text = index.data(Qt.ItemDataRole.UserRole + 1)
+        if not html_text:
+            return super().sizeHint(option, index)
+
+        # Create text document to calculate size
+        doc = QTextDocument()
+        # Apply same line height as in paint
+        html_with_style = f'<div style="line-height: 1.0;">{html_text}</div>'
+        doc.setHtml(html_with_style)
+        doc.setTextWidth(option.rect.width() - 2 if option.rect.width() > 0 else 400)
+        doc.setDefaultFont(option.font)
+
+        # Return size with absolute minimal padding + space for 1px dividing line
+        return QSize(int(doc.idealWidth()) + 2, int(doc.size().height()) + 1 + 2)
 
 
 class NotesListPane(QWidget):
@@ -74,19 +181,21 @@ class NotesListPane(QWidget):
     note_selected = Signal(int)  # Emits note_id
 
     def __init__(
-        self, config: Config, db: Database, parent: Optional[QWidget] = None
+        self, config: Config, db: Database, theme: str = "dark", parent: Optional[QWidget] = None
     ) -> None:
         """Initialize the notes list pane.
 
         Args:
             config: Configuration manager
             db: Database connection
+            theme: UI theme ("dark" or "light")
             parent: Parent widget (default None)
         """
         super().__init__(parent)
         self.config = config
         self.db = db
-        self.warning_color = self.config.get_warning_color()
+        self.theme = theme
+        self.warning_color = self.config.get_warning_color(theme=theme)
         self._updating_search_field = False  # Flag to prevent recursive updates
 
         self.setup_ui()
@@ -131,6 +240,9 @@ class NotesListPane(QWidget):
         self.list_widget = QListWidget()
         self.list_widget.itemClicked.connect(self.on_note_clicked)
 
+        # Set custom delegate for HTML rendering (with theme-aware dividing lines)
+        self.list_widget.setItemDelegate(HTMLDelegate(self.list_widget, theme=self.theme))
+
         layout.addWidget(self.list_widget)
 
     def load_notes(self, notes: Optional[List[Dict[str, Any]]] = None) -> None:
@@ -170,12 +282,19 @@ class NotesListPane(QWidget):
         if len(content) > CONTENT_TRUNCATE_LENGTH:
             content = content[:CONTENT_TRUNCATE_LENGTH] + "..."
 
-        # Create two-line text
-        display_text = f"{created_at}\n{content}"
+        # Create two-line text with bold date
+        html_text = f"<b>{created_at}</b><br>{content}"
 
         # Create item
-        item = QListWidgetItem(display_text)
+        item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, note["id"])  # Store note_id
+
+        # Store the HTML for custom delegate rendering
+        item.setData(Qt.ItemDataRole.UserRole + 1, html_text)
+
+        # Set plain text for display role (used by default rendering/accessibility)
+        plain_text = f"{created_at}\n{content}"
+        item.setText(plain_text)
 
         return item
 
@@ -301,7 +420,7 @@ class NotesListPane(QWidget):
             self._updating_search_field = False
 
     def _clear_all_formatting(self, text: str, cursor_position: int) -> None:
-        """Clear all formatting and set text to white.
+        """Clear all formatting and set text to default color.
 
         Args:
             text: The text to set
@@ -310,14 +429,14 @@ class NotesListPane(QWidget):
         # Set the text
         self.search_field.setPlainText(text)
 
-        # Create white color format for all text
-        white_format = QTextCharFormat()
-        white_format.setForeground(QColor("#FFFFFF"))
+        # Create default color format for all text
+        default_format = QTextCharFormat()
+        default_format.setForeground(self.palette().color(QPalette.ColorRole.Text))
 
-        # Apply white color to entire document
+        # Apply default color to entire document
         cursor = self.search_field.textCursor()
         cursor.select(QTextCursor.SelectionType.Document)
-        cursor.setCharFormat(white_format)
+        cursor.setCharFormat(default_format)
 
         # Restore cursor position
         cursor.clearSelection()
@@ -325,7 +444,7 @@ class NotesListPane(QWidget):
         self.search_field.setTextCursor(cursor)
 
     def _apply_highlighting(self, text: str, ambiguous_terms: List[str], cursor_position: int) -> None:
-        """Apply yellow highlighting to ambiguous tag terms in the search field.
+        """Apply warning color highlighting to ambiguous tag terms in the search field.
 
         Args:
             text: The full search text
@@ -336,18 +455,18 @@ class NotesListPane(QWidget):
         self.search_field.setPlainText(text)
 
         # Create text formats
-        white_format = QTextCharFormat()
-        white_format.setForeground(QColor("#FFFFFF"))
+        default_format = QTextCharFormat()
+        default_format.setForeground(self.palette().color(QPalette.ColorRole.Text))
 
-        yellow_format = QTextCharFormat()
-        yellow_format.setForeground(QColor(self.warning_color))
+        warning_format = QTextCharFormat()
+        warning_format.setForeground(QColor(self.warning_color))
 
         # Get cursor for formatting
         cursor = self.search_field.textCursor()
 
-        # First, set all text to white
+        # First, set all text to default color
         cursor.select(QTextCursor.SelectionType.Document)
-        cursor.setCharFormat(white_format)
+        cursor.setCharFormat(default_format)
 
         # Find and highlight ambiguous terms
         text_lower = text.lower()
@@ -360,10 +479,10 @@ class NotesListPane(QWidget):
                 if idx == -1:
                     break
 
-                # Select the match and apply yellow format
+                # Select the match and apply warning format
                 cursor.setPosition(idx)
                 cursor.setPosition(idx + len(term), QTextCursor.MoveMode.KeepAnchor)
-                cursor.setCharFormat(yellow_format)
+                cursor.setCharFormat(warning_format)
 
                 pos = idx + len(term)
 

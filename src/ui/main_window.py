@@ -42,18 +42,20 @@ class MainWindow(QMainWindow):
     """
 
     def __init__(
-        self, config: Config, db: Database, parent: Optional[QWidget] = None
+        self, config: Config, db: Database, theme: str = "dark", parent: Optional[QWidget] = None
     ) -> None:
         """Initialize the main window.
 
         Args:
             config: Configuration manager
             db: Database connection
+            theme: UI theme ("dark" or "light")
             parent: Parent widget (default None)
         """
         super().__init__(parent)
         self.config = config
         self.db = db
+        self.theme = theme
 
         self.setup_ui()
         self.connect_signals()
@@ -71,7 +73,7 @@ class MainWindow(QMainWindow):
 
         # Create the three panes
         self.tags_pane = TagsPane(self.db)
-        self.notes_list_pane = NotesListPane(self.config, self.db)
+        self.notes_list_pane = NotesListPane(self.config, self.db, theme=self.theme)
         self.note_pane = NotePane(self.db)
 
         # Add panes to splitter

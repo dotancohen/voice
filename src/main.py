@@ -6,6 +6,7 @@ sets up the database, and launches the main window.
 
 Command-line arguments:
     -d, --config-dir PATH    Specify custom configuration directory
+    --theme {dark,light}     UI theme (default: dark)
     --<component>=<impl>     Select implementation for pluggable components (future)
 """
 
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from PySide6.QtWidgets import QApplication
+import qdarktheme
 
 from core.config import Config
 from core.database import Database
@@ -47,6 +49,13 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Custom configuration directory (default: ~/.config/voicerewrite/)",
+    )
+
+    parser.add_argument(
+        "--theme",
+        choices=["dark", "light"],
+        default="dark",
+        help="UI theme (default: dark)",
     )
 
     # Future: Add implementation selection arguments
@@ -88,8 +97,12 @@ def main() -> NoReturn:
     app = QApplication(sys.argv)
     app.setApplicationName("Voice Rewrite")
 
+    # Apply theme using qdarktheme
+    theme_stylesheet = qdarktheme.load_stylesheet(theme=args.theme)
+    app.setStyleSheet(theme_stylesheet)
+
     # Create and show main window
-    window = MainWindow(config, db)
+    window = MainWindow(config, db, theme=args.theme)
     window.show()
 
     logger.info("Application window displayed")

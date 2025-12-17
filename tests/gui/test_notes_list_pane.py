@@ -349,18 +349,21 @@ class TestTagFiltering:
 class TestColorManagement:
     """Test search field color management."""
 
-    def test_default_text_color_white(
+    def test_default_text_color_from_palette(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
-        """Test that default text color is white."""
-        from ui.notes_list_pane import DEFAULT_TEXT_COLOR
-        assert DEFAULT_TEXT_COLOR == "#FFFFFF"
+        """Test that default text color comes from palette."""
+        from PySide6.QtGui import QPalette
+        pane = NotesListPane(test_config, populated_db)
+        # Verify that text color comes from palette
+        text_color = pane.palette().color(QPalette.ColorRole.Text)
+        assert text_color.isValid()
 
-    def test_editing_restores_white_color(
+    def test_editing_restores_default_color(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
-        """Test that editing search field with non-ambiguous text uses plain white text."""
-        from PySide6.QtGui import QColor
+        """Test that editing search field with non-ambiguous text uses default text color."""
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Enter an ambiguous tag first (should be highlighted)
@@ -368,13 +371,13 @@ class TestColorManagement:
         # Manually trigger the highlighting since setPlainText won't trigger textChanged
         pane.on_search_field_edited()
 
-        # Check that "tag:bar" has yellow color
+        # Check that "tag:bar" has warning color
         cursor = pane.search_field.textCursor()
         cursor.setPosition(0)  # Position 0 is 't' in "tag:bar"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
-        # Now edit to non-ambiguous text (should use plain text with white color)
+        # Now edit to non-ambiguous text (should use default text color)
         pane.search_field.setPlainText("test")
         pane.on_search_field_edited()
 
@@ -382,16 +385,17 @@ class TestColorManagement:
         plain_text = pane.search_field.toPlainText()
         assert plain_text == "test"
 
-        # Check that all text is white
+        # Check that all text is default text color
         cursor.setPosition(0)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
+        assert char_format.foreground().color() == expected_color
 
     def test_warning_color_removed_when_text_becomes_non_ambiguous(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test that warning color is removed when ambiguous text is changed to non-ambiguous."""
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Enter ambiguous tag
@@ -402,16 +406,17 @@ class TestColorManagement:
         cursor = pane.search_field.textCursor()
         cursor.setPosition(5)  # Position in "tag:bar"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
         # Change to non-ambiguous tag (Work is unique)
         pane.search_field.setPlainText("tag:Work")
         pane.on_search_field_edited()
 
-        # Warning color should be removed - all text should be white
+        # Warning color should be removed - all text should be default text color
         cursor.setPosition(5)  # Position in "tag:Work"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
+        assert char_format.foreground().color() == expected_color
 
     def test_undo_enabled_in_search_field(
         self, qapp, test_config: Config, populated_db: Database
@@ -426,7 +431,7 @@ class TestColorManagement:
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test that typing in an ambiguous tag to make it non-existent removes all highlighting."""
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Set up: "tag:Foo tag:Boom tag:bar tag:baz"
@@ -438,27 +443,28 @@ class TestColorManagement:
         cursor = pane.search_field.textCursor()
         cursor.setPosition(22)  # Position in "tag:bar"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
-        # Verify "tag:Foo" is NOT highlighted (white)
+        # Verify "tag:Foo" is NOT highlighted (default text color)
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
         cursor.setPosition(4)  # Position in "tag:Foo"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        assert char_format.foreground().color() == expected_color
 
         # Change "tag:bar" to "tag:baar" (non-existent tag)
         pane.search_field.setPlainText("tag:Foo tag:Boom tag:baar tag:baz")
         pane.on_search_field_edited()
 
-        # Verify NO yellow highlighting - all should be white
+        # Verify NO warning highlighting - all should be default text color
         # Check position in "baar"
         cursor.setPosition(23)  # Position in "tag:baar"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        assert char_format.foreground().color() == expected_color
 
         # Check position in "Foo"
         cursor.setPosition(4)  # Position in "tag:Foo"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        assert char_format.foreground().color() == expected_color
 
         # Verify plain text is correct
         assert pane.search_field.toPlainText() == "tag:Foo tag:Boom tag:baar tag:baz"
@@ -478,50 +484,52 @@ class TestColorManagement:
         cursor = pane.search_field.textCursor()
         cursor.setPosition(8)  # Position in "Paris"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
     def test_full_path_france_paris_not_highlighted(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test that full path 'Geography/Europe/France/Paris' is NOT highlighted."""
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Enter full path - should NOT be highlighted (not ambiguous)
         pane.search_field.setPlainText("tag:Geography/Europe/France/Paris")
         pane.on_search_field_edited()
 
-        # Check that entire text is white (no highlighting)
+        # Check that entire text is default text color (no highlighting)
         cursor = pane.search_field.textCursor()
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
 
         # Check various positions in the path
         for pos in [5, 15, 25, 35]:  # Different parts of the path
             cursor.setPosition(pos)
             char_format = cursor.charFormat()
-            assert char_format.foreground().color() == QColor("#FFFFFF")
+            assert char_format.foreground().color() == expected_color
 
     def test_full_path_texas_paris_not_highlighted(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test that full path 'Geography/US/Texas/Paris' is NOT highlighted."""
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Enter full path - should NOT be highlighted (not ambiguous)
         pane.search_field.setPlainText("tag:Geography/US/Texas/Paris")
         pane.on_search_field_edited()
 
-        # Check that entire text is white
+        # Check that entire text is using default text color
         cursor = pane.search_field.textCursor()
         cursor.setPosition(20)  # Position in "Paris"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
+        assert char_format.foreground().color() == expected_color
 
     def test_typing_paris_to_pari_removes_highlighting(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test that changing 'tag:Paris' to 'tag:Pari' removes yellow highlighting."""
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Start with "tag:Paris" (highlighted)
@@ -532,22 +540,23 @@ class TestColorManagement:
         cursor = pane.search_field.textCursor()
         cursor.setPosition(8)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
         # Change to "tag:Pari" (non-existent tag)
         pane.search_field.setPlainText("tag:Pari")
         pane.on_search_field_edited()
 
-        # Should be white now (no highlighting)
+        # Should be default text color now (no highlighting)
         cursor.setPosition(8)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
+        assert char_format.foreground().color() == expected_color
 
     def test_changing_ambiguous_to_full_path_removes_highlighting(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test that changing 'tag:Paris' to full path removes highlighting."""
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Start with ambiguous "tag:Paris"
@@ -558,22 +567,23 @@ class TestColorManagement:
         cursor = pane.search_field.textCursor()
         cursor.setPosition(8)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
         # Change to full path (no longer ambiguous)
         pane.search_field.setPlainText("tag:Geography/Europe/France/Paris")
         pane.on_search_field_edited()
 
-        # Should be white now
+        # Should be default text color now
         cursor.setPosition(25)  # Position in "Paris"
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
+        assert char_format.foreground().color() == expected_color
 
     def test_mixed_search_only_paris_highlighted(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test mixed search where only 'Paris' is ambiguous and highlighted."""
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QPalette
         pane = NotesListPane(test_config, populated_db)
 
         # Search: "tag:Work reunion tag:Paris tag:Health"
@@ -582,26 +592,27 @@ class TestColorManagement:
         pane.on_search_field_edited()
 
         cursor = pane.search_field.textCursor()
+        expected_color = pane.palette().color(QPalette.ColorRole.Text)
 
-        # Check "Work" is white
+        # Check "Work" is default text color
         cursor.setPosition(5)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        assert char_format.foreground().color() == expected_color
 
-        # Check "reunion" is white
+        # Check "reunion" is default text color
         cursor.setPosition(12)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        assert char_format.foreground().color() == expected_color
 
-        # Check "Paris" is yellow
+        # Check "Paris" is warning color
         cursor.setPosition(25)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
-        # Check "Health" is white
+        # Check "Health" is default text color
         cursor.setPosition(36)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor("#FFFFFF")
+        assert char_format.foreground().color() == expected_color
 
     def test_both_bar_and_paris_highlighted_together(
         self, qapp, test_config: Config, populated_db: Database
@@ -619,12 +630,12 @@ class TestColorManagement:
         # Check "bar" is yellow
         cursor.setPosition(6)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
         # Check "Paris" is yellow
         cursor.setPosition(15)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
     def test_removing_one_ambiguous_tag_removes_its_highlighting(
         self, qapp, test_config: Config, populated_db: Database
@@ -640,9 +651,9 @@ class TestColorManagement:
         # Verify both are highlighted
         cursor = pane.search_field.textCursor()
         cursor.setPosition(6)
-        assert cursor.charFormat().foreground().color() == QColor(pane.config.get_warning_color())
+        assert cursor.charFormat().foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
         cursor.setPosition(15)
-        assert cursor.charFormat().foreground().color() == QColor(pane.config.get_warning_color())
+        assert cursor.charFormat().foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
         # Remove "bar", keep "Paris"
         pane.search_field.setPlainText("tag:Paris")
@@ -651,9 +662,9 @@ class TestColorManagement:
         # The entire "tag:Paris" should still be highlighted (ambiguous)
         cursor.setPosition(8)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
 
         # The "tag:" prefix should also be highlighted (part of the ambiguous term)
         cursor.setPosition(2)
         char_format = cursor.charFormat()
-        assert char_format.foreground().color() == QColor(pane.config.get_warning_color())
+        assert char_format.foreground().color() == QColor(pane.config.get_warning_color(theme=pane.theme))
