@@ -35,6 +35,7 @@ from flask_cors import CORS
 
 from core.config import Config
 from core.database import Database
+from core.validation import ValidationError
 
 # Configure logging
 logging.basicConfig(
@@ -80,6 +81,12 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
         """Handle 500 errors."""
         logger.error(f"Internal error: {error}")
         return jsonify({"error": "Internal server error"}), 500
+
+    @app.errorhandler(ValidationError)
+    def validation_error(error: ValidationError) -> tuple[Response, int]:
+        """Handle validation errors."""
+        logger.warning(f"Validation error: {error.field} - {error.message}")
+        return jsonify({"error": f"Invalid {error.field}: {error.message}"}), 400
 
     # Routes
     @app.route("/api/notes", methods=["GET"])

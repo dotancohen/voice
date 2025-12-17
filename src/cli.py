@@ -31,6 +31,7 @@ if str(_src_path) not in sys.path:
 
 from core.config import Config
 from core.database import Database
+from core.validation import ValidationError
 
 # Configure logging
 logging.basicConfig(
@@ -368,6 +369,9 @@ def main() -> NoReturn:
         else:
             parser.print_help()
             exit_code = 1
+    except ValidationError as e:
+        print(f"Error: Invalid {e.field} - {e.message}", file=sys.stderr)
+        exit_code = 1
     except Exception as e:
         logger.error(f"Error executing command: {e}")
         exit_code = 1

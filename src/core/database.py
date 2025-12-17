@@ -14,6 +14,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.validation import (
+    validate_note_id,
+    validate_tag_id,
+    validate_tag_ids,
+    validate_tag_path,
+    validate_search_query,
+    validate_tag_id_groups,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,7 +80,9 @@ class Database:
                     deleted_at DATETIME,
                     CHECK (datetime(created_at) IS NOT NULL),
                     CHECK (datetime(modified_at) IS NULL OR datetime(modified_at) IS NOT NULL),
-                    CHECK (datetime(deleted_at) IS NULL OR datetime(deleted_at) IS NOT NULL)
+                    CHECK (datetime(deleted_at) IS NULL OR datetime(deleted_at) IS NOT NULL),
+                    CHECK (LENGTH(TRIM(content)) > 0),
+                    CHECK (LENGTH(content) <= 100000)
                 )
             """)
 
@@ -82,7 +93,10 @@ class Database:
                     name TEXT NOT NULL,
                     parent_id INTEGER,
                     FOREIGN KEY (parent_id) REFERENCES tags (id) ON DELETE CASCADE,
-                    CHECK (parent_id IS NULL OR parent_id != id)
+                    CHECK (parent_id IS NULL OR parent_id != id),
+                    CHECK (LENGTH(TRIM(name)) > 0),
+                    CHECK (LENGTH(name) <= 100),
+                    CHECK (name NOT LIKE '%/%')
                 )
             """)
 
@@ -157,8 +171,10 @@ class Database:
             Dictionary containing note data and associated tags, or None if not found.
 
         Raises:
+            ValidationError: If note_id is invalid.
             sqlite3.DatabaseError: If database query fails.
         """
+        validate_note_id(note_id)
         query = """
             SELECT
                 n.id,
@@ -210,7 +226,11 @@ class Database:
 
         Returns:
             List of tag IDs including the root tag and all descendants.
+
+        Raises:
+            ValidationError: If tag_id is invalid.
         """
+        validate_tag_id(tag_id)
         query = """
             WITH RECURSIVE tag_tree AS (
                 SELECT id FROM tags WHERE id = ?
@@ -234,7 +254,12 @@ class Database:
 
         Returns:
             List of note dictionaries matching any of the specified tags.
+
+        Raises:
+            ValidationError: If any tag_id is invalid.
         """
+        if tag_ids:
+            validate_tag_ids(tag_ids)
         if not tag_ids:
             return self.get_all_notes()
 
@@ -273,7 +298,11 @@ class Database:
 
         Returns:
             Dictionary with tag data, or None if not found.
+
+        Raises:
+            ValidationError: If tag_id is invalid.
         """
+        validate_tag_id(tag_id)
         query = "SELECT id, name, parent_id FROM tags WHERE id = ?"
         with self.conn:
             cursor = self.conn.cursor()
@@ -303,7 +332,11 @@ class Database:
 
         Returns:
             Dictionary with tag data, or None if path not found.
+
+        Raises:
+            ValidationError: If path is invalid.
         """
+        validate_tag_path(path)
         parts = path.split("/")
         current_parent_id: Optional[int] = None
 
@@ -348,7 +381,11 @@ class Database:
 
         Returns:
             List of tag dictionaries matching the path. Empty if not found.
+
+        Raises:
+            ValidationError: If path is invalid.
         """
+        validate_tag_path(path)
         parts = path.split("/")
 
         # If just a simple name (no slashes), return all tags with that name
@@ -422,7 +459,12 @@ class Database:
 
         Returns:
             List of note dictionaries matching ALL criteria.
+
+        Raises:
+            ValidationError: If text_query or tag_id_groups are invalid.
         """
+        validate_search_query(text_query)
+        validate_tag_id_groups(tag_id_groups)
         query = """
             SELECT DISTINCT
                 n.id,
