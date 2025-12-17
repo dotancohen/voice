@@ -288,6 +288,7 @@ class NotesListPane(QWidget):
 
         # Collect tag ID groups (each tag term with its descendants is one group)
         tag_id_groups: List[List[int]] = []
+        any_tag_not_found = False
 
         for tag_name in tag_names:
             # Get tag by path (handles hierarchical paths like Europe/France/Paris)
@@ -301,9 +302,13 @@ class NotesListPane(QWidget):
                 )
             else:
                 logger.warning(f"Tag path '{tag_name}' not found")
+                any_tag_not_found = True
 
+        # If any requested tag was not found, return empty results
+        if any_tag_not_found:
+            notes = []
         # Perform search
-        if free_text or tag_id_groups:
+        elif free_text or tag_id_groups:
             notes = self.db.search_notes(
                 text_query=free_text if free_text else None,
                 tag_id_groups=tag_id_groups if tag_id_groups else None

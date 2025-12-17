@@ -248,7 +248,7 @@ class Database:
                 n.content,
                 n.modified_at,
                 n.deleted_at,
-                GROUP_CONCAT(DISTINCT t.name, ', ') as tag_names
+                GROUP_CONCAT(t.name, ', ') as tag_names
             FROM notes n
             INNER JOIN note_tags nt ON n.id = nt.note_id
             LEFT JOIN tags t ON nt.tag_id = t.id
