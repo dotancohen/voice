@@ -86,21 +86,9 @@ class HTMLDelegate(QStyledItemDelegate):
             super().paint(painter, option, index)
             return
 
-        # Save painter state
-        painter.save()
-
-        # Draw selection background if selected (leave space for divider line at bottom)
-        if option.state & QStyle.StateFlag.State_Selected:
-            # Reduce rect height by 2 pixels to leave space for the 1px divider
-            selection_rect = option.rect.adjusted(0, 0, 0, -2)
-            painter.fillRect(selection_rect, option.palette.highlight())
-
         # Create text document for rendering
         doc = QTextDocument()
-        doc.setHtml(html_text)
         doc.setTextWidth(option.rect.width() - 2)  # Ultra-minimal margin
-
-        # Set default font
         doc.setDefaultFont(option.font)
 
         # Determine text color based on selection state
@@ -109,9 +97,20 @@ class HTMLDelegate(QStyledItemDelegate):
         else:
             text_color = option.palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Text)
 
-        # Update HTML with proper text color and ultra-tight line height
+        # Set HTML with proper text color and ultra-tight line height
         html_with_color = f'<div style="color: {text_color.name()}; line-height: 1.0;">{html_text}</div>'
         doc.setHtml(html_with_color)
+
+        # Calculate actual content height
+        content_height = int(doc.size().height())
+
+        # Save painter state
+        painter.save()
+
+        # Draw selection background based on actual content height
+        if option.state & QStyle.StateFlag.State_Selected:
+            selection_rect = option.rect.adjusted(0, 0, 0, -(option.rect.height() - content_height - 1))
+            painter.fillRect(selection_rect, option.palette.highlight())
 
         # Translate painter to item position with ultra-minimal padding
         painter.translate(option.rect.left() + 1, option.rect.top())
@@ -123,7 +122,7 @@ class HTMLDelegate(QStyledItemDelegate):
         # Restore painter state
         painter.restore()
 
-        # Draw subtle dividing line at bottom with theme-appropriate color
+        # Draw subtle dividing line based on actual content height
         painter.save()
         from PySide6.QtGui import QPen
         # Choose color based on theme
@@ -134,12 +133,13 @@ class HTMLDelegate(QStyledItemDelegate):
         pen = QPen(line_color)
         pen.setWidth(1)
         painter.setPen(pen)
-        # Draw 1px line near the bottom
+        # Draw 1px line at actual content bottom
+        divider_y = option.rect.top() + content_height + 1
         painter.drawLine(
             option.rect.left(),
-            option.rect.bottom() - 1,
+            divider_y,
             option.rect.right(),
-            option.rect.bottom() - 1
+            divider_y
         )
         painter.restore()
 
