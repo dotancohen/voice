@@ -253,6 +253,60 @@ black src/
 - Default: `~/.config/voicerewrite/notes.db`
 - Custom: `<config-dir>/notes.db` when using `-d` flag
 
+## Configuration
+
+Configuration is stored in `<config-dir>/config.json`. The default location is `~/.config/voicerewrite/config.json`.
+
+### Config Schema
+
+```json
+{
+  "database_file": "/path/to/notes.db",
+  "window_geometry": null,
+  "implementations": {},
+  "themes": {
+    "colours": {
+      "warnings": "#FFFF00",
+      "warnings_dark": "#FFFF00",
+      "warnings_light": "#FF8C00"
+    }
+  }
+}
+```
+
+### Config Options
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `database_file` | string | `<config_dir>/notes.db` | Path to SQLite database file |
+| `window_geometry` | object\|null | `null` | Saved window size/position (set automatically) |
+| `implementations` | object | `{}` | Reserved for future component selection |
+| `themes.colours.warnings` | string | `#FFFF00` | Warning highlight color (backward compatible) |
+| `themes.colours.warnings_dark` | string | `#FFFF00` | Warning color for dark theme (yellow) |
+| `themes.colours.warnings_light` | string | `#FF8C00` | Warning color for light theme (dark orange) |
+
+### Color Values
+
+Colors are specified as hex strings (e.g., `#FFFF00`). The warning color is used to highlight ambiguous tags in search results.
+
+Theme-specific colors take precedence:
+- Dark theme: Uses `warnings_dark`, falls back to `warnings`, then `#FFFF00`
+- Light theme: Uses `warnings_light`, falls back to `warnings`, then `#FF8C00`
+
+### Example Custom Config
+
+```json
+{
+  "database_file": "/home/user/documents/notes.db",
+  "themes": {
+    "colours": {
+      "warnings_dark": "#FFD700",
+      "warnings_light": "#FF6600"
+    }
+  }
+}
+```
+
 ## Adding Sample Data
 Since this is a read-only MVP, add notes and tags directly to the database:
 
