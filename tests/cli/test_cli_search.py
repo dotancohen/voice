@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,9 @@ class TestSearchText:
         """Test searching by text."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--text", "meeting"
             ],
             capture_output=True,
@@ -42,8 +44,9 @@ class TestSearchText:
         """Test that text search is case-insensitive."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--text", "DOCTOR"
             ],
             capture_output=True,
@@ -59,8 +62,9 @@ class TestSearchText:
         """Test searching Hebrew text."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--text", "שלום"
             ],
             capture_output=True,
@@ -76,8 +80,9 @@ class TestSearchText:
         """Test search with no matching results."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--text", "nonexistent"
             ],
             capture_output=True,
@@ -98,8 +103,9 @@ class TestSearchTags:
         """Test searching by single tag."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "Work"
             ],
             capture_output=True,
@@ -117,8 +123,9 @@ class TestSearchTags:
         """Test searching by hierarchical tag path."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "Geography/Europe/France/Paris"
             ],
             capture_output=True,
@@ -134,8 +141,9 @@ class TestSearchTags:
         """Test that parent tag search includes child tags."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "Personal"
             ],
             capture_output=True,
@@ -152,8 +160,9 @@ class TestSearchTags:
         """Test searching with multiple tags (AND logic)."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search",
                 "--tag", "Work",
                 "--tag", "Work/Projects"
@@ -172,8 +181,9 @@ class TestSearchTags:
         """Test searching with non-existent tag."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "NonExistentTag"
             ],
             capture_output=True,
@@ -196,8 +206,9 @@ class TestSearchCombined:
         """Test searching with both text and tag."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search",
                 "--text", "meeting",
                 "--tag", "Work"
@@ -216,8 +227,9 @@ class TestSearchCombined:
         """Test searching with text and multiple tags."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search",
                 "--text", "reunion",
                 "--tag", "Personal",
@@ -242,8 +254,9 @@ class TestSearchOutputFormats:
         """Test search with JSON output."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "--format", "json",
                 "search", "--tag", "Work"
             ],
@@ -262,8 +275,9 @@ class TestSearchOutputFormats:
         """Test search with CSV output."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "--format", "csv",
                 "search", "--text", "Doctor"
             ],
@@ -287,8 +301,9 @@ class TestAmbiguousTagCLISearch:
         """Test that ambiguous 'Paris' search finds notes from both France and Texas."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "Paris"
             ],
             capture_output=True,
@@ -307,8 +322,9 @@ class TestAmbiguousTagCLISearch:
         """Test that full path 'Geography/Europe/France/Paris' finds only France Paris."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "Geography/Europe/France/Paris"
             ],
             capture_output=True,
@@ -327,8 +343,9 @@ class TestAmbiguousTagCLISearch:
         """Test that full path 'Geography/US/Texas/Paris' finds only Texas Paris."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "Geography/US/Texas/Paris"
             ],
             capture_output=True,
@@ -347,8 +364,9 @@ class TestAmbiguousTagCLISearch:
         """Test that ambiguous 'Bar' search finds notes from both Foo/Bar and Boom/Bar."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search", "--tag", "Bar"
             ],
             capture_output=True,
@@ -367,8 +385,9 @@ class TestAmbiguousTagCLISearch:
         """Test ambiguous tag search combined with text search."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
+                "cli",
                 "search",
                 "--text", "Cowboys",
                 "--tag", "Paris"

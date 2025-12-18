@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Command-line interface for Voice Rewrite.
 
-This module provides a CLI for interacting with notes and tags without the GUI.
+This module provides CLI commands for interacting with notes and tags.
 Uses only core/ modules - no Qt/PySide6 dependencies.
 
 Commands:
@@ -9,37 +9,20 @@ Commands:
     show-note <id>          Show details of a specific note
     list-tags               List all tags in hierarchy
     search                  Search notes by text and/or tags
-
-All commands support:
-    -d, --config-dir PATH   Custom configuration directory
-    --format FORMAT         Output format: text (default), json, csv
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn, Optional
+from typing import Any, Dict, List, Optional
 
-# Add src to path for both direct execution and module execution
-_src_path = Path(__file__).parent
-if str(_src_path) not in sys.path:
-    sys.path.insert(0, str(_src_path))
-
-from core.config import Config
-from core.database import Database
-from core.search import resolve_tag_term
-from core.validation import ValidationError
-
-# Configure logging
-logging.basicConfig(
-    level=logging.WARNING,  # Less verbose for CLI
-    format='%(levelname)s: %(message)s'
-)
-logger = logging.getLogger(__name__)
+from src.core.config import Config
+from src.core.database import Database
+from src.core.search import resolve_tag_term
+from src.core.validation import ValidationError
 
 
 def format_tag_hierarchy(tags: List[Dict[str, Any]], indent: int = 0) -> str:
@@ -223,7 +206,7 @@ def cmd_search(db: Database, args: argparse.Namespace) -> int:
 
     # If any requested tag was not found, return empty results
     if any_tag_not_found:
-        notes = []
+        notes: List[Dict[str, Any]] = []
     else:
         # Perform search
         notes = db.search_notes(
@@ -251,43 +234,36 @@ def cmd_search(db: Database, args: argparse.Namespace) -> int:
     return 0
 
 
-def create_parser() -> argparse.ArgumentParser:
-    """Create argument parser for CLI.
+def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Add CLI subparser and its nested subcommands.
 
-    Returns:
-        Configured ArgumentParser instance
+    Args:
+        subparsers: Parent subparsers object to add CLI parser to
     """
-    parser = argparse.ArgumentParser(
-        description="Voice Rewrite - Command-line interface for notes and tags",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+    cli_parser = subparsers.add_parser(
+        "cli",
+        help="Command-line interface",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # Global options
-    parser.add_argument(
-        "-d", "--config-dir",
-        type=Path,
-        default=None,
-        help="Custom configuration directory (default: ~/.config/voicerewrite/)"
-    )
-
-    parser.add_argument(
+    cli_parser.add_argument(
         "--format",
         choices=["text", "json", "csv"],
         default="text",
         help="Output format (default: text)"
     )
 
-    # Subcommands
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    # Nested subcommands for CLI
+    cli_subparsers = cli_parser.add_subparsers(dest="cli_command", help="CLI commands")
 
     # list-notes command
-    subparsers.add_parser(
+    cli_subparsers.add_parser(
         "list-notes",
         help="List all notes"
     )
 
     # show-note command
-    show_parser = subparsers.add_parser(
+    show_parser = cli_subparsers.add_parser(
         "show-note",
         help="Show details of a specific note"
     )
@@ -298,13 +274,13 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     # list-tags command
-    subparsers.add_parser(
+    cli_subparsers.add_parser(
         "list-tags",
         help="List all tags in hierarchy"
     )
 
     # search command
-    search_parser = subparsers.add_parser(
+    search_parser = cli_subparsers.add_parser(
         "search",
         help="Search notes by text and/or tags"
     )
@@ -320,55 +296,44 @@ def create_parser() -> argparse.ArgumentParser:
         help="Tag path to filter by (can be specified multiple times for AND logic)"
     )
 
-    return parser
 
+def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
+    """Run CLI with given arguments.
 
-def main() -> NoReturn:
-    """Main CLI entry point.
+    Args:
+        config_dir: Custom configuration directory or None for default
+        args: Parsed command-line arguments (should have cli_command attribute)
 
-    Exits:
-        Exits with command return code
+    Returns:
+        Exit code (0 for success, 1 for error)
     """
-    parser = create_parser()
-    args = parser.parse_args()
+    # Check if CLI command was provided
+    if not hasattr(args, 'cli_command') or not args.cli_command:
+        print("Error: No CLI command specified. Use --help for available commands.", file=sys.stderr)
+        return 1
 
-    # Check if command was provided
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
-
-    # Initialize config
-    config = Config(config_dir=args.config_dir)
-
-    # Initialize database
+    # Initialize config and database
+    config = Config(config_dir=config_dir)
     db_path_str = config.get("database_file")
     db_path = Path(db_path_str)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     db = Database(db_path)
 
     # Execute command
     try:
-        if args.command == "list-notes":
-            exit_code = cmd_list_notes(db, args)
-        elif args.command == "show-note":
-            exit_code = cmd_show_note(db, args)
-        elif args.command == "list-tags":
-            exit_code = cmd_list_tags(db, args)
-        elif args.command == "search":
-            exit_code = cmd_search(db, args)
+        if args.cli_command == "list-notes":
+            return cmd_list_notes(db, args)
+        elif args.cli_command == "show-note":
+            return cmd_show_note(db, args)
+        elif args.cli_command == "list-tags":
+            return cmd_list_tags(db, args)
+        elif args.cli_command == "search":
+            return cmd_search(db, args)
         else:
-            parser.print_help()
-            exit_code = 1
+            print(f"Error: Unknown command '{args.cli_command}'", file=sys.stderr)
+            return 1
     except ValidationError as e:
         print(f"Error: Invalid {e.field} - {e.message}", file=sys.stderr)
-        exit_code = 1
-    except Exception as e:
-        logger.error(f"Error executing command: {e}")
-        exit_code = 1
+        return 1
     finally:
         db.close()
-
-    sys.exit(exit_code)
-
-
-if __name__ == "__main__":
-    main()

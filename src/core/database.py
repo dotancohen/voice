@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
-from core.validation import (
+from .validation import (
     validate_note_id,
     validate_tag_id,
     validate_tag_ids,

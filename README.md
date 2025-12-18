@@ -42,96 +42,86 @@ pip install -r requirements-dev.txt
 
 ## Usage
 
-### GUI Mode
+All interfaces are accessed through a unified entry point: `python -m src.main`
 
-Launch the graphical interface (default dark theme):
-```bash
-python -m src.main
-```
+### GUI Mode (Default)
 
-Launch in light theme:
+Launch the graphical interface:
 ```bash
-python -m src.main --theme light
-```
-
-Launch in dark theme (explicit):
-```bash
-python -m src.main --theme dark
+python -m src.main              # Uses default interface from config (GUI if not set)
+python -m src.main gui          # Explicit GUI mode with dark theme
+python -m src.main gui --theme light   # Light theme
+python -m src.main gui --theme dark    # Dark theme (explicit)
 ```
 
 With custom configuration directory:
 ```bash
-python -m src.main -d /path/to/custom/config
-```
-
-Combine options:
-```bash
-python -m src.main --theme light -d /path/to/custom/config
+python -m src.main -d /path/to/config gui --theme light
 ```
 
 ### CLI Mode
 
 List all notes:
 ```bash
-python -m src.cli list-notes
-python -m src.cli --format json list-notes  # JSON output
-python -m src.cli --format csv list-notes   # CSV output
+python -m src.main cli list-notes
+python -m src.main cli --format json list-notes  # JSON output
+python -m src.main cli --format csv list-notes   # CSV output
 ```
 
 Show specific note:
 ```bash
-python -m src.cli show-note 1
-python -m src.cli --format json show-note 1
+python -m src.main cli show-note 1
+python -m src.main cli --format json show-note 1
 ```
 
 List tags (hierarchical):
 ```bash
-python -m src.cli list-tags
+python -m src.main cli list-tags
 ```
 
 Search notes:
 ```bash
 # Search by text
-python -m src.cli search --text "meeting"
+python -m src.main cli search --text "meeting"
 
 # Search by tag
-python -m src.cli search --tag Work
+python -m src.main cli search --tag Work
 
 # Search by hierarchical tag path
-python -m src.cli search --tag Geography/Europe/France/Paris
+python -m src.main cli search --tag Geography/Europe/France/Paris
 
 # Multiple tags (AND logic)
-python -m src.cli search --tag Work --tag Work/Projects
+python -m src.main cli search --tag Work --tag Work/Projects
 
 # Combined text and tags
-python -m src.cli search --text "meeting" --tag Work
+python -m src.main cli search --text "meeting" --tag Work
 
 # JSON output
-python -m src.cli --format json search --tag Personal
+python -m src.main cli --format json search --tag Personal
 ```
 
 Custom configuration directory (all commands):
 ```bash
-python -m src.cli -d /path/to/config list-notes
+python -m src.main -d /path/to/config cli list-notes
 ```
 
 ### Web API Mode
 
 Start the Flask web server:
 ```bash
-python -m src.web
+python -m src.main web
 ```
 
 Server runs on `http://127.0.0.1:5000` by default.
 
 Custom host/port:
 ```bash
-python -m src.web --host 0.0.0.0 --port 8080
+python -m src.main web --host 0.0.0.0 --port 8080
 ```
 
 Enable debug mode:
 ```bash
-python -m src.web --debug
+python -m src.main web --debug
 ```
 
 **API Endpoints:**
@@ -262,6 +252,7 @@ Configuration is stored in `<config-dir>/config.json`. The default location is `
 ```json
 {
   "database_file": "/path/to/notes.db",
+  "default_interface": "gui",
   "window_geometry": null,
   "implementations": {},
   "themes": {
@@ -279,6 +270,7 @@ Configuration is stored in `<config-dir>/config.json`. The default location is `
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `database_file` | string | `<config_dir>/notes.db` | Path to SQLite database file |
+| `default_interface` | string | `gui` | Default interface when no subcommand given (`gui`, `cli`, or `web`) |
 | `window_geometry` | object\|null | `null` | Saved window size/position (set automatically) |
 | `implementations` | object | `{}` | Reserved for future component selection |
 | `themes.colours.warnings` | string | `#FFFF00` | Warning highlight color (backward compatible) |
@@ -356,11 +348,11 @@ Multiple terms are combined with AND logic:
 - No audio recording functionality (coming in future iterations)
 
 ## Project Structure
+- `src/main.py` - Unified entry point (dispatches to GUI, CLI, or Web)
 - `src/core/` - Business logic and data access (zero Qt dependencies)
 - `src/ui/` - GUI components (PySide6)
-- `src/cli.py` - Command-line interface
-- `src/web.py` - Flask REST API
-- `src/main.py` - GUI entry point
+- `src/cli.py` - Command-line interface module
+- `src/web.py` - Flask REST API module
 - `tests/unit/` - Core functionality tests
 - `tests/gui/` - GUI integration tests
 - `tests/cli/` - CLI tests

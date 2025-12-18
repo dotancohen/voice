@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,7 +24,7 @@ class TestListNotes:
     ) -> None:
         """Test listing notes in text format."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "-d", str(test_db_path.parent), "list-notes"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-notes"],
             capture_output=True,
             text=True
         )
@@ -40,9 +41,9 @@ class TestListNotes:
         """Test listing notes in JSON format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "--format", "json",
+                "cli", "--format", "json",
                 "list-notes"
             ],
             capture_output=True,
@@ -62,9 +63,9 @@ class TestListNotes:
         """Test listing notes in CSV format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "--format", "csv",
+                "cli", "--format", "csv",
                 "list-notes"
             ],
             capture_output=True,
@@ -84,7 +85,7 @@ class TestListNotes:
         db.close()
 
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "-d", str(test_db_path.parent), "list-notes"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-notes"],
             capture_output=True,
             text=True
         )
@@ -102,7 +103,7 @@ class TestListTags:
     ) -> None:
         """Test listing tags in text format with hierarchy."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "-d", str(test_db_path.parent), "list-tags"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-tags"],
             capture_output=True,
             text=True
         )
@@ -122,9 +123,9 @@ class TestListTags:
         """Test listing tags in JSON format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "--format", "json",
+                "cli", "--format", "json",
                 "list-tags"
             ],
             capture_output=True,
@@ -144,9 +145,9 @@ class TestListTags:
         """Test listing tags in CSV format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "--format", "csv",
+                "cli", "--format", "csv",
                 "list-tags"
             ],
             capture_output=True,
@@ -163,7 +164,7 @@ class TestListTags:
     ) -> None:
         """Test that tag hierarchy is properly displayed."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "-d", str(test_db_path.parent), "list-tags"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-tags"],
             capture_output=True,
             text=True
         )

@@ -21,27 +21,16 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-
-# Add src to path for both direct execution and module execution
-_src_path = Path(__file__).parent
-if str(_src_path) not in sys.path:
-    sys.path.insert(0, str(_src_path))
 
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
-from core.config import Config
-from core.database import Database
-from core.validation import ValidationError
+from src.core.config import Config
+from src.core.database import Database
+from src.core.validation import ValidationError
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 # Global database instance
@@ -64,6 +53,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
     config = Config(config_dir=config_dir)
     db_path_str = config.get("database_file")
     db_path = Path(db_path_str)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
     global db
     db = Database(db_path)
@@ -183,7 +173,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
 
             # If any requested tag was not found, return empty results
             if any_tag_not_found:
-                notes = []
+                notes: List[Dict[str, Any]] = []
             else:
                 # Perform search
                 notes = db.search_notes(
@@ -208,57 +198,55 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
     return app
 
 
-def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments.
+def add_web_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Add web subparser and its arguments.
 
-    Returns:
-        Parsed arguments namespace
+    Args:
+        subparsers: Parent subparsers object to add web parser to
     """
-    parser = argparse.ArgumentParser(
-        description="Voice Rewrite - Web API server",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+    web_parser = subparsers.add_parser(
+        "web",
+        help="Start web API server",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    parser.add_argument(
-        "-d", "--config-dir",
-        type=Path,
-        default=None,
-        help="Custom configuration directory (default: ~/.config/voicerewrite/)"
-    )
-
-    parser.add_argument(
+    web_parser.add_argument(
         "--host",
         type=str,
         default="127.0.0.1",
         help="Host to bind to (default: 127.0.0.1)"
     )
 
-    parser.add_argument(
+    web_parser.add_argument(
         "--port",
         type=int,
         default=5000,
         help="Port to bind to (default: 5000)"
     )
 
-    parser.add_argument(
+    web_parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug mode"
     )
 
-    return parser.parse_args()
 
+def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
+    """Run web server with given arguments.
 
-def main() -> None:
-    """Main web API entry point."""
-    args = parse_arguments()
+    Args:
+        config_dir: Custom configuration directory or None for default
+        args: Parsed command-line arguments (should have host, port, debug attributes)
 
+    Returns:
+        Exit code (0 for success)
+    """
     logger.info("Starting Voice Rewrite Web API")
-    if args.config_dir:
-        logger.info(f"Using custom config directory: {args.config_dir}")
+    if config_dir:
+        logger.info(f"Using custom config directory: {config_dir}")
 
     # Create Flask app
-    app = create_app(config_dir=args.config_dir)
+    app = create_app(config_dir=config_dir)
 
     # Run server
     app.run(
@@ -267,6 +255,4 @@ def main() -> None:
         debug=args.debug
     )
 
-
-if __name__ == "__main__":
-    main()
+    return 0

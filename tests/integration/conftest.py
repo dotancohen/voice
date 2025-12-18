@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Generator
@@ -112,11 +113,12 @@ def cli_runner(test_config_dir: Path):
             Tuple of (return_code, stdout, stderr).
         """
         cmd = [
-            "python3",
+            sys.executable,
             "-m",
-            "src.cli",
+            "src.main",
             "-d",
             str(test_config_dir),
+            "cli",
             *args,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)

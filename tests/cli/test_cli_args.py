@@ -6,6 +6,7 @@ Tests CLI argument parsing, help messages, and error handling.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,32 +18,32 @@ from core.database import Database
 class TestCLIArguments:
     """Test CLI argument parsing."""
 
-    def test_no_command_shows_help(self) -> None:
-        """Test that running CLI without command shows help."""
+    def test_no_command_shows_error(self) -> None:
+        """Test that running CLI without command shows error message."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli"],
+            [sys.executable, "-m", "src.main", "cli"],
             capture_output=True,
             text=True
         )
 
         assert result.returncode == 1
-        assert "usage:" in result.stdout.lower()
-        assert "list-notes" in result.stdout
-        assert "show-note" in result.stdout
-        assert "list-tags" in result.stdout
-        assert "search" in result.stdout
+        assert "No CLI command specified" in result.stderr
+        assert "--help" in result.stderr
 
     def test_help_flag(self) -> None:
-        """Test --help flag."""
+        """Test --help flag shows CLI subcommands."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "--help"],
             capture_output=True,
             text=True
         )
 
         assert result.returncode == 0
         assert "usage:" in result.stdout.lower()
-        assert "--config-dir" in result.stdout
+        assert "list-notes" in result.stdout
+        assert "show-note" in result.stdout
+        assert "list-tags" in result.stdout
+        assert "search" in result.stdout
 
     def test_custom_config_dir(
         self, tmp_path: Path, populated_db: Database, test_db_path: Path
@@ -50,9 +51,9 @@ class TestCLIArguments:
         """Test using custom config directory."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "list-notes"
+                "cli", "list-notes"
             ],
             capture_output=True,
             text=True
@@ -64,7 +65,7 @@ class TestCLIArguments:
     def test_invalid_command(self) -> None:
         """Test running invalid command."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "invalid-command"],
+            [sys.executable, "-m", "src.main", "cli", "invalid-command"],
             capture_output=True,
             text=True
         )
@@ -75,9 +76,9 @@ class TestCLIArguments:
         """Test show-note without providing note ID."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "show-note"
+                "cli", "show-note"
             ],
             capture_output=True,
             text=True
@@ -95,9 +96,9 @@ class TestCLIOutputFormats:
         """Test specifying invalid output format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "--format", "invalid",
+                "cli", "--format", "invalid",
                 "list-notes"
             ],
             capture_output=True,
@@ -113,9 +114,9 @@ class TestCLIOutputFormats:
         """Test that --format must come before subcommand."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
+                sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "--format", "json",
+                "cli", "--format", "json",
                 "list-notes"
             ],
             capture_output=True,
@@ -134,7 +135,7 @@ class TestCLISubcommandHelp:
     def test_list_notes_help(self) -> None:
         """Test list-notes help."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "list-notes", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "list-notes", "--help"],
             capture_output=True,
             text=True
         )
@@ -145,7 +146,7 @@ class TestCLISubcommandHelp:
     def test_show_note_help(self) -> None:
         """Test show-note help."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "show-note", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "show-note", "--help"],
             capture_output=True,
             text=True
         )
@@ -156,7 +157,7 @@ class TestCLISubcommandHelp:
     def test_list_tags_help(self) -> None:
         """Test list-tags help."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "list-tags", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "list-tags", "--help"],
             capture_output=True,
             text=True
         )
@@ -167,7 +168,7 @@ class TestCLISubcommandHelp:
     def test_search_help(self) -> None:
         """Test search help."""
         result = subprocess.run(
-            ["python3", "-m", "src.cli", "search", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "search", "--help"],
             capture_output=True,
             text=True
         )

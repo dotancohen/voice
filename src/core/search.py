@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.database import Database
+from .database import Database
 
 logger = logging.getLogger(__name__)
 

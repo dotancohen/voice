@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,7 @@ class TestShowNote:
         """Test showing note in text format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
-                "-d", str(test_db_path.parent),
+                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "show-note", "1"
             ],
             capture_output=True,
@@ -43,8 +43,7 @@ class TestShowNote:
         """Test showing note in JSON format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
-                "-d", str(test_db_path.parent),
+                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "--format", "json",
                 "show-note", "1"
             ],
@@ -64,8 +63,7 @@ class TestShowNote:
         """Test showing note in CSV format."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
-                "-d", str(test_db_path.parent),
+                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "--format", "csv",
                 "show-note", "2"
             ],
@@ -84,8 +82,7 @@ class TestShowNote:
         """Test showing note that has tags."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
-                "-d", str(test_db_path.parent),
+                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "show-note", "1"
             ],
             capture_output=True,
@@ -102,8 +99,7 @@ class TestShowNote:
         """Test showing non-existent note."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
-                "-d", str(test_db_path.parent),
+                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "show-note", "9999"
             ],
             capture_output=True,
@@ -119,8 +115,7 @@ class TestShowNote:
         """Test showing note with Hebrew content."""
         result = subprocess.run(
             [
-                "python3", "-m", "src.cli",
-                "-d", str(test_db_path.parent),
+                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "show-note", "6"
             ],
             capture_output=True,
