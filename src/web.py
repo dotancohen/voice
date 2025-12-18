@@ -23,7 +23,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn, Optional
+from typing import Any, Dict, List, Optional, Union
 
 # Add src to path for both direct execution and module execution
 _src_path = Path(__file__).parent
@@ -90,7 +90,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
 
     # Routes
     @app.route("/api/notes", methods=["GET"])
-    def get_notes() -> Response:
+    def get_notes() -> Response | tuple[Response, int]:
         """Get all notes.
 
         Returns:
@@ -124,7 +124,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/tags", methods=["GET"])
-    def get_tags() -> Response:
+    def get_tags() -> Response | tuple[Response, int]:
         """Get all tags.
 
         Returns:
@@ -249,12 +249,8 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> NoReturn:
-    """Main web API entry point.
-
-    Exits:
-        Exits with application return code
-    """
+def main() -> None:
+    """Main web API entry point."""
     args = parse_arguments()
 
     logger.info("Starting Voice Rewrite Web API")

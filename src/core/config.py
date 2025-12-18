@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class Config:
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     config = json.load(f)
                 logger.info(f"Loaded config from {self.config_file}")
-                return config
+                return cast(Dict[str, Any], config)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse config file: {e}")
                 logger.info("Using default configuration")
@@ -137,13 +137,13 @@ class Config:
 
             # Check for generic "warnings" key first (backward compatibility)
             if "warnings" in colours:
-                return colours["warnings"]
+                return cast(str, colours["warnings"])
 
             # Otherwise use theme-specific keys
             if theme == "light":
-                return colours.get("warnings_light", "#FF8C00")  # Dark orange for light theme
+                return cast(str, colours.get("warnings_light", "#FF8C00"))  # Dark orange for light theme
             else:
-                return colours.get("warnings_dark", "#FFFF00")  # Yellow for dark theme
+                return cast(str, colours.get("warnings_dark", "#FFFF00"))  # Yellow for dark theme
         except (AttributeError, TypeError):
             # Fallback defaults
             return "#FF8C00" if theme == "light" else "#FFFF00"

@@ -7,18 +7,19 @@ Each note displays created_at on the first line and truncated content on the sec
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QKeyEvent,
+    QPainter,
+    QPalette,
     QTextCharFormat,
     QTextCursor,
     QFont,
     QTextDocument,
     QAbstractTextDocumentLayout,
-    QPalette,
 )
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -48,6 +49,10 @@ logger = logging.getLogger(__name__)
 # Constants
 CONTENT_TRUNCATE_LENGTH = 100
 
+# Custom item data roles (typed to satisfy mypy)
+ROLE_NOTE_ID = Qt.ItemDataRole.UserRole
+ROLE_HTML_TEXT = Qt.ItemDataRole(int(Qt.ItemDataRole.UserRole) + 1)
+
 
 class SearchTextEdit(QTextEdit):
     """Custom QTextEdit that triggers search on Enter key."""
@@ -68,7 +73,7 @@ class SearchTextEdit(QTextEdit):
 class HTMLDelegate(QStyledItemDelegate):
     """Custom delegate to render HTML in list widget items."""
 
-    def __init__(self, parent=None, theme: str = "dark"):
+    def __init__(self, parent: Optional[QWidget] = None, theme: str = "dark") -> None:
         """Initialize the delegate.
 
         Args:
@@ -78,10 +83,10 @@ class HTMLDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.theme = theme
 
-    def paint(self, painter, option: QStyleOptionViewItem, index):
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: Union[QModelIndex, QPersistentModelIndex]) -> None:
         """Paint the item with HTML rendering."""
         # Get the HTML text from UserRole+1
-        html_text = index.data(Qt.ItemDataRole.UserRole + 1)
+        html_text = index.data(ROLE_HTML_TEXT)
         if not html_text:
             super().paint(painter, option, index)
             return
@@ -143,9 +148,9 @@ class HTMLDelegate(QStyledItemDelegate):
         )
         painter.restore()
 
-    def sizeHint(self, option: QStyleOptionViewItem, index):
+    def sizeHint(self, option: QStyleOptionViewItem, index: Union[QModelIndex, QPersistentModelIndex]) -> QSize:
         """Calculate size hint for item."""
-        html_text = index.data(Qt.ItemDataRole.UserRole + 1)
+        html_text = index.data(ROLE_HTML_TEXT)
         if not html_text:
             return super().sizeHint(option, index)
 
@@ -294,10 +299,10 @@ class NotesListPane(QWidget):
 
         # Create item
         item = QListWidgetItem()
-        item.setData(Qt.ItemDataRole.UserRole, note["id"])  # Store note_id
+        item.setData(ROLE_NOTE_ID, note["id"])  # Store note_id
 
         # Store the HTML for custom delegate rendering
-        item.setData(Qt.ItemDataRole.UserRole + 1, html_text)
+        item.setData(ROLE_HTML_TEXT, html_text)
 
         # Set plain text for display role (used by default rendering/accessibility)
         plain_text = f"{created_at}\n{content}"
@@ -311,7 +316,7 @@ class NotesListPane(QWidget):
         Args:
             item: Clicked list widget item
         """
-        note_id = item.data(Qt.ItemDataRole.UserRole)
+        note_id = item.data(ROLE_NOTE_ID)
         logger.info(f"Note selected: ID {note_id}")
         self.note_selected.emit(note_id)
 

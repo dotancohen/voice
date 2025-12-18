@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from core.validation import (
     validate_note_id,
@@ -193,8 +193,7 @@ class Database:
             with self.conn:
                 cursor = self.conn.cursor()
                 cursor.execute(query, (note_id,))
-                result = cursor.fetchone()
-                return result
+                return cast(Optional[Dict[str, Any]], cursor.fetchone())
         except sqlite3.DatabaseError as e:
             logger.error(f"Database error retrieving note {note_id}: {e}")
             raise
@@ -307,7 +306,7 @@ class Database:
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(query, (tag_id,))
-            return cursor.fetchone()
+            return cast(Optional[Dict[str, Any]], cursor.fetchone())
 
     def get_tags_by_name(self, name: str) -> List[Dict[str, Any]]:
         """Get all tags with a given name (case-insensitive).
@@ -346,6 +345,7 @@ class Database:
                 continue
 
             # Find tag with this name and current parent
+            params: Tuple[str, ...] | Tuple[str, int]
             if current_parent_id is None:
                 query = "SELECT id, name, parent_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id IS NULL"
                 params = (part,)
