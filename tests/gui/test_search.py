@@ -13,6 +13,7 @@ import pytest
 
 from core.config import Config
 from core.database import Database
+from core.search import parse_search_input
 from ui.notes_list_pane import NotesListPane
 
 
@@ -207,39 +208,29 @@ class TestSearchParsing:
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test parsing mixed text and tag terms."""
-        pane = NotesListPane(test_config, populated_db)
-
         # Parse "hello tag:Work world tag:Projects"
-        tag_names, free_text = pane._parse_search_input(
-            "hello tag:Work world tag:Projects"
-        )
+        result = parse_search_input("hello tag:Work world tag:Projects")
 
-        assert tag_names == ["Work", "Projects"]
-        assert free_text == "hello world"
+        assert result.tag_terms == ["Work", "Projects"]
+        assert result.free_text == "hello world"
 
     def test_parses_hierarchical_paths(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test parsing hierarchical tag paths."""
-        pane = NotesListPane(test_config, populated_db)
+        result = parse_search_input("tag:Geography/Europe/France/Paris reunion")
 
-        tag_names, free_text = pane._parse_search_input(
-            "tag:Geography/Europe/France/Paris reunion"
-        )
-
-        assert tag_names == ["Geography/Europe/France/Paris"]
-        assert free_text == "reunion"
+        assert result.tag_terms == ["Geography/Europe/France/Paris"]
+        assert result.free_text == "reunion"
 
     def test_parses_empty_string(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
         """Test parsing empty search string."""
-        pane = NotesListPane(test_config, populated_db)
+        result = parse_search_input("")
 
-        tag_names, free_text = pane._parse_search_input("")
-
-        assert tag_names == []
-        assert free_text == ""
+        assert result.tag_terms == []
+        assert result.free_text == ""
 
 
 @pytest.mark.gui

@@ -35,6 +35,13 @@ from PySide6.QtWidgets import (
 
 from core.config import Config
 from core.database import Database
+from core.search import (
+    parse_search_input,
+    get_tag_full_path,
+    find_ambiguous_tags,
+    execute_search,
+    build_tag_search_term,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -327,59 +334,18 @@ class NotesListPane(QWidget):
         tag_name = tag["name"]
         logger.info(f"Sidebar tag clicked: {tag_name} (ID: {tag_id})")
 
-        # Check if this tag name is ambiguous (appears more than once)
-        matching_tags = self.db.get_tags_by_name(tag_name)
-        is_ambiguous = len(matching_tags) > 1
+        # Build the appropriate search term (uses full path if ambiguous)
+        tag_search = build_tag_search_term(self.db, tag_id)
 
-        if is_ambiguous:
-            # Tag name is ambiguous: use full path for THIS specific tag
-            tag_path = self._get_tag_full_path(tag_id)
-            tag_search = f"tag:{tag_path}"
-            logger.info(f"Tag name '{tag_name}' is ambiguous, using full path: {tag_path}")
+        # Check if already in search field
+        current_text = self.search_field.toPlainText()
+        if tag_search.lower() not in current_text.lower():
+            # Append to search field
+            new_text = f"{current_text} {tag_search}".strip()
+            self.search_field.setPlainText(new_text)
 
-            # Check if already in search field
-            current_text = self.search_field.toPlainText()
-            if tag_search.lower() not in current_text.lower():
-                # Append to search field
-                new_text = f"{current_text} {tag_search}".strip()
-                self.search_field.setPlainText(new_text)
-
-            # Run search immediately (highlighting will happen in on_search_field_edited)
-            self.perform_search()
-        else:
-            # Tag name is not ambiguous: use just the tag name
-            tag_search = f"tag:{tag_name}"
-
-            # Check if already in search field
-            current_text = self.search_field.toPlainText()
-            if tag_search.lower() not in current_text.lower():
-                # Append to search field
-                new_text = f"{current_text} {tag_search}".strip()
-                self.search_field.setPlainText(new_text)
-
-            # Run search immediately
-            self.perform_search()
-
-    def _get_tag_full_path(self, tag_id: int) -> str:
-        """Get the full hierarchical path for a tag.
-
-        Args:
-            tag_id: Tag ID to get path for
-
-        Returns:
-            Full path like "Europe/France/Paris" or just "Work" for root tags.
-        """
-        path_parts: List[str] = []
-        current_id: Optional[int] = tag_id
-
-        while current_id is not None:
-            tag = self.db.get_tag(current_id)
-            if not tag:
-                break
-            path_parts.insert(0, tag["name"])
-            current_id = tag.get("parent_id")
-
-        return "/".join(path_parts)
+        # Run search immediately (highlighting will happen in on_search_field_edited)
+        self.perform_search()
 
     def on_search_field_edited(self) -> None:
         """Handle search field text changes and highlight ambiguous tags."""
@@ -392,15 +358,9 @@ class NotesListPane(QWidget):
             # Get plain text to avoid recursive updates
             text = self.search_field.toPlainText()
 
-            # Parse to find tag terms
-            tag_names, _ = self._parse_search_input(text)
-
-            # Check which tags are ambiguous
-            ambiguous_tag_terms: List[str] = []
-            for tag_name in tag_names:
-                matching_tags = self.db.get_all_tags_by_path(tag_name)
-                if len(matching_tags) > 1:
-                    ambiguous_tag_terms.append(f"tag:{tag_name}")
+            # Parse to find tag terms and check which are ambiguous
+            parsed = parse_search_input(text)
+            ambiguous_tag_terms = find_ambiguous_tags(self.db, parsed.tag_terms)
 
             # Save cursor position before making changes
             cursor_position = self.search_field.textCursor().position()
@@ -412,7 +372,7 @@ class NotesListPane(QWidget):
             if ambiguous_tag_terms:
                 self._apply_highlighting(text, ambiguous_tag_terms, cursor_position)
             else:
-                # No ambiguous tags - ensure all text is white
+                # No ambiguous tags - ensure all text is default color
                 self._clear_all_formatting(text, cursor_position)
 
             self.search_field.blockSignals(False)
@@ -506,88 +466,12 @@ class NotesListPane(QWidget):
         search_text = self.search_field.toPlainText().strip()
         logger.info(f"Performing search: '{search_text}'")
 
-        # Parse search input
-        tag_names, free_text = self._parse_search_input(search_text)
+        # Execute search using the search module
+        result = execute_search(self.db, search_text)
 
-        # Collect tag ID groups (each tag term with its descendants is one group)
-        # For ambiguous tags, all matching tags' descendants go into ONE group (OR logic)
-        tag_id_groups: List[List[int]] = []
-        any_tag_not_found = False
-
-        for tag_name in tag_names:
-            # Get ALL tags matching this path (handles hierarchical paths and ambiguous names)
-            matching_tags = self.db.get_all_tags_by_path(tag_name)
-
-            if matching_tags:
-                # Collect all descendants from all matching tags into ONE group (OR logic)
-                all_descendants: List[int] = []
-                for tag in matching_tags:
-                    descendants = self.db.get_tag_descendants(tag["id"])
-                    all_descendants.extend(descendants)
-
-                # Remove duplicates
-                all_descendants = list(set(all_descendants))
-                tag_id_groups.append(all_descendants)
-
-                # Check if ambiguous (multiple matches)
-                if len(matching_tags) > 1:
-                    logger.info(
-                        f"Tag '{tag_name}' is ambiguous - matched {len(matching_tags)} tags, "
-                        f"total {len(all_descendants)} tag IDs with descendants (OR logic)"
-                    )
-                else:
-                    logger.info(
-                        f"Tag '{tag_name}' matched {len(all_descendants)} tags (including descendants)"
-                    )
-            else:
-                logger.warning(f"Tag path '{tag_name}' not found")
-                any_tag_not_found = True
-
-        # Note: Highlighting of ambiguous tags is now handled in on_search_field_edited()
-
-        # If any requested tag was not found, return empty results
-        if any_tag_not_found:
-            notes = []
-        # Perform search
-        elif free_text or tag_id_groups:
-            notes = self.db.search_notes(
-                text_query=free_text if free_text else None,
-                tag_id_groups=tag_id_groups if tag_id_groups else None
-            )
-        else:
-            # No search criteria, show all notes
-            notes = self.db.get_all_notes()
-
-        logger.info(f"Search returned {len(notes)} notes")
+        # Log any not-found tags
+        for tag in result.not_found_tags:
+            logger.warning(f"Tag path '{tag}' not found")
 
         # Update display
-        self.load_notes(notes)
-
-    def _parse_search_input(self, search_input: str) -> tuple[List[str], str]:
-        """Parse search input to extract tag: keywords and free text.
-
-        Args:
-            search_input: Raw search input from search field
-
-        Returns:
-            Tuple of (tag_names, free_text) where tag_names may include paths.
-        """
-        if not search_input:
-            return ([], "")
-
-        words = search_input.split()
-        tag_names: List[str] = []
-        text_words: List[str] = []
-
-        for word in words:
-            if word.lower().startswith("tag:"):
-                # Extract tag name/path (everything after "tag:")
-                tag_name = word[4:]  # Remove "tag:" prefix
-                if tag_name:
-                    tag_names.append(tag_name)
-            else:
-                text_words.append(word)
-
-        free_text = " ".join(text_words).strip()
-
-        return (tag_names, free_text)
+        self.load_notes(result.notes)
