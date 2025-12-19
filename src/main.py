@@ -9,7 +9,8 @@ This module provides a unified entry point for all interfaces:
 
 Usage:
     python -m src.main                     # Use default interface from config (or GUI)
-    python -m src.main gui [--theme dark]  # Launch GUI
+    python -m src.main --theme light       # Launch default interface with light theme
+    python -m src.main gui                 # Launch GUI
     python -m src.main tui                 # Launch TUI
     python -m src.main cli list-notes      # Use CLI
     python -m src.main web [--port 8080]   # Start web server
@@ -130,6 +131,13 @@ Examples:
         type=Path,
         default=None,
         help="Custom configuration directory (default: ~/.config/voicerewrite/)"
+    )
+
+    parser.add_argument(
+        "--theme",
+        choices=["dark", "light"],
+        default="dark",
+        help="UI theme for GUI (default: dark)"
     )
 
     # Create subparsers for each interface
