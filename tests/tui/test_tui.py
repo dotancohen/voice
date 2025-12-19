@@ -9,7 +9,7 @@ import pytest
 from pathlib import Path
 from textual.widgets import Tree, ListView, Static, TextArea, Button
 
-from src.tui import VoiceRewriteTUI, TagsTree, NotesList, NoteDetail
+from src.tui import VoiceRewriteTUI, TagsTree, NotesList, NotesListView, NoteDetail, SearchInput
 from src.core.config import Config
 from src.core.database import Database
 
@@ -130,12 +130,11 @@ class TestNotesList:
             db_notes = populated_db.get_all_notes()
             assert len(notes_list.notes) == len(db_notes)
 
-    async def test_filter_notes_by_tag(self, populated_db: Database, test_config: Config) -> None:
-        """Test that selecting a tag filters the notes list."""
+    async def test_search_by_tag(self, populated_db: Database, test_config: Config) -> None:
+        """Test that selecting a tag populates search and filters notes."""
         app = VoiceRewriteTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
-            initial_count = len(notes_list.notes)
 
             # Focus tags tree and select a tag
             tree = app.query_one("#tags-tree", TagsTree)
@@ -143,9 +142,9 @@ class TestNotesList:
             await pilot.press("down")  # Move to first tag
             await pilot.press("enter")  # Select it
 
-            # Notes should be filtered (likely fewer notes)
-            # Note: Could be same count if tag has all notes
-            assert notes_list.current_filter_tag is not None
+            # Search field should be populated with tag search
+            search_text = notes_list.get_search_text()
+            assert search_text.startswith("tag:"), f"Expected 'tag:' prefix, got: {search_text}"
 
 
 class TestNoteDetail:
@@ -170,10 +169,18 @@ class TestNoteDetail:
         """Test that selecting a note displays its content."""
         app = VoiceRewriteTUI(populated_db, test_config)
         async with app.run_test() as pilot:
-            # Focus notes list and select first note
+            # Focus notes listview (inside notes-list container) and select first note
+            listview = app.query_one("#notes-listview", NotesListView)
             notes_list = app.query_one("#notes-list", NotesList)
-            notes_list.focus()
+
+            # Verify notes are loaded
+            assert len(notes_list.notes) > 0, "No notes loaded in list"
+
+            listview.focus()
+            await pilot.pause()
+            await pilot.press("down")  # Move to first item
             await pilot.press("enter")  # Select first note
+            await pilot.pause()
 
             detail = app.query_one("#note-detail", NoteDetail)
             # Should have a note loaded
@@ -183,10 +190,18 @@ class TestNoteDetail:
         """Test that edit button reveals the text area."""
         app = VoiceRewriteTUI(populated_db, test_config)
         async with app.run_test() as pilot:
-            # Select a note first
+            # Select a note first via the listview
+            listview = app.query_one("#notes-listview", NotesListView)
             notes_list = app.query_one("#notes-list", NotesList)
-            notes_list.focus()
+
+            # Verify notes are loaded
+            assert len(notes_list.notes) > 0, "No notes loaded in list"
+
+            listview.focus()
+            await pilot.pause()
+            await pilot.press("down")  # Move to first item
             await pilot.press("enter")
+            await pilot.pause()
 
             detail = app.query_one("#note-detail", NoteDetail)
             edit_area = detail.query_one("#note-edit", TextArea)
@@ -196,6 +211,7 @@ class TestNoteDetail:
 
             # Click edit button
             await pilot.click("#edit-btn")
+            await pilot.pause()
 
             # Now should be visible
             assert edit_area.display
@@ -212,22 +228,25 @@ class TestKeyboardNavigation:
             # App should exit (no assertion needed - test passes if no error)
 
     async def test_show_all_with_a(self, populated_db: Database, test_config: Config) -> None:
-        """Test that 'a' shows all notes (clears filter)."""
+        """Test that 'a' shows all notes (clears search)."""
         app = VoiceRewriteTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
 
-            # First filter by a tag
+            # First search by a tag
             tree = app.query_one("#tags-tree", TagsTree)
             tree.focus()
             await pilot.press("down")
             await pilot.press("enter")
 
-            # Now clear filter with 'a'
+            # Verify search was set
+            assert notes_list.get_search_text() != ""
+
+            # Now clear search with 'a'
             await pilot.press("a")
 
-            # Filter should be cleared
-            assert notes_list.current_filter_tag is None
+            # Search should be cleared
+            assert notes_list.get_search_text() == ""
 
     async def test_refresh_with_r(self, populated_db: Database, test_config: Config) -> None:
         """Test that 'r' refreshes the notes list."""
@@ -240,6 +259,94 @@ class TestKeyboardNavigation:
 
             # Should still have notes after refresh
             assert len(notes_list.notes) == initial_count
+
+
+class TestSearch:
+    """Test search functionality."""
+
+    async def test_search_input_exists(self, populated_db: Database, test_config: Config) -> None:
+        """Test that search input field exists."""
+        app = VoiceRewriteTUI(populated_db, test_config)
+        async with app.run_test() as pilot:
+            search_input = app.query_one("#search-input", SearchInput)
+            assert search_input is not None
+
+    async def test_search_filters_notes(self, populated_db: Database, test_config: Config) -> None:
+        """Test that typing in search field and pressing Enter filters notes."""
+        app = VoiceRewriteTUI(populated_db, test_config)
+        async with app.run_test() as pilot:
+            notes_list = app.query_one("#notes-list", NotesList)
+
+            # Use the NotesList method to set search (search input has can_focus=False)
+            notes_list.set_search_text("Work")
+
+            # Focus listview and press up to access search, then enter to search
+            listview = app.query_one("#notes-listview", NotesListView)
+            listview.focus()
+            await pilot.press("up")  # Go to search input
+            await pilot.pause()
+            await pilot.press("enter")  # Run search
+            await pilot.pause()
+
+            # Notes should be filtered
+            assert notes_list.current_search == "Work"
+
+    async def test_clear_search_with_a(self, populated_db: Database, test_config: Config) -> None:
+        """Test that pressing 'a' clears search and shows all notes."""
+        app = VoiceRewriteTUI(populated_db, test_config)
+        async with app.run_test() as pilot:
+            notes_list = app.query_one("#notes-list", NotesList)
+            initial_count = len(notes_list.notes)
+
+            # Set a search
+            notes_list.set_search_text("test search")
+            notes_list.perform_search("test search")
+
+            # Now press 'a' to clear
+            await pilot.press("a")
+            await pilot.pause()
+
+            # Search should be cleared and all notes shown
+            assert notes_list.get_search_text() == ""
+            assert len(notes_list.notes) == initial_count
+
+    async def test_up_arrow_focuses_search(self, populated_db: Database, test_config: Config) -> None:
+        """Test that Up Arrow from notes list focuses search input."""
+        app = VoiceRewriteTUI(populated_db, test_config)
+        async with app.run_test() as pilot:
+            listview = app.query_one("#notes-listview", NotesListView)
+            search_input = app.query_one("#search-input", SearchInput)
+
+            # Focus the listview
+            listview.focus()
+            await pilot.pause()
+
+            # Press up to go to search
+            await pilot.press("up")
+            await pilot.pause()
+
+            # Search input should now have focus
+            assert search_input.has_focus
+
+    async def test_down_arrow_focuses_list(self, populated_db: Database, test_config: Config) -> None:
+        """Test that Down Arrow from search input focuses notes list."""
+        app = VoiceRewriteTUI(populated_db, test_config)
+        async with app.run_test() as pilot:
+            listview = app.query_one("#notes-listview", NotesListView)
+            search_input = app.query_one("#search-input", SearchInput)
+
+            # Focus the listview first, then go up to search
+            listview.focus()
+            await pilot.press("up")
+            await pilot.pause()
+            assert search_input.has_focus
+
+            # Press down to go back to list
+            await pilot.press("down")
+            await pilot.pause()
+
+            # Listview should now have focus
+            assert listview.has_focus
 
 
 class TestBorderColors:

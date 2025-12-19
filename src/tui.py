@@ -6,17 +6,28 @@ Uses only core/ modules - no Qt/PySide6 dependencies.
 
 Features:
     - Tags tree with collapsible hierarchy
-    - Notes list with filtering by tag
+    - Notes list with search functionality
     - Note detail view with editing
     - RTL (Hebrew/Arabic) display support
 
+Search:
+    - Click tag: Adds tag:Name to search field and runs search
+    - Type in search field + Enter: Search by text and/or tags
+    - tag:Name syntax for tag filtering
+    - Multiple tags are ANDed together
+    - Free text searches note content
+    - Press 'a' to clear search and show all notes
+    - Up Arrow from notes list: Access search field
+    - Down Arrow from search field: Return to notes list
+
 Controls:
-    - Up/Down: Navigate lists
+    - Tab: Navigate between panes (tags, notes list, detail)
+    - Up/Down: Navigate lists (Up at top of notes list → search field)
     - Left/Right: Collapse/Expand tags
-    - Enter: Select item
+    - Enter: Select item / Run search
     - e: Edit selected note
     - s: Save changes
-    - a: Show all notes
+    - a: Show all notes (clear search)
     - q: Quit
 
 RTL Support:
@@ -36,11 +47,12 @@ from rich.text import Text as RichText
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Vertical
 from textual.events import Key
 from textual.widgets import (
     Button,
     Footer,
+    Input,
     Label,
     ListItem,
     ListView,
@@ -52,9 +64,10 @@ from textual.widgets.tree import TreeNode
 
 from src.core.config import Config
 from src.core.database import Database
+from src.core.search import build_tag_search_term, execute_search
 
-# Re-export Config for type hints
-__all__ = ["VoiceRewriteTUI", "run", "add_tui_subparser"]
+# Re-export for tests
+__all__ = ["VoiceRewriteTUI", "run", "add_tui_subparser", "TagsTree", "NotesList", "NotesListView", "NoteDetail", "SearchInput"]
 
 logger = logging.getLogger(__name__)
 
@@ -178,34 +191,83 @@ class TagsTree(Tree[Dict[str, Any]]):
             add_tag_recursive(self.root, tag)
 
 
-class NotesList(ListView):
-    """Notes list widget."""
+class SearchInput(Input):
+    """Search input that skips tab focus - use Up Arrow from list to access."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # Skip this widget in tab order
+        self.can_focus = False
+
+    def on_key(self, event: Key) -> None:
+        """Handle Down Arrow to focus the notes list and select first item."""
+        if event.key == "down":
+            listview = self.app.query_one("#notes-listview", NotesListView)
+            # Only move to list if there are items
+            if len(listview.children) > 0:
+                listview.focus()
+                if listview.index is None:
+                    listview.index = 0
+                event.stop()
+
+    def on_blur(self) -> None:
+        """Disable focus again when leaving the search input."""
+        self.can_focus = False
+
+
+class NotesListView(ListView):
+    """ListView widget for displaying notes."""
+
+    def __init__(self) -> None:
+        super().__init__(id="notes-listview")
+
+    def on_focus(self) -> None:
+        """Handle focus: select item or redirect to search if empty."""
+        if len(self.children) == 0:
+            # No notes - focus search bar instead
+            search_input = self.app.query_one("#search-input", SearchInput)
+            search_input.can_focus = True
+            self.app.call_later(search_input.focus)
+        elif self.index is None:
+            # Has notes but none selected - select first
+            self.index = 0
+
+    def on_key(self, event: Key) -> None:
+        """Handle Up Arrow at top to focus search input."""
+        if event.key == "up":
+            # If at the first item, no selection, or empty list, focus search input
+            if self.index is None or self.index == 0 or len(self.children) == 0:
+                search_input = self.app.query_one("#search-input", SearchInput)
+                search_input.can_focus = True
+                search_input.focus()
+                event.stop()
+
+
+class NotesList(Container):
+    """Notes list container with search input."""
 
     def __init__(self, db: Database) -> None:
         super().__init__(id="notes-list")
         self.db = db
         self.notes: List[Dict[str, Any]] = []
         self.current_filter_tag: Optional[Dict[str, Any]] = None
+        self.current_search: str = ""
+
+    def compose(self) -> ComposeResult:
+        yield SearchInput(placeholder="Search (tag:Name or free text)...", id="search-input")
+        yield NotesListView()
 
     def on_mount(self) -> None:
         """Load notes when mounted."""
         self.refresh_notes()
 
-    def refresh_notes(self, filter_tag: Optional[Dict[str, Any]] = None) -> None:
-        """Refresh the notes list, optionally filtered by tag."""
-        self.clear()
-        self.current_filter_tag = filter_tag
-
-        if filter_tag:
-            # Get notes by tag (including descendants)
-            tag_ids = self.db.get_tag_descendants(filter_tag["id"])
-            notes = self.db.filter_notes(tag_ids)
-        else:
-            notes = self.db.get_all_notes()
-
+    def _populate_list(self, notes: List[Dict[str, Any]]) -> None:
+        """Populate the list view with notes."""
+        listview = self.query_one("#notes-listview", NotesListView)
+        listview.clear()
         self.notes = []
+
         for note in notes:
-            # Notes are already dicts from database
             note_dict = {
                 "id": note["id"],
                 "content": note["content"],
@@ -230,11 +292,69 @@ class NotesList(ListView):
             rich_text.append("\n")
             rich_text.append(content_preview)
             static = Static(rich_text, classes="rtl" if is_rtl else "")
-            self.append(ListItem(static))
+            listview.append(ListItem(static))
+
+    def refresh_notes(self, filter_tag: Optional[Dict[str, Any]] = None) -> None:
+        """Refresh the notes list, optionally filtered by tag."""
+        self.current_filter_tag = filter_tag
+
+        if filter_tag:
+            # Get notes by tag (including descendants)
+            tag_ids = self.db.get_tag_descendants(filter_tag["id"])
+            notes = self.db.filter_notes(tag_ids)
+        else:
+            notes = self.db.get_all_notes()
+
+        self._populate_list(notes)
+
+    def perform_search(self, search_text: str) -> None:
+        """Execute search and update notes list."""
+        self.current_search = search_text
+        self.current_filter_tag = None
+
+        if not search_text.strip():
+            # Empty search - show all notes
+            notes = self.db.get_all_notes()
+            self._populate_list(notes)
+            return
+
+        result = execute_search(self.db, search_text)
+
+        if result.not_found_tags:
+            self.app.notify(f"Tags not found: {', '.join(result.not_found_tags)}", severity="warning")
+
+        if result.ambiguous_tags:
+            self.app.notify(f"Ambiguous tags: {', '.join(result.ambiguous_tags)}", severity="information")
+
+        self._populate_list(result.notes)
+
+    def set_search_text(self, text: str) -> None:
+        """Set the search input text."""
+        search_input = self.query_one("#search-input", SearchInput)
+        search_input.value = text
+
+    def get_search_text(self) -> str:
+        """Get the current search input text."""
+        search_input = self.query_one("#search-input", SearchInput)
+        return search_input.value
+
+    def append_search_term(self, term: str) -> None:
+        """Append a search term if not already present."""
+        current = self.get_search_text()
+        if term.lower() not in current.lower():
+            new_text = f"{current} {term}".strip()
+            self.set_search_text(new_text)
+
+    def clear_search(self) -> None:
+        """Clear the search and show all notes."""
+        self.set_search_text("")
+        self.current_search = ""
+        self.current_filter_tag = None
+        self.refresh_notes()
 
     def show_all_notes(self) -> None:
-        """Show all notes (clear filter)."""
-        self.refresh_notes(filter_tag=None)
+        """Show all notes (clear filter and search)."""
+        self.clear_search()
 
 
 class NoteDetail(Container):
@@ -396,11 +516,21 @@ class VoiceRewriteTUI(App):
         border: solid {self._border_focused};
     }}
 
-    #notes-list ListItem {{
+    #search-input {{
+        height: 3;
+        margin: 0 0 1 0;
+    }}
+
+    #notes-listview {{
+        height: 1fr;
         overflow: hidden;
     }}
 
-    #notes-list Static {{
+    #notes-listview ListItem {{
+        overflow: hidden;
+    }}
+
+    #notes-listview Static {{
         width: 100%;
         overflow: hidden;
     }}
@@ -468,9 +598,10 @@ class VoiceRewriteTUI(App):
         yield footer
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Handle note selection."""
+        """Handle note selection from the notes listview."""
         notes_list = self.query_one("#notes-list", NotesList)
-        if event.list_view == notes_list:
+        listview = self.query_one("#notes-listview", NotesListView)
+        if event.list_view == listview:
             idx = event.list_view.index or 0
             if idx < len(notes_list.notes):
                 note = notes_list.notes[idx]
@@ -478,12 +609,31 @@ class VoiceRewriteTUI(App):
                 detail.show_note(note["id"])
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
-        """Handle tag selection - filter notes by tag."""
+        """Handle tag selection - build search term and run search."""
         if event.node.data:  # Has tag data (not root node)
             tag = event.node.data
             notes_list = self.query_one("#notes-list", NotesList)
-            notes_list.refresh_notes(filter_tag=tag)
-            self.notify(f"Filtered by: {tag['name']}")
+
+            # Build search term (uses full path for ambiguous tags)
+            tag_search = build_tag_search_term(self.db, tag["id"])
+
+            # Append to search field if not already there
+            notes_list.append_search_term(tag_search)
+
+            # Run the search
+            search_text = notes_list.get_search_text()
+            notes_list.perform_search(search_text)
+            self.notify(f"Search: {search_text}")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter pressed in search input."""
+        if event.input.id == "search-input":
+            notes_list = self.query_one("#notes-list", NotesList)
+            notes_list.perform_search(event.value)
+            if event.value:
+                self.notify(f"Search: {event.value}")
+            else:
+                self.notify("Showing all notes")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -492,16 +642,24 @@ class VoiceRewriteTUI(App):
             detail.start_editing()
         elif event.button.id == "save-btn":
             detail.save_note()
-            # Refresh notes list (preserve filter)
+            # Refresh notes list (preserve search)
             notes_list = self.query_one("#notes-list", NotesList)
-            notes_list.refresh_notes(filter_tag=notes_list.current_filter_tag)
+            search_text = notes_list.get_search_text()
+            if search_text:
+                notes_list.perform_search(search_text)
+            else:
+                notes_list.refresh_notes()
         elif event.button.id == "cancel-btn":
             detail.cancel_editing()
 
     def action_refresh(self) -> None:
-        """Refresh the notes list."""
+        """Refresh the notes list with current search."""
         notes_list = self.query_one("#notes-list", NotesList)
-        notes_list.refresh_notes(filter_tag=notes_list.current_filter_tag)
+        search_text = notes_list.get_search_text()
+        if search_text:
+            notes_list.perform_search(search_text)
+        else:
+            notes_list.refresh_notes()
         self.notify("Refreshed!")
 
     def action_save(self) -> None:
@@ -510,10 +668,10 @@ class VoiceRewriteTUI(App):
         detail.save_note()
 
     def action_show_all(self) -> None:
-        """Show all notes (clear filter)."""
+        """Show all notes (clear search)."""
         notes_list = self.query_one("#notes-list", NotesList)
-        notes_list.show_all_notes()
-        self.notify("Showing all notes")
+        notes_list.clear_search()
+        self.notify("Search cleared - showing all notes")
 
 
 def add_tui_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -557,9 +715,13 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success)
     """
-    logger.info("Starting Voice Rewrite TUI")
-    if config_dir:
-        logger.info(f"Using custom config directory: {config_dir}")
+    # Suppress console logging during TUI - it interferes with Textual's display
+    # Remove all StreamHandlers temporarily
+    root_logger = logging.getLogger()
+    original_handlers = root_logger.handlers[:]
+    for handler in original_handlers:
+        if isinstance(handler, logging.StreamHandler):
+            root_logger.removeHandler(handler)
 
     # Initialize config and database
     config = Config(config_dir=config_dir)
@@ -568,7 +730,6 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     db = Database(db_path)
-    logger.info(f"Database location: {db_path}")
 
     # Create and run TUI app
     app = VoiceRewriteTUI(db, config)
@@ -577,5 +738,9 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
         app.run()
     finally:
         db.close()
+        # Restore original handlers
+        for handler in original_handlers:
+            if handler not in root_logger.handlers:
+                root_logger.addHandler(handler)
 
     return 0

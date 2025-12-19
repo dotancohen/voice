@@ -196,7 +196,7 @@ def execute_search(db: Database, search_input: str) -> SearchResult:
 
         if not_found:
             not_found_tags.append(tag_term)
-            logger.warning(f"Tag path '{tag_term}' not found")
+            logger.info(f"Tag path '{tag_term}' not found")
         else:
             tag_id_groups.append(tag_ids)
 
