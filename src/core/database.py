@@ -198,6 +198,44 @@ class Database:
             logger.error(f"Database error retrieving note {note_id}: {e}")
             raise
 
+    def update_note(self, note_id: int, content: str) -> bool:
+        """Update a note's content.
+
+        Args:
+            note_id: The ID of the note to update
+            content: The new content for the note
+
+        Returns:
+            True if the note was updated, False if note not found.
+
+        Raises:
+            ValidationError: If note_id or content is invalid.
+            sqlite3.DatabaseError: If database update fails.
+        """
+        validate_note_id(note_id)
+        if not content or not content.strip():
+            raise ValidationError("Note content cannot be empty")
+
+        query = """
+            UPDATE notes
+            SET content = ?, modified_at = datetime('now')
+            WHERE id = ? AND deleted_at IS NULL
+        """
+        try:
+            with self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute(query, (content, note_id))
+                self.conn.commit()
+                updated = cursor.rowcount > 0
+                if updated:
+                    logger.info(f"Updated note {note_id}")
+                else:
+                    logger.warning(f"Note {note_id} not found or deleted")
+                return updated
+        except sqlite3.DatabaseError as e:
+            logger.error(f"Database error updating note {note_id}: {e}")
+            raise
+
     def get_all_tags(self) -> List[Dict[str, Any]]:
         """Get all tags with their hierarchy information.
 

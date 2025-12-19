@@ -1,10 +1,11 @@
 # Voice Rewrite
 
-Note-taking application with hierarchical tags, available as GUI, CLI, and Web API.
+Note-taking application with hierarchical tags, available as GUI, TUI, CLI, and Web API.
 
 ## Features
 - Hierarchical tag system with unlimited nesting
 - **GUI Mode**: Three-pane PySide6 interface with dark/light theme support
+- **TUI Mode**: Three-pane Textual terminal interface with RTL support
 - **CLI Mode**: Command-line interface with JSON/CSV export
 - **Web API Mode**: RESTful HTTP API with JSON responses
 - SQLite database backend
@@ -58,6 +59,25 @@ With custom configuration directory:
 ```bash
 python -m src.main -d /path/to/config gui --theme light
 ```
+
+### TUI Mode
+
+Launch the terminal user interface (requires Textual):
+```bash
+python -m src.main tui
+```
+
+**Controls:**
+- **Up/Down**: Navigate lists
+- **Left/Right**: Collapse/Expand tag hierarchy
+- **Enter**: Select item
+- **e**: Edit selected note
+- **s**: Save changes
+- **a**: Show all notes
+- **q**: Quit
+- **Ctrl+P**: Open command palette
+
+The TUI provides a three-pane layout (Tags, Notes List, Note Detail) with support for Hebrew/Arabic text display.
 
 ### CLI Mode
 
@@ -247,6 +267,8 @@ black src/
 
 Configuration is stored in `<config-dir>/config.json`. The default location is `~/.config/voicerewrite/config.json`.
 
+For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
 ### Config Schema
 
 ```json
@@ -259,7 +281,9 @@ Configuration is stored in `<config-dir>/config.json`. The default location is `
     "colours": {
       "warnings": "#FFFF00",
       "warnings_dark": "#FFFF00",
-      "warnings_light": "#FF8C00"
+      "warnings_light": "#FF8C00",
+      "tui_border_focused": "green",
+      "tui_border_unfocused": "blue"
     }
   }
 }
@@ -270,16 +294,20 @@ Configuration is stored in `<config-dir>/config.json`. The default location is `
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `database_file` | string | `<config_dir>/notes.db` | Path to SQLite database file |
-| `default_interface` | string | `gui` | Default interface when no subcommand given (`gui`, `cli`, or `web`) |
+| `default_interface` | string | `gui` | Default interface when no subcommand given (`gui`, `cli`, `tui`, or `web`) |
 | `window_geometry` | object\|null | `null` | Saved window size/position (set automatically) |
 | `implementations` | object | `{}` | Reserved for future component selection |
 | `themes.colours.warnings` | string | `#FFFF00` | Warning highlight color (backward compatible) |
 | `themes.colours.warnings_dark` | string | `#FFFF00` | Warning color for dark theme (yellow) |
 | `themes.colours.warnings_light` | string | `#FF8C00` | Warning color for light theme (dark orange) |
+| `themes.colours.tui_border_focused` | string | `green` | TUI border color for focused pane |
+| `themes.colours.tui_border_unfocused` | string | `blue` | TUI border color for unfocused panes |
 
 ### Color Values
 
 Colors are specified as hex strings (e.g., `#FFFF00`). The warning color is used to highlight ambiguous tags in search results.
+
+TUI border colors accept Textual color names (e.g., `green`, `blue`, `red`) or hex colors (e.g., `#00FF00`).
 
 Theme-specific colors take precedence:
 - Dark theme: Uses `warnings_dark`, falls back to `warnings`, then `#FFFF00`
@@ -348,24 +376,27 @@ Multiple terms are combined with AND logic:
 - No audio recording functionality (coming in future iterations)
 
 ## Project Structure
-- `src/main.py` - Unified entry point (dispatches to GUI, CLI, or Web)
+- `src/main.py` - Unified entry point (dispatches to GUI, TUI, CLI, or Web)
 - `src/core/` - Business logic and data access (zero Qt dependencies)
 - `src/ui/` - GUI components (PySide6)
+- `src/tui.py` - Terminal UI module (Textual)
 - `src/cli.py` - Command-line interface module
 - `src/web.py` - Flask REST API module
 - `tests/unit/` - Core functionality tests
 - `tests/gui/` - GUI integration tests
 - `tests/cli/` - CLI tests
 - `tests/web/` - Web API tests
+- `docs/` - Documentation including RTL support and configuration
 - All code is fully typed and documented
 
 ## Architecture
 
 ### Critical Design Principle
-The application has three modes:
+The application has four modes:
 1. **GUI mode** - PySide6 interface (three-pane layout)
-2. **CLI mode** - Command-line interface with JSON/CSV/text output
-3. **Web API mode** - Flask REST API with JSON responses
+2. **TUI mode** - Textual terminal interface (three-pane layout)
+3. **CLI mode** - Command-line interface with JSON/CSV/text output
+4. **Web API mode** - Flask REST API with JSON responses
 
 Therefore, `src/core/` has **zero Qt dependencies** and can be imported by all interface modes.
 

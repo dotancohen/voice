@@ -3,12 +3,14 @@
 
 This module provides a unified entry point for all interfaces:
 - GUI: Graphical interface with PySide6
+- TUI: Terminal interface with Textual
 - CLI: Command-line interface
 - Web: RESTful HTTP API
 
 Usage:
     python -m src.main                     # Use default interface from config (or GUI)
     python -m src.main gui [--theme dark]  # Launch GUI
+    python -m src.main tui                 # Launch TUI
     python -m src.main cli list-notes      # Use CLI
     python -m src.main web [--port 8080]   # Start web server
 """
@@ -116,6 +118,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   python -m src.main                     Use default interface (from config or GUI)
   python -m src.main gui --theme light   Launch GUI with light theme
+  python -m src.main tui                 Launch terminal interface
   python -m src.main cli list-notes      List all notes via CLI
   python -m src.main cli search --tag Work
   python -m src.main web --port 8080     Start web server on port 8080
@@ -134,6 +137,10 @@ Examples:
 
     # Add GUI subparser
     add_gui_subparser(subparsers)
+
+    # Add TUI subparser (imports tui module)
+    from src.tui import add_tui_subparser
+    add_tui_subparser(subparsers)
 
     # Add CLI subparser (imports cli module)
     from src.cli import add_cli_subparser
@@ -192,6 +199,9 @@ def main() -> NoReturn:
     # Dispatch to appropriate interface
     if args.interface == "gui":
         exit_code = run_gui(args.config_dir, args)
+    elif args.interface == "tui":
+        from src.tui import run as run_tui
+        exit_code = run_tui(args.config_dir, args)
     elif args.interface == "cli":
         from src.cli import run as run_cli
         exit_code = run_cli(args.config_dir, args)

@@ -74,7 +74,9 @@ class Config:
             "implementations": {},  # Future: component implementation selections
             "themes": {
                 "colours": {
-                    "warnings": "#FFFF00"  # Yellow for highlighting ambiguous tags
+                    "warnings": "#FFFF00",  # Yellow for highlighting ambiguous tags
+                    "tui_border_focused": "green",
+                    "tui_border_unfocused": "blue",
                 }
             },
         }
@@ -121,6 +123,22 @@ class Config:
             Path object pointing to the config directory.
         """
         return self.config_dir
+
+    def get_tui_colors(self) -> Dict[str, str]:
+        """Get TUI border colors from config.
+
+        Returns:
+            Dictionary with 'focused' and 'unfocused' border colors.
+        """
+        try:
+            themes = self.config_data.get("themes", {})
+            colours = themes.get("colours", {})
+            return {
+                "focused": colours.get("tui_border_focused", "green"),
+                "unfocused": colours.get("tui_border_unfocused", "blue"),
+            }
+        except (AttributeError, TypeError):
+            return {"focused": "green", "unfocused": "blue"}
 
     def get_warning_color(self, theme: str = "dark") -> str:
         """Get the warning color from config based on theme.

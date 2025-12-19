@@ -1,4 +1,5 @@
 PySide6>=6.7.0
 pyqtdarktheme>=2.1.0
+textual>=0.50.0
 Flask>=3.0.0
 Flask-CORS>=4.0.0
