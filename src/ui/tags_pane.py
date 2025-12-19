@@ -10,12 +10,26 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtGui import QKeyEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QTreeView, QVBoxLayout, QWidget
 
 from src.core.database import Database
 
 logger = logging.getLogger(__name__)
+
+
+class TagsTreeView(QTreeView):
+    """Custom tree view that emits activated signal on Space key."""
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle key press - emit activated on Space."""
+        if event.key() == Qt.Key.Key_Space:
+            index = self.currentIndex()
+            if index.isValid():
+                self.activated.emit(index)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class TagsPane(QWidget):
@@ -56,10 +70,11 @@ class TagsPane(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Create tree view
-        self.tree_view = QTreeView()
+        self.tree_view = TagsTreeView()
         self.tree_view.setHeaderHidden(True)  # Hide column header
         self.tree_view.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)  # Read-only
         self.tree_view.clicked.connect(self.on_tag_clicked)
+        self.tree_view.activated.connect(self.on_tag_clicked)  # Enter/Space keys
 
         # Create model
         self.model = QStandardItemModel()

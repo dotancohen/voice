@@ -10,7 +10,8 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import QMainWindow, QMenuBar, QSplitter, QWidget
 
 from src.core.config import Config
 from src.core.database import Database
@@ -67,6 +68,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Voice Rewrite")
         self.showMaximized()
 
+        # Create menu bar
+        self.setup_menu_bar()
+
         # Create horizontal splitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(self.splitter)
@@ -86,6 +90,31 @@ class MainWindow(QMainWindow):
 
         logger.info("UI layout created with 3 panes")
 
+    def setup_menu_bar(self) -> None:
+        """Set up the menu bar with File menu."""
+        menu_bar = self.menuBar()
+
+        # File menu
+        file_menu = menu_bar.addMenu("&File")
+
+        # New Note action
+        self.new_note_action = QAction("&New Note", self)
+        self.new_note_action.setShortcut(QKeySequence.StandardKey.New)
+        self.new_note_action.setStatusTip("Create a new note")
+        self.new_note_action.triggered.connect(self.create_new_note)
+        file_menu.addAction(self.new_note_action)
+
+        file_menu.addSeparator()
+
+        # Quit action
+        quit_action = QAction("&Quit", self)
+        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        quit_action.setStatusTip("Exit the application")
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
+        logger.info("Menu bar created")
+
     def connect_signals(self) -> None:
         """Connect signals between panes for communication."""
         # When a tag is selected, filter notes list
@@ -94,4 +123,30 @@ class MainWindow(QMainWindow):
         # When a note is selected, show note detail
         self.notes_list_pane.note_selected.connect(self.note_pane.load_note)
 
+        # When a note is saved, refresh the notes list
+        self.note_pane.note_saved.connect(self.on_note_saved)
+
         logger.info("Inter-pane signals connected")
+
+    def on_note_saved(self, note_id: int) -> None:
+        """Handle note saved event - refresh notes list.
+
+        Args:
+            note_id: ID of the saved note
+        """
+        self.notes_list_pane.load_notes()
+        self.notes_list_pane.select_note_by_id(note_id)
+        logger.info(f"Refreshed notes list after saving note {note_id}")
+
+    def create_new_note(self) -> None:
+        """Create a new note and display it for editing."""
+        note_id = self.db.create_note()
+        logger.info(f"Created new note {note_id}")
+
+        # Refresh the notes list and select the new note
+        self.notes_list_pane.load_notes()
+        self.notes_list_pane.select_note_by_id(note_id)
+
+        # Load the note in the detail pane and start editing
+        self.note_pane.load_note(note_id)
+        self.note_pane.start_editing()

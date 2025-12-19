@@ -198,6 +198,35 @@ class Database:
             logger.error(f"Database error retrieving note {note_id}: {e}")
             raise
 
+    def create_note(self, content: str = "") -> int:
+        """Create a new note.
+
+        Args:
+            content: The content for the new note (can be empty)
+
+        Returns:
+            The ID of the newly created note.
+
+        Raises:
+            sqlite3.DatabaseError: If database insert fails.
+        """
+
+        query = """
+            INSERT INTO notes (content, created_at)
+            VALUES (?, datetime('now'))
+        """
+        try:
+            with self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute(query, (content,))
+                self.conn.commit()
+                note_id = cursor.lastrowid
+                logger.info(f"Created note {note_id}")
+                return note_id
+        except sqlite3.DatabaseError as e:
+            logger.error(f"Database error creating note: {e}")
+            raise
+
     def update_note(self, note_id: int, content: str) -> bool:
         """Update a note's content.
 

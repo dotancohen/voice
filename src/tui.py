@@ -584,6 +584,7 @@ class VoiceRewriteTUI(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
+        Binding("n", "new_note", "New Note"),
         Binding("r", "refresh", "Refresh"),
         Binding("s", "save", "Save Note"),
         Binding("a", "show_all", "All Notes"),
@@ -672,6 +673,22 @@ class VoiceRewriteTUI(App):
         notes_list = self.query_one("#notes-list", NotesList)
         notes_list.clear_search()
         self.notify("Search cleared - showing all notes")
+
+    def action_new_note(self) -> None:
+        """Create a new note and open it for editing."""
+        # Create the note
+        note_id = self.db.create_note()
+
+        # Clear search and refresh notes list
+        notes_list = self.query_one("#notes-list", NotesList)
+        notes_list.clear_search()
+
+        # Show the new note in detail pane and start editing
+        detail = self.query_one("#note-detail", NoteDetail)
+        detail.show_note(note_id)
+        detail.start_editing()
+
+        self.notify(f"Created note #{note_id}")
 
 
 def add_tui_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

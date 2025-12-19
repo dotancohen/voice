@@ -6,7 +6,9 @@ Uses only core/ modules - no Qt/PySide6 dependencies.
 
 Endpoints:
     GET  /api/notes              List all notes
+    POST /api/notes              Create a new note
     GET  /api/notes/<id>         Get specific note
+    PUT  /api/notes/<id>         Update a note
     GET  /api/tags               List all tags
     GET  /api/search             Search notes
 
@@ -15,6 +17,12 @@ All endpoints return JSON responses.
 Query parameters for /api/search:
     - text: Text to search for in note content
     - tag: Tag path to filter by (can be specified multiple times for AND logic)
+
+POST /api/notes body:
+    - content: Note content (string, required)
+
+PUT /api/notes/<id> body:
+    - content: New note content (string, required)
 """
 
 from __future__ import annotations
@@ -93,6 +101,34 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             logger.error(f"Error getting notes: {e}")
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/notes", methods=["POST"])
+    def create_note() -> tuple[Response, int]:
+        """Create a new note.
+
+        Request body (JSON):
+            content: Note content (string, required)
+
+        Returns:
+            JSON response with created note ID and content, or error
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Request body is required"}), 400
+
+            content = data.get("content")
+            if not content:
+                return jsonify({"error": "Content is required"}), 400
+
+            note_id = db.create_note(content)
+            logger.info(f"Created note {note_id} via API")
+            return jsonify({"id": note_id, "content": content}), 201
+        except ValidationError as e:
+            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
+        except Exception as e:
+            logger.error(f"Error creating note: {e}")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/notes/<int:note_id>", methods=["GET"])
     def get_note(note_id: int) -> tuple[Response, int]:
         """Get specific note by ID.
@@ -111,6 +147,45 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
                 return jsonify({"error": f"Note {note_id} not found"}), 404
         except Exception as e:
             logger.error(f"Error getting note {note_id}: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/notes/<int:note_id>", methods=["PUT"])
+    def update_note(note_id: int) -> tuple[Response, int]:
+        """Update a note.
+
+        Args:
+            note_id: Note ID from URL path
+
+        Request body (JSON):
+            content: New note content (string, required)
+
+        Returns:
+            JSON response with updated note or error
+        """
+        try:
+            # Check if note exists
+            note = db.get_note(note_id)
+            if not note:
+                return jsonify({"error": f"Note {note_id} not found"}), 404
+
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Request body is required"}), 400
+
+            content = data.get("content")
+            if not content:
+                return jsonify({"error": "Content is required"}), 400
+
+            db.update_note(note_id, content)
+            logger.info(f"Updated note {note_id} via API")
+
+            # Return updated note
+            updated_note = db.get_note(note_id)
+            return jsonify(updated_note), 200
+        except ValidationError as e:
+            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
+        except Exception as e:
+            logger.error(f"Error updating note {note_id}: {e}")
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/tags", methods=["GET"])

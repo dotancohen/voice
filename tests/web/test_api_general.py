@@ -73,15 +73,34 @@ class TestHTTPMethods:
         response = client.get("/api/notes")
         assert response.status_code == 200
 
-    def test_post_method_not_allowed(self, client: FlaskClient) -> None:
-        """Test that POST method returns 405 (read-only API)."""
-        response = client.post("/api/notes")
-        assert response.status_code == 405
+    def test_post_method_allowed(self, client: FlaskClient) -> None:
+        """Test that POST method is allowed for creating notes."""
+        response = client.post(
+            "/api/notes",
+            json={"content": "Test note"},
+            content_type="application/json"
+        )
+        assert response.status_code == 201
+        assert "id" in response.json
 
-    def test_put_method_not_allowed(self, client: FlaskClient) -> None:
-        """Test that PUT method returns 405 (read-only API)."""
-        response = client.put("/api/notes/1")
-        assert response.status_code == 405
+    def test_put_method_allowed(self, client: FlaskClient) -> None:
+        """Test that PUT method is allowed for updating notes."""
+        # First create a note
+        create_resp = client.post(
+            "/api/notes",
+            json={"content": "Original content"},
+            content_type="application/json"
+        )
+        note_id = create_resp.json["id"]
+
+        # Then update it
+        response = client.put(
+            f"/api/notes/{note_id}",
+            json={"content": "Updated content"},
+            content_type="application/json"
+        )
+        assert response.status_code == 200
+        assert response.json["content"] == "Updated content"
 
     def test_delete_method_not_allowed(self, client: FlaskClient) -> None:
         """Test that DELETE method returns 405 (read-only API)."""

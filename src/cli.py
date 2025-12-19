@@ -7,6 +7,8 @@ Uses only core/ modules - no Qt/PySide6 dependencies.
 Commands:
     list-notes              List all notes
     show-note <id>          Show details of a specific note
+    new-note [content]      Create a new note
+    edit-note <id> [content] Edit an existing note
     list-tags               List all tags in hierarchy
     search                  Search notes by text and/or tags
 """
@@ -150,6 +152,80 @@ def cmd_show_note(db: Database, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_new_note(db: Database, args: argparse.Namespace) -> int:
+    """Create a new note.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success)
+    """
+    # Get content from argument or stdin
+    if args.content:
+        content = args.content
+    elif not sys.stdin.isatty():
+        # Read from stdin if piped
+        content = sys.stdin.read().strip()
+    else:
+        # No content provided - create empty note
+        content = ""
+
+    try:
+        note_id = db.create_note(content)
+        if args.format == "json":
+            print(json.dumps({"id": note_id, "content": content}))
+        else:
+            print(f"Created note #{note_id}")
+        return 0
+    except ValidationError as e:
+        print(f"Error: {e.message}", file=sys.stderr)
+        return 1
+
+
+def cmd_edit_note(db: Database, args: argparse.Namespace) -> int:
+    """Edit an existing note.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    # Check if note exists
+    note = db.get_note(args.note_id)
+    if not note:
+        print(f"Error: Note with ID {args.note_id} not found.", file=sys.stderr)
+        return 1
+
+    # Get new content from argument or stdin
+    if args.content:
+        content = args.content
+    elif not sys.stdin.isatty():
+        # Read from stdin if piped
+        content = sys.stdin.read().strip()
+    else:
+        print("Error: No content provided. Use --content or pipe content to stdin.", file=sys.stderr)
+        return 1
+
+    if not content:
+        print("Error: Content cannot be empty.", file=sys.stderr)
+        return 1
+
+    try:
+        db.update_note(args.note_id, content)
+        if args.format == "json":
+            print(json.dumps({"id": args.note_id, "content": content, "updated": True}))
+        else:
+            print(f"Updated note #{args.note_id}")
+        return 0
+    except ValidationError as e:
+        print(f"Error: {e.message}", file=sys.stderr)
+        return 1
+
+
 def cmd_list_tags(db: Database, args: argparse.Namespace) -> int:
     """List all tags in hierarchy.
 
@@ -273,6 +349,35 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="ID of the note to show"
     )
 
+    # new-note command
+    new_note_parser = cli_subparsers.add_parser(
+        "new-note",
+        help="Create a new note"
+    )
+    new_note_parser.add_argument(
+        "content",
+        nargs="?",
+        type=str,
+        help="Note content (reads from stdin if not provided)"
+    )
+
+    # edit-note command
+    edit_note_parser = cli_subparsers.add_parser(
+        "edit-note",
+        help="Edit an existing note"
+    )
+    edit_note_parser.add_argument(
+        "note_id",
+        type=int,
+        help="ID of the note to edit"
+    )
+    edit_note_parser.add_argument(
+        "content",
+        nargs="?",
+        type=str,
+        help="New content (reads from stdin if not provided)"
+    )
+
     # list-tags command
     cli_subparsers.add_parser(
         "list-tags",
@@ -325,6 +430,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_list_notes(db, args)
         elif args.cli_command == "show-note":
             return cmd_show_note(db, args)
+        elif args.cli_command == "new-note":
+            return cmd_new_note(db, args)
+        elif args.cli_command == "edit-note":
+            return cmd_edit_note(db, args)
         elif args.cli_command == "list-tags":
             return cmd_list_tags(db, args)
         elif args.cli_command == "search":

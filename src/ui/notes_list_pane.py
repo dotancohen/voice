@@ -22,11 +22,13 @@ from PySide6.QtGui import (
     QAbstractTextDocumentLayout,
 )
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
     QStyledItemDelegate,
@@ -46,6 +48,18 @@ from src.core.search import (
 
 logger = logging.getLogger(__name__)
 
+# Button focus style - makes focused buttons visually distinct
+BUTTON_STYLE = """
+    QPushButton {
+        padding: 5px 15px;
+    }
+    QPushButton:focus {
+        border: 2px solid #3daee9;
+        background-color: #3daee9;
+        color: white;
+    }
+"""
+
 # Constants
 CONTENT_TRUNCATE_LENGTH = 100
 
@@ -59,12 +73,31 @@ class SearchTextEdit(QTextEdit):
 
     returnPressed = Signal()
 
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize the search text edit."""
+        super().__init__(parent)
+        self.setTabChangesFocus(True)  # Tab moves to next widget
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """Handle key press events."""
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             # Trigger search on Enter, don't insert newline
             if event.modifiers() == Qt.KeyboardModifier.NoModifier:
                 self.returnPressed.emit()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
+class NotesListWidget(QListWidget):
+    """Custom list widget that emits itemActivated on Space key."""
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle key press - emit itemActivated on Space."""
+        if event.key() == Qt.Key.Key_Space:
+            item = self.currentItem()
+            if item:
+                self.itemActivated.emit(item)
                 event.accept()
                 return
         super().keyPressEvent(event)
@@ -222,12 +255,21 @@ class NotesListPane(QWidget):
 
         # Create search toolbar
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(4)
+
+        # Create search field container with embedded clear button
+        search_container = QFrame()
+        search_container.setFrameShape(QFrame.Shape.StyledPanel)
+        search_container.setMaximumHeight(35)
+        container_layout = QHBoxLayout(search_container)
+        container_layout.setContentsMargins(0, 0, 2, 0)
+        container_layout.setSpacing(0)
 
         self.search_field = SearchTextEdit()
         self.search_field.setPlaceholderText("Search notes... (use tag:tagname for tags)")
         self.search_field.setAcceptRichText(False)  # Use plain text to prevent formatting inheritance
-        # Configure as single-line input
-        self.search_field.setMaximumHeight(35)
+        # Configure as single-line input with no frame (container provides the frame)
+        self.search_field.setFrameShape(QFrame.Shape.NoFrame)
         self.search_field.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.search_field.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.search_field.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
@@ -236,21 +278,44 @@ class NotesListPane(QWidget):
         self.search_field.textChanged.connect(self.on_search_field_edited)
         self.search_field.returnPressed.connect(self.perform_search)
 
-        self.clear_button = QPushButton("Clear")
+        # Clear button embedded inside search field
+        self.clear_button = QToolButton()
+        self.clear_button.setText("\u00d7")  # × symbol
+        self.clear_button.setToolTip("Clear search")
+        self.clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_button.setFixedSize(24, 24)
+        self.clear_button.setStyleSheet("""
+            QToolButton {
+                border: none;
+                background: transparent;
+                font-size: 16px;
+                font-weight: bold;
+                color: #888;
+            }
+            QToolButton:hover {
+                color: #fff;
+                background: #555;
+                border-radius: 12px;
+            }
+        """)
         self.clear_button.clicked.connect(self.clear_search)
 
+        container_layout.addWidget(self.search_field)
+        container_layout.addWidget(self.clear_button)
+
         self.search_button = QPushButton("Search")
+        self.search_button.setStyleSheet(BUTTON_STYLE)
         self.search_button.clicked.connect(self.perform_search)
 
-        toolbar.addWidget(self.search_field)
-        toolbar.addWidget(self.clear_button)
+        toolbar.addWidget(search_container, 1)  # stretch factor 1
         toolbar.addWidget(self.search_button)
 
         layout.addLayout(toolbar)
 
         # Create list widget
-        self.list_widget = QListWidget()
+        self.list_widget = NotesListWidget()
         self.list_widget.itemClicked.connect(self.on_note_clicked)
+        self.list_widget.itemActivated.connect(self.on_note_clicked)  # Enter/Space keys
 
         # Set custom delegate for HTML rendering (with theme-aware dividing lines)
         self.list_widget.setItemDelegate(HTMLDelegate(self.list_widget, theme=self.theme))
@@ -319,6 +384,24 @@ class NotesListPane(QWidget):
         note_id = item.data(ROLE_NOTE_ID)
         logger.info(f"Note selected: ID {note_id}")
         self.note_selected.emit(note_id)
+
+    def select_note_by_id(self, note_id: int) -> bool:
+        """Select a note in the list by its ID.
+
+        Args:
+            note_id: ID of the note to select
+
+        Returns:
+            True if the note was found and selected, False otherwise.
+        """
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item and item.data(ROLE_NOTE_ID) == note_id:
+                self.list_widget.setCurrentItem(item)
+                logger.info(f"Selected note {note_id} in list")
+                return True
+        logger.warning(f"Note {note_id} not found in list")
+        return False
 
     def filter_by_tag(self, tag_id: int) -> None:
         """Handle tag selection from sidebar.
