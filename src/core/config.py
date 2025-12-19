@@ -148,21 +148,30 @@ class Config:
 
         Returns:
             Hex color string for warnings (yellow for dark, orange for light).
+
+        Priority (highest to lowest):
+            1. Theme-specific key (warnings_dark or warnings_light)
+            2. Generic key (warnings)
+            3. Built-in default (#FFFF00 for dark, #FF8C00 for light)
         """
         try:
-            # Get theme-specific colors from config
             themes = self.config_data.get("themes", {})
             colours = themes.get("colours", {})
 
-            # Check for generic "warnings" key first (backward compatibility)
+            # Theme-specific keys take precedence
+            if theme == "light":
+                if "warnings_light" in colours:
+                    return cast(str, colours["warnings_light"])
+            else:
+                if "warnings_dark" in colours:
+                    return cast(str, colours["warnings_dark"])
+
+            # Fall back to generic "warnings" key
             if "warnings" in colours:
                 return cast(str, colours["warnings"])
 
-            # Otherwise use theme-specific keys
-            if theme == "light":
-                return cast(str, colours.get("warnings_light", "#FF8C00"))  # Dark orange for light theme
-            else:
-                return cast(str, colours.get("warnings_dark", "#FFFF00"))  # Yellow for dark theme
+            # Built-in defaults
+            return "#FF8C00" if theme == "light" else "#FFFF00"
         except (AttributeError, TypeError):
             # Fallback defaults
             return "#FF8C00" if theme == "light" else "#FFFF00"

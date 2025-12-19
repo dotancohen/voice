@@ -135,22 +135,33 @@ Accepts Textual color names or hex colors.
 }
 ```
 
-## Theme-Specific Warning Colors
+## Warning Color Priority
 
-The application supports theme-specific warning colors. If you want different warning colors for light and dark themes, you can use:
+The warning color is resolved with this priority (highest to lowest):
+
+1. **Theme-specific key** (`warnings_dark` or `warnings_light`) - if present, used for that theme
+2. **Generic key** (`warnings`) - fallback if theme-specific key not present
+3. **Built-in default** - `#FFFF00` (yellow) for dark theme, `#FF8C00` (dark orange) for light theme
+
+This allows you to:
+- Set a single color for both themes using `warnings`
+- Override specific themes using `warnings_dark` or `warnings_light`
+
+### Example: Different colors per theme
 
 ```json
 {
   "themes": {
     "colours": {
-      "warnings_dark": "#FFFF00",
-      "warnings_light": "#FF8C00"
+      "warnings": "#FFFF00",
+      "warnings_dark": "#FFD700",
+      "warnings_light": "#FF6600"
     }
   }
 }
 ```
 
-Note: If a generic `warnings` key is present, it takes precedence over theme-specific keys for backward compatibility.
+In this example, dark theme uses `#FFD700` (overrides `warnings`) and light theme uses `#FF6600` (overrides `warnings`).
 
 ## Modifying Configuration
 

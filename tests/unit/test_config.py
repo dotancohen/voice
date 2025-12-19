@@ -163,6 +163,64 @@ class TestGetWarningColor:
         }
         assert test_config.get_warning_color() == "#FF0000"
 
+    def test_theme_specific_takes_precedence_over_generic(self, test_config: Config) -> None:
+        """Test that warnings_dark/warnings_light override the generic warnings key."""
+        test_config.config_data["themes"] = {
+            "colours": {
+                "warnings": "#FF0000",  # Generic (red)
+                "warnings_dark": "#00FF00",  # Dark-specific (green)
+                "warnings_light": "#0000FF",  # Light-specific (blue)
+            }
+        }
+        # Theme-specific should take precedence
+        assert test_config.get_warning_color("dark") == "#00FF00"
+        assert test_config.get_warning_color("light") == "#0000FF"
+
+    def test_generic_used_when_theme_specific_missing(self, test_config: Config) -> None:
+        """Test that generic warnings key is used when theme-specific is missing."""
+        test_config.config_data["themes"] = {
+            "colours": {
+                "warnings": "#FF0000",  # Generic only
+            }
+        }
+        # Should fall back to generic
+        assert test_config.get_warning_color("dark") == "#FF0000"
+        assert test_config.get_warning_color("light") == "#FF0000"
+
+    def test_builtin_default_when_no_config(self, test_config_dir: Path) -> None:
+        """Test built-in defaults when no warning colors configured."""
+        config_file = test_config_dir / "config.json"
+        with open(config_file, "w") as f:
+            json.dump({"database_file": "test.db", "themes": {"colours": {}}}, f)
+
+        config = Config(config_dir=test_config_dir)
+        assert config.get_warning_color("dark") == "#FFFF00"  # Yellow
+        assert config.get_warning_color("light") == "#FF8C00"  # Dark orange
+
+    def test_partial_override_dark_only(self, test_config: Config) -> None:
+        """Test that only dark theme can be overridden while light uses generic."""
+        test_config.config_data["themes"] = {
+            "colours": {
+                "warnings": "#FF0000",  # Generic (red)
+                "warnings_dark": "#00FF00",  # Dark-specific (green)
+                # No warnings_light - should use generic
+            }
+        }
+        assert test_config.get_warning_color("dark") == "#00FF00"  # Overridden
+        assert test_config.get_warning_color("light") == "#FF0000"  # Falls back to generic
+
+    def test_partial_override_light_only(self, test_config: Config) -> None:
+        """Test that only light theme can be overridden while dark uses generic."""
+        test_config.config_data["themes"] = {
+            "colours": {
+                "warnings": "#FF0000",  # Generic (red)
+                # No warnings_dark - should use generic
+                "warnings_light": "#0000FF",  # Light-specific (blue)
+            }
+        }
+        assert test_config.get_warning_color("dark") == "#FF0000"  # Falls back to generic
+        assert test_config.get_warning_color("light") == "#0000FF"  # Overridden
+
 
 class TestDefaultConfig:
     """Test default configuration values."""
