@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from PySide6.QtWidgets import QLabel, QTextEdit, QVBoxLayout, QWidget
 
-from core.database import Database
+from src.core.database import Database
 
 logger = logging.getLogger(__name__)
 

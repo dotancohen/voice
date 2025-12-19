@@ -12,11 +12,11 @@ from typing import Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget
 
-from core.config import Config
-from core.database import Database
-from ui.note_pane import NotePane
-from ui.notes_list_pane import NotesListPane
-from ui.tags_pane import TagsPane
+from src.core.config import Config
+from src.core.database import Database
+from src.ui.note_pane import NotePane
+from src.ui.notes_list_pane import NotesListPane
+from src.ui.tags_pane import TagsPane
 
 logger = logging.getLogger(__name__)
 

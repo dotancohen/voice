@@ -34,9 +34,9 @@ from PySide6.QtWidgets import (
     QStyle,
 )
 
-from core.config import Config
-from core.database import Database
-from core.search import (
+from src.core.config import Config
+from src.core.database import Database
+from src.core.search import (
     parse_search_input,
     get_tag_full_path,
     find_ambiguous_tags,

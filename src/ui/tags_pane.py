@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QTreeView, QVBoxLayout, QWidget
 
-from core.database import Database
+from src.core.database import Database
 
 logger = logging.getLogger(__name__)
 
