@@ -45,11 +45,11 @@ pip install -r requirements-dev.txt
 
 All interfaces are accessed through a unified entry point: `python -m src.main`
 
-### GUI Mode (Default)
+### GUI Mode
 
 Launch the graphical interface:
 ```bash
-python -m src.main              # Uses default interface from config (GUI if not set)
+python -m src.main              # Uses default interface from config (TUI if not set)
 python -m src.main gui          # Explicit GUI mode with dark theme
 python -m src.main gui --theme light   # Light theme
 python -m src.main gui --theme dark    # Dark theme (explicit)
@@ -60,7 +60,7 @@ With custom configuration directory:
 python -m src.main -d /path/to/config gui --theme light
 ```
 
-### TUI Mode
+### TUI Mode (Default)
 
 Launch the terminal user interface (requires Textual):
 ```bash
@@ -188,7 +188,7 @@ All endpoints return JSON. CORS is enabled for cross-origin requests.
 
 ## Server Deployment
 
-For deploying VoiceRewrite as a headless sync server (no GUI or TUI), use the minimal requirements file:
+For deploying VoiceRewrite on a server (sync server + TUI for SSH access), use the server requirements file:
 
 ### Installation
 
@@ -201,7 +201,7 @@ cd voicerewrite
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install server-only dependencies (no GUI/TUI)
+# Install server dependencies (includes TUI, no GUI)
 pip install -r requirements-server.txt
 ```
 
@@ -219,6 +219,18 @@ python -m src.main -d /path/to/config cli sync serve
 ```
 
 The database is created automatically on first start at `~/.config/voicerewrite/notes.db` (or in the custom config directory).
+
+### Using the TUI via SSH
+
+Users can SSH into the server and use the TUI to manage notes:
+```bash
+ssh user@server
+cd /opt/voicerewrite
+source .venv/bin/activate
+python -m src.main tui
+```
+
+The TUI is the default interface, so simply running `python -m src.main` will launch it.
 
 ### Running as a Service
 
@@ -265,6 +277,107 @@ On client devices, add the server as a peer:
 python -m src.main cli sync add-peer --name "Server" --url http://server-ip:8384
 python -m src.main cli sync now  # Trigger sync
 ```
+
+### Firewall Configuration
+
+Open the sync server port (default 8384) in your firewall.
+
+**UFW (Ubuntu/Debian):**
+```bash
+sudo ufw allow 8384/tcp comment "VoiceRewrite Sync"
+sudo ufw reload
+sudo ufw status
+```
+
+**firewalld (RHEL/CentOS/Fedora):**
+```bash
+sudo firewall-cmd --permanent --add-port=8384/tcp
+sudo firewall-cmd --reload
+sudo firewall-cmd --list-ports
+```
+
+**iptables:**
+```bash
+sudo iptables -A INPUT -p tcp --dport 8384 -j ACCEPT
+sudo iptables-save | sudo tee /etc/iptables/rules.v4
+```
+
+### Reverse Proxy with SSL (Recommended)
+
+For production deployments, use a reverse proxy with SSL termination. The sync protocol transmits data in plain text, so HTTPS is strongly recommended.
+
+**Nginx configuration** (`/etc/nginx/sites-available/voicerewrite`):
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name sync.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/sync.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sync.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8384;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name sync.example.com;
+    return 301 https://$server_name$request_uri;
+}
+```
+
+Enable and test:
+```bash
+sudo ln -s /etc/nginx/sites-available/voicerewrite /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+**Obtain SSL certificate with Let's Encrypt:**
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d sync.example.com
+```
+
+When using a reverse proxy, update the peer URL to use HTTPS:
+```bash
+python -m src.main cli sync add-peer --name "Server" --url https://sync.example.com
+```
+
+### Security Considerations
+
+1. **Use HTTPS**: The sync protocol does not encrypt data. Always use a reverse proxy with SSL for production.
+
+2. **Restrict access**: Consider limiting access by IP if your devices have static IPs:
+   ```nginx
+   location / {
+       allow 192.168.1.0/24;
+       allow 203.0.113.50;
+       deny all;
+       proxy_pass http://127.0.0.1:8384;
+   }
+   ```
+
+3. **Firewall defaults**: Block all incoming traffic except SSH and your sync port:
+   ```bash
+   sudo ufw default deny incoming
+   sudo ufw default allow outgoing
+   sudo ufw allow ssh
+   sudo ufw allow 443/tcp
+   sudo ufw enable
+   ```
+
+4. **Bind to localhost**: When using a reverse proxy, bind the sync server to localhost only:
+   ```bash
+   python -m src.main cli sync serve --host 127.0.0.1 --port 8384
+   ```
+
+5. **No CDN needed**: The sync server handles small JSON payloads between trusted devices. CDNs are not applicable.
 
 ## Testing
 
@@ -354,7 +467,7 @@ For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 ```json
 {
   "database_file": "/path/to/notes.db",
-  "default_interface": "gui",
+  "default_interface": "tui",
   "window_geometry": null,
   "implementations": {},
   "themes": {
@@ -374,7 +487,7 @@ For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `database_file` | string | `<config_dir>/notes.db` | Path to SQLite database file |
-| `default_interface` | string | `gui` | Default interface when no subcommand given (`gui`, `cli`, `tui`, or `web`) |
+| `default_interface` | string | `tui` | Default interface when no subcommand given (`gui`, `tui`, `cli`, or `web`) |
 | `window_geometry` | object\|null | `null` | Saved window size/position (set automatically) |
 | `implementations` | object | `{}` | Reserved for future component selection |
 | `themes.colours.warnings` | string | `#FFFF00` | Warning highlight color (backward compatible) |

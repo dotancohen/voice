@@ -8,7 +8,7 @@ This module provides a unified entry point for all interfaces:
 - Web: RESTful HTTP API
 
 Usage:
-    python -m src.main                     # Use default interface from config (or GUI)
+    python -m src.main                     # Use default interface from config (or TUI)
     python -m src.main --theme light       # Launch default interface with light theme
     python -m src.main gui                 # Launch GUI
     python -m src.main tui                 # Launch TUI
@@ -62,8 +62,19 @@ def run_gui(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     Returns:
         Exit code from Qt application
     """
-    from PySide6.QtWidgets import QApplication
-    import qdarktheme
+    try:
+        from PySide6.QtWidgets import QApplication
+        import qdarktheme
+    except ImportError as e:
+        missing = "PySide6" if "PySide6" in str(e) else "qdarktheme"
+        print(f"Error: GUI dependencies not installed ({missing}).", file=sys.stderr)
+        print(file=sys.stderr)
+        print("To use the GUI, install the full requirements:", file=sys.stderr)
+        print("    pip install -r requirements.txt", file=sys.stderr)
+        print(file=sys.stderr)
+        print("Or use the TUI instead:", file=sys.stderr)
+        print("    python -m src.main tui", file=sys.stderr)
+        return 1
 
     from src.core.config import Config
     from src.core.database import Database
@@ -172,7 +183,7 @@ def get_default_interface(config_dir: Optional[Path]) -> str:
     """
     from src.core.config import Config
     config = Config(config_dir=config_dir)
-    return config.get("default_interface", "gui")
+    return config.get("default_interface", "tui")
 
 
 def main() -> NoReturn:
