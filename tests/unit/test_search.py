@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.helpers import get_tag_uuid, get_tag_uuid_hex
+
 from core.search import (
     ParsedSearch,
     SearchResult,
@@ -84,17 +86,19 @@ class TestGetTagFullPath:
 
     def test_root_tag(self, populated_db: Database) -> None:
         """Root tag returns just its name."""
-        path = get_tag_full_path(populated_db, 1)  # Work
+        path = get_tag_full_path(populated_db, get_tag_uuid("Work"))
         assert path == "Work"
 
     def test_nested_tag(self, populated_db: Database) -> None:
         """Nested tag returns full path."""
-        path = get_tag_full_path(populated_db, 11)  # Paris under France
+        path = get_tag_full_path(populated_db, get_tag_uuid("Paris_France"))
         assert path == "Geography/Europe/France/Paris"
 
     def test_nonexistent_tag(self, populated_db: Database) -> None:
         """Nonexistent tag returns empty string."""
-        path = get_tag_full_path(populated_db, 9999)
+        import uuid
+        nonexistent = uuid.UUID("00000000-0000-7000-8000-000000009999").bytes
+        path = get_tag_full_path(populated_db, nonexistent)
         assert path == ""
 
 
@@ -107,7 +111,7 @@ class TestResolveTagTerm:
         tag_ids, is_ambiguous, not_found = resolve_tag_term(populated_db, "Work")
         assert not not_found
         assert not is_ambiguous
-        assert 1 in tag_ids  # Work tag ID
+        assert get_tag_uuid("Work") in tag_ids
 
     def test_hierarchical_path(self, populated_db: Database) -> None:
         """Hierarchical path is resolved."""
@@ -116,16 +120,16 @@ class TestResolveTagTerm:
         )
         assert not not_found
         assert not is_ambiguous
-        assert 10 in tag_ids  # France tag ID
-        assert 11 in tag_ids  # Paris (descendant) tag ID
+        assert get_tag_uuid("France") in tag_ids
+        assert get_tag_uuid("Paris_France") in tag_ids  # Paris (descendant)
 
     def test_ambiguous_tag(self, populated_db: Database) -> None:
         """Ambiguous tag name returns all matches."""
         tag_ids, is_ambiguous, not_found = resolve_tag_term(populated_db, "Paris")
         assert not not_found
         assert is_ambiguous  # Paris exists under both France and Texas
-        assert 11 in tag_ids  # France/Paris
-        assert 21 in tag_ids  # Texas/Paris
+        assert get_tag_uuid("Paris_France") in tag_ids
+        assert get_tag_uuid("Paris_Texas") in tag_ids
 
     def test_not_found_tag(self, populated_db: Database) -> None:
         """Nonexistent tag returns not found."""
@@ -204,20 +208,22 @@ class TestBuildTagSearchTerm:
 
     def test_non_ambiguous_tag(self, populated_db: Database) -> None:
         """Non-ambiguous tag uses simple name."""
-        term = build_tag_search_term(populated_db, 1)  # Work
+        term = build_tag_search_term(populated_db, get_tag_uuid("Work"))
         assert term == "tag:Work"
 
     def test_ambiguous_tag(self, populated_db: Database) -> None:
         """Ambiguous tag uses full path."""
-        term = build_tag_search_term(populated_db, 11)  # Paris under France
+        term = build_tag_search_term(populated_db, get_tag_uuid("Paris_France"))
         assert term == "tag:Geography/Europe/France/Paris"
 
     def test_force_full_path(self, populated_db: Database) -> None:
         """Full path can be forced."""
-        term = build_tag_search_term(populated_db, 1, use_full_path=True)  # Work
+        term = build_tag_search_term(populated_db, get_tag_uuid("Work"), use_full_path=True)
         assert term == "tag:Work"  # Work is a root tag, so path is just "Work"
 
     def test_nonexistent_tag(self, populated_db: Database) -> None:
         """Nonexistent tag returns empty string."""
-        term = build_tag_search_term(populated_db, 9999)
+        import uuid
+        nonexistent = uuid.UUID("00000000-0000-7000-8000-000000009999").bytes
+        term = build_tag_search_term(populated_db, nonexistent)
         assert term == ""

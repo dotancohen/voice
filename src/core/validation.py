@@ -9,7 +9,8 @@ CRITICAL: This module must have NO Qt/PySide6 dependencies.
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+import uuid
+from typing import List, Optional, Union
 
 
 class ValidationError(Exception):
@@ -32,54 +33,122 @@ MAX_NOTE_CONTENT_LENGTH = 100_000  # 100KB of text
 MAX_SEARCH_QUERY_LENGTH = 500
 MAX_TAG_PATH_LENGTH = 500
 MAX_TAG_PATH_DEPTH = 50
+UUID_BYTES_LENGTH = 16
 
 
-def validate_note_id(note_id: int) -> None:
+def validate_uuid(value: bytes, field_name: str = "id") -> None:
+    """Validate a UUID value (must be 16 bytes).
+
+    Args:
+        value: The UUID bytes to validate
+        field_name: Name of the field for error messages
+
+    Raises:
+        ValidationError: If value is not valid UUID bytes
+    """
+    if not isinstance(value, bytes):
+        raise ValidationError(
+            field_name, f"must be bytes, got {type(value).__name__}"
+        )
+    if len(value) != UUID_BYTES_LENGTH:
+        raise ValidationError(
+            field_name, f"must be {UUID_BYTES_LENGTH} bytes, got {len(value)}"
+        )
+
+
+def validate_uuid_hex(value: str, field_name: str = "id") -> bytes:
+    """Validate and convert a UUID hex string to bytes.
+
+    Args:
+        value: The UUID hex string (32 chars, no hyphens)
+        field_name: Name of the field for error messages
+
+    Returns:
+        UUID as bytes (16 bytes)
+
+    Raises:
+        ValidationError: If value is not a valid UUID hex string
+    """
+    if not isinstance(value, str):
+        raise ValidationError(
+            field_name, f"must be a string, got {type(value).__name__}"
+        )
+    try:
+        # Accept both hyphenated and non-hyphenated formats
+        return uuid.UUID(hex=value.replace("-", "")).bytes
+    except ValueError as e:
+        raise ValidationError(field_name, f"invalid UUID format: {e}")
+
+
+def uuid_to_hex(value: bytes) -> str:
+    """Convert UUID bytes to hex string (32 chars, no hyphens).
+
+    Args:
+        value: UUID as bytes (16 bytes)
+
+    Returns:
+        UUID as hex string
+    """
+    return uuid.UUID(bytes=value).hex
+
+
+def validate_note_id(note_id: Union[bytes, str]) -> bytes:
     """Validate a note ID.
 
     Args:
-        note_id: The note ID to validate
+        note_id: The note ID to validate (bytes or hex string)
+
+    Returns:
+        note_id as bytes
 
     Raises:
         ValidationError: If note_id is invalid
     """
-    if not isinstance(note_id, int):
-        raise ValidationError("note_id", f"must be an integer, got {type(note_id).__name__}")
-    if note_id < 1:
-        raise ValidationError("note_id", "must be a positive integer")
+    if isinstance(note_id, str):
+        return validate_uuid_hex(note_id, "note_id")
+    validate_uuid(note_id, "note_id")
+    return note_id
 
 
-def validate_tag_id(tag_id: int) -> None:
+def validate_tag_id(tag_id: Union[bytes, str]) -> bytes:
     """Validate a tag ID.
 
     Args:
-        tag_id: The tag ID to validate
+        tag_id: The tag ID to validate (bytes or hex string)
+
+    Returns:
+        tag_id as bytes
 
     Raises:
         ValidationError: If tag_id is invalid
     """
-    if not isinstance(tag_id, int):
-        raise ValidationError("tag_id", f"must be an integer, got {type(tag_id).__name__}")
-    if tag_id < 1:
-        raise ValidationError("tag_id", "must be a positive integer")
+    if isinstance(tag_id, str):
+        return validate_uuid_hex(tag_id, "tag_id")
+    validate_uuid(tag_id, "tag_id")
+    return tag_id
 
 
-def validate_tag_ids(tag_ids: List[int]) -> None:
+def validate_tag_ids(tag_ids: List[Union[bytes, str]]) -> List[bytes]:
     """Validate a list of tag IDs.
 
     Args:
         tag_ids: List of tag IDs to validate
+
+    Returns:
+        List of tag_ids as bytes
 
     Raises:
         ValidationError: If any tag_id is invalid
     """
     if not isinstance(tag_ids, list):
         raise ValidationError("tag_ids", f"must be a list, got {type(tag_ids).__name__}")
+    result = []
     for i, tag_id in enumerate(tag_ids):
         try:
-            validate_tag_id(tag_id)
+            result.append(validate_tag_id(tag_id))
         except ValidationError as e:
             raise ValidationError("tag_ids", f"item {i}: {e.message}")
+    return result
 
 
 def validate_tag_name(name: str) -> None:
@@ -211,49 +280,85 @@ def validate_search_query(query: Optional[str]) -> None:
         )
 
 
-def validate_parent_tag_id(parent_id: Optional[int], tag_id: Optional[int] = None) -> None:
+def validate_parent_tag_id(
+    parent_id: Optional[Union[bytes, str]], tag_id: Optional[Union[bytes, str]] = None
+) -> Optional[bytes]:
     """Validate a parent tag ID for tag creation/update.
 
     Args:
         parent_id: The parent tag ID (None for root tags)
         tag_id: The tag's own ID (for circular reference check during updates)
 
+    Returns:
+        parent_id as bytes, or None
+
     Raises:
         ValidationError: If parent_id is invalid
     """
     if parent_id is None:
-        return
+        return None
 
-    validate_tag_id(parent_id)
+    parent_bytes = validate_tag_id(parent_id)
 
-    if tag_id is not None and parent_id == tag_id:
-        raise ValidationError("parent_id", "tag cannot be its own parent")
+    if tag_id is not None:
+        tag_bytes = validate_tag_id(tag_id)
+        if parent_bytes == tag_bytes:
+            raise ValidationError("parent_id", "tag cannot be its own parent")
+
+    return parent_bytes
 
 
-def validate_tag_id_groups(tag_id_groups: Optional[List[List[int]]]) -> None:
+def validate_tag_id_groups(
+    tag_id_groups: Optional[List[List[Union[bytes, str]]]]
+) -> Optional[List[List[bytes]]]:
     """Validate tag ID groups for search.
 
     Args:
         tag_id_groups: List of lists of tag IDs (can be None)
 
+    Returns:
+        tag_id_groups with all IDs as bytes, or None
+
     Raises:
         ValidationError: If any tag ID is invalid
     """
     if tag_id_groups is None:
-        return
+        return None
 
     if not isinstance(tag_id_groups, list):
         raise ValidationError(
             "tag_id_groups", f"must be a list, got {type(tag_id_groups).__name__}"
         )
 
+    result = []
     for i, group in enumerate(tag_id_groups):
         if not isinstance(group, list):
             raise ValidationError(
                 "tag_id_groups", f"group {i} must be a list, got {type(group).__name__}"
             )
+        group_result = []
         for j, tag_id in enumerate(group):
             try:
-                validate_tag_id(tag_id)
+                group_result.append(validate_tag_id(tag_id))
             except ValidationError as e:
                 raise ValidationError("tag_id_groups", f"group {i}, item {j}: {e.message}")
+        result.append(group_result)
+    return result
+
+
+def validate_device_id(device_id: Union[bytes, str]) -> bytes:
+    """Validate a device ID.
+
+    Args:
+        device_id: The device ID to validate (bytes or hex string)
+
+    Returns:
+        device_id as bytes
+
+    Raises:
+        ValidationError: If device_id is invalid
+    """
+    if isinstance(device_id, str):
+        return validate_uuid_hex(device_id, "device_id")
+    validate_uuid(device_id, "device_id")
+    return device_id

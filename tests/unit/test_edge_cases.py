@@ -5,25 +5,35 @@ Tests boundary conditions, special characters, and unusual inputs.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from tests.helpers import get_tag_uuid, get_tag_uuid_hex, get_note_uuid
+
 from core.database import Database
-from core.search import parse_search_input, execute_search
+from core.search import parse_search_input, execute_search, get_tag_full_path
 from core.validation import (
     ValidationError,
     validate_tag_name,
     validate_tag_path,
     validate_note_content,
     validate_search_query,
+    validate_note_id,
     MAX_TAG_NAME_LENGTH,
     MAX_TAG_PATH_LENGTH,
     MAX_TAG_PATH_DEPTH,
     MAX_NOTE_CONTENT_LENGTH,
     MAX_SEARCH_QUERY_LENGTH,
 )
+
+
+# Test UUIDs
+TEST_UUID_1 = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
+TEST_UUID_2 = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+NONEXISTENT_UUID = uuid.UUID("00000000-0000-7000-8000-000000009999").bytes
 
 
 @pytest.mark.unit
@@ -168,27 +178,25 @@ class TestWhitespaceEdgeCases:
 class TestBoundaryConditions:
     """Test boundary conditions."""
 
-    def test_note_id_zero_invalid(self) -> None:
-        """Note ID of 0 is invalid."""
-        from core.validation import validate_note_id
+    def test_note_id_wrong_type_invalid(self) -> None:
+        """Note ID of wrong type is invalid."""
         with pytest.raises(ValidationError):
-            validate_note_id(0)
+            validate_note_id(0)  # Integer, not bytes
 
-    def test_note_id_negative_invalid(self) -> None:
-        """Negative note ID is invalid."""
-        from core.validation import validate_note_id
+    def test_note_id_wrong_length_invalid(self) -> None:
+        """Note ID of wrong length is invalid."""
         with pytest.raises(ValidationError):
-            validate_note_id(-1)
+            validate_note_id(b"short")
 
-    def test_note_id_one_valid(self) -> None:
-        """Note ID of 1 is valid."""
-        from core.validation import validate_note_id
-        validate_note_id(1)  # Should not raise
+    def test_note_id_valid_bytes(self) -> None:
+        """Valid UUID bytes are accepted."""
+        result = validate_note_id(TEST_UUID_1)
+        assert result == TEST_UUID_1
 
-    def test_note_id_large_valid(self) -> None:
-        """Large note ID is valid."""
-        from core.validation import validate_note_id
-        validate_note_id(999999999)  # Should not raise
+    def test_note_id_valid_hex_string(self) -> None:
+        """Valid hex string is accepted and converted."""
+        result = validate_note_id("00000000000070008000000000000001")
+        assert result == TEST_UUID_1
 
     def test_empty_tag_prefix(self) -> None:
         """Empty tag: prefix is ignored."""
@@ -213,19 +221,20 @@ class TestDatabaseEdgeCases:
 
     def test_get_nonexistent_note(self, empty_db: Database) -> None:
         """Getting nonexistent note returns None."""
-        note = empty_db.get_note(9999)
+        note = empty_db.get_note(NONEXISTENT_UUID)
         assert note is None
 
     def test_get_nonexistent_tag(self, empty_db: Database) -> None:
         """Getting nonexistent tag returns None."""
-        tag = empty_db.get_tag(9999)
+        tag = empty_db.get_tag(NONEXISTENT_UUID)
         assert tag is None
 
     def test_tag_descendants_of_leaf(self, populated_db: Database) -> None:
         """Getting descendants of leaf tag returns just that tag."""
-        # VoiceRewrite (3) is a leaf tag
-        descendants = populated_db.get_tag_descendants(3)
-        assert descendants == [3]
+        # VoiceRewrite is a leaf tag
+        voicerewrite_uuid = get_tag_uuid("VoiceRewrite")
+        descendants = populated_db.get_tag_descendants(voicerewrite_uuid)
+        assert descendants == [voicerewrite_uuid]
 
     def test_filter_notes_empty_list(self, populated_db: Database) -> None:
         """Filtering with empty tag list returns all notes."""
@@ -286,19 +295,17 @@ class TestTagHierarchyEdgeCases:
 
     def test_root_tag_has_no_parent(self, populated_db: Database) -> None:
         """Root tags have parent_id None."""
-        tag = populated_db.get_tag(1)  # Work
+        tag = populated_db.get_tag(get_tag_uuid("Work"))
         assert tag["parent_id"] is None
 
     def test_child_tag_has_parent(self, populated_db: Database) -> None:
         """Child tags have valid parent_id."""
-        tag = populated_db.get_tag(2)  # Projects under Work
-        assert tag["parent_id"] == 1
+        tag = populated_db.get_tag(get_tag_uuid("Projects"))  # Projects under Work
+        assert tag["parent_id"] == get_tag_uuid_hex("Work")
 
     def test_tag_path_traversal(self, populated_db: Database) -> None:
         """Full path correctly traverses hierarchy."""
-        from core.search import get_tag_full_path
-
-        path = get_tag_full_path(populated_db, 11)  # Paris under France
+        path = get_tag_full_path(populated_db, get_tag_uuid("Paris_France"))
         assert path == "Geography/Europe/France/Paris"
 
     def test_search_parent_includes_deep_children(self, populated_db: Database) -> None:

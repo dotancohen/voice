@@ -223,7 +223,7 @@ class NotesListPane(QWidget):
         warning_color: Hex color for highlighting ambiguous tags
     """
 
-    note_selected = Signal(int)  # Emits note_id
+    note_selected = Signal(str)  # Emits note_id (UUID hex string)
 
     def __init__(
         self, config: Config, db: Database, theme: str = "dark", parent: Optional[QWidget] = None

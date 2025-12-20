@@ -10,6 +10,8 @@ import json
 import pytest
 from flask.testing import FlaskClient
 
+from tests.helpers import get_tag_uuid_hex
+
 
 @pytest.mark.web
 class TestGetTags:
@@ -34,7 +36,7 @@ class TestGetTags:
         for tag in tags:
             assert "id" in tag
             assert "name" in tag
-            assert isinstance(tag["id"], int)
+            assert isinstance(tag["id"], str)  # UUID hex string
             assert isinstance(tag["name"], str)
 
     def test_tags_include_hierarchy_info(self, client: FlaskClient) -> None:
@@ -46,9 +48,9 @@ class TestGetTags:
         work_tag = next(t for t in tags if t["name"] == "Work")
         assert work_tag["parent_id"] is None
 
-        # Find Projects tag (child of Work, should have parent_id 1)
+        # Find Projects tag (child of Work, should have parent_id matching Work's ID)
         projects_tag = next(t for t in tags if t["name"] == "Projects")
-        assert projects_tag["parent_id"] == 1  # Work's ID
+        assert projects_tag["parent_id"] == get_tag_uuid_hex("Work")
 
     def test_tags_include_all_hierarchy_levels(self, client: FlaskClient) -> None:
         """Test that tags include deep hierarchy."""
@@ -59,7 +61,9 @@ class TestGetTags:
         geography = next(t for t in tags if t["name"] == "Geography")
         europe = next(t for t in tags if t["name"] == "Europe")
         france = next(t for t in tags if t["name"] == "France")
-        paris = next(t for t in tags if t["name"] == "Paris")
+        # There are two Paris tags - find the one under France
+        paris_list = [t for t in tags if t["name"] == "Paris"]
+        paris = next(p for p in paris_list if p["parent_id"] == france["id"])
 
         assert geography["parent_id"] is None
         assert europe["parent_id"] == geography["id"]

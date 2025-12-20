@@ -13,6 +13,7 @@ Endpoints:
     GET  /api/search             Search notes
 
 All endpoints return JSON responses.
+IDs are UUID7 hex strings (32 characters, no hyphens).
 
 Query parameters for /api/search:
     - text: Text to search for in note content
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -43,6 +45,15 @@ logger = logging.getLogger(__name__)
 
 # Global database instance
 db: Optional[Database] = None
+
+
+def _is_valid_uuid_hex(value: str) -> bool:
+    """Check if a string is a valid UUID hex string."""
+    try:
+        uuid.UUID(hex=value.replace("-", ""))
+        return True
+    except ValueError:
+        return False
 
 
 def create_app(config_dir: Optional[Path] = None) -> Flask:
@@ -109,7 +120,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             content: Note content (string, required)
 
         Returns:
-            JSON response with created note ID and content, or error
+            JSON response with created note ID (hex) and content, or error
         """
         try:
             data = request.get_json()
@@ -129,32 +140,37 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             logger.error(f"Error creating note: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/notes/<int:note_id>", methods=["GET"])
-    def get_note(note_id: int) -> tuple[Response, int]:
+    @app.route("/api/notes/<note_id>", methods=["GET"])
+    def get_note(note_id: str) -> tuple[Response, int]:
         """Get specific note by ID.
 
         Args:
-            note_id: Note ID from URL path
+            note_id: Note ID (UUID hex string) from URL path
 
         Returns:
             JSON response with note data or error
         """
         try:
+            if not _is_valid_uuid_hex(note_id):
+                return jsonify({"error": f"Invalid note ID format: {note_id}"}), 400
+
             note = db.get_note(note_id)
             if note:
                 return jsonify(note), 200
             else:
                 return jsonify({"error": f"Note {note_id} not found"}), 404
+        except ValidationError as e:
+            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
         except Exception as e:
             logger.error(f"Error getting note {note_id}: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/notes/<int:note_id>", methods=["PUT"])
-    def update_note(note_id: int) -> tuple[Response, int]:
+    @app.route("/api/notes/<note_id>", methods=["PUT"])
+    def update_note(note_id: str) -> tuple[Response, int]:
         """Update a note.
 
         Args:
-            note_id: Note ID from URL path
+            note_id: Note ID (UUID hex string) from URL path
 
         Request body (JSON):
             content: New note content (string, required)
@@ -163,6 +179,9 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             JSON response with updated note or error
         """
         try:
+            if not _is_valid_uuid_hex(note_id):
+                return jsonify({"error": f"Invalid note ID format: {note_id}"}), 400
+
             # Check if note exists
             note = db.get_note(note_id)
             if not note:
@@ -186,6 +205,31 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
         except Exception as e:
             logger.error(f"Error updating note {note_id}: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/notes/<note_id>", methods=["DELETE"])
+    def delete_note(note_id: str) -> tuple[Response, int]:
+        """Delete a note (soft delete).
+
+        Args:
+            note_id: Note ID (UUID hex string) from URL path
+
+        Returns:
+            JSON response with success message or error
+        """
+        try:
+            if not _is_valid_uuid_hex(note_id):
+                return jsonify({"error": f"Invalid note ID format: {note_id}"}), 400
+
+            deleted = db.delete_note(note_id)
+            if deleted:
+                return jsonify({"message": f"Note {note_id} deleted"}), 200
+            else:
+                return jsonify({"error": f"Note {note_id} not found"}), 404
+        except ValidationError as e:
+            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
+        except Exception as e:
+            logger.error(f"Error deleting note {note_id}: {e}")
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/tags", methods=["GET"])
@@ -221,7 +265,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
 
             # Build tag_id_groups
             # For ambiguous tags, all matching tags' descendants go into ONE group (OR logic)
-            tag_id_groups: List[List[int]] = []
+            tag_id_groups: List[List[bytes]] = []
             any_tag_not_found = False
 
             for tag_path in tag_paths:
@@ -230,8 +274,9 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
 
                 if matching_tags:
                     # Collect all descendants from all matching tags into ONE group (OR logic)
-                    all_descendants: List[int] = []
+                    all_descendants: List[bytes] = []
                     for tag in matching_tags:
+                        # tag["id"] is now a hex string, need to convert back for descendants query
                         descendants = db.get_tag_descendants(tag["id"])
                         all_descendants.extend(descendants)
 

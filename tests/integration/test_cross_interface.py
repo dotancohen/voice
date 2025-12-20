@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import get_note_uuid, get_note_uuid_hex
+
 from core.config import Config
 from core.database import Database
 from core.search import execute_search
@@ -267,21 +269,22 @@ class TestDataConsistency:
         web_client,
     ) -> None:
         """Note content is identical across interfaces."""
-        note_id = 6  # Hebrew text note
+        note_id_bytes = get_note_uuid(6)  # Hebrew text note
+        note_id_hex = get_note_uuid_hex(6)
 
         # Database direct
-        db_note = populated_db.get_note(note_id)
+        db_note = populated_db.get_note(note_id_bytes)
         assert db_note is not None
         db_content = db_note["content"]
 
         # CLI
-        returncode, stdout, stderr = cli_runner("--format", "json", "show-note", str(note_id))
+        returncode, stdout, stderr = cli_runner("--format", "json", "show-note", note_id_hex)
         assert returncode == 0
         cli_note = json.loads(stdout)
         cli_content = cli_note["content"]
 
         # Web API
-        response = web_client.get(f"/api/notes/{note_id}")
+        response = web_client.get(f"/api/notes/{note_id_hex}")
         assert response.status_code == 200
         web_note = response.get_json()
         web_content = web_note["content"]

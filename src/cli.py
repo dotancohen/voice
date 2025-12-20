@@ -345,8 +345,8 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     )
     show_parser.add_argument(
         "note_id",
-        type=int,
-        help="ID of the note to show"
+        type=str,
+        help="ID of the note to show (UUID hex string)"
     )
 
     # new-note command
@@ -368,8 +368,8 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     )
     edit_note_parser.add_argument(
         "note_id",
-        type=int,
-        help="ID of the note to edit"
+        type=str,
+        help="ID of the note to edit (UUID hex string)"
     )
     edit_note_parser.add_argument(
         "content",

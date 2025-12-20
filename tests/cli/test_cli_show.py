@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import get_note_uuid_hex
+
 from core.database import Database
 
 
@@ -23,17 +25,18 @@ class TestShowNote:
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test showing note in text format."""
+        note_id = get_note_uuid_hex(1)
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", "1"
+                "show-note", note_id
             ],
             capture_output=True,
             text=True
         )
 
         assert result.returncode == 0
-        assert "ID: 1" in result.stdout
+        assert f"ID: {note_id}" in result.stdout
         assert "Created:" in result.stdout
         assert "Meeting notes" in result.stdout
 
@@ -41,11 +44,12 @@ class TestShowNote:
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test showing note in JSON format."""
+        note_id = get_note_uuid_hex(1)
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "--format", "json",
-                "show-note", "1"
+                "show-note", note_id
             ],
             capture_output=True,
             text=True
@@ -53,7 +57,7 @@ class TestShowNote:
 
         assert result.returncode == 0
         note = json.loads(result.stdout)
-        assert note["id"] == 1
+        assert note["id"] == note_id
         assert "content" in note
         assert "created_at" in note
 
@@ -61,11 +65,12 @@ class TestShowNote:
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test showing note in CSV format."""
+        note_id = get_note_uuid_hex(2)
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "--format", "csv",
-                "show-note", "2"
+                "show-note", note_id
             ],
             capture_output=True,
             text=True
@@ -73,17 +78,18 @@ class TestShowNote:
 
         assert result.returncode == 0
         # CSV format: id,created_at,content,tags
-        assert result.stdout.startswith("2,")
+        assert result.stdout.startswith(note_id + ",")
         assert "documentation" in result.stdout
 
     def test_show_note_with_tags(
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test showing note that has tags."""
+        note_id = get_note_uuid_hex(1)
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", "1"
+                "show-note", note_id
             ],
             capture_output=True,
             text=True
@@ -97,10 +103,12 @@ class TestShowNote:
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test showing non-existent note."""
+        # Use a valid UUID format but nonexistent note
+        nonexistent_id = "00000000000070008000000000009999"
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", "9999"
+                "show-note", nonexistent_id
             ],
             capture_output=True,
             text=True
@@ -113,10 +121,11 @@ class TestShowNote:
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test showing note with Hebrew content."""
+        note_id = get_note_uuid_hex(6)
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", "6"
+                "show-note", note_id
             ],
             capture_output=True,
             text=True

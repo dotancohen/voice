@@ -10,6 +10,8 @@ import json
 import pytest
 from flask.testing import FlaskClient
 
+from tests.helpers import get_note_uuid_hex
+
 
 @pytest.mark.web
 class TestHealthCheck:
@@ -102,10 +104,25 @@ class TestHTTPMethods:
         assert response.status_code == 200
         assert response.json["content"] == "Updated content"
 
-    def test_delete_method_not_allowed(self, client: FlaskClient) -> None:
-        """Test that DELETE method returns 405 (read-only API)."""
-        response = client.delete("/api/notes/1")
-        assert response.status_code == 405
+    def test_delete_method_soft_deletes(self, client: FlaskClient) -> None:
+        """Test that DELETE method soft-deletes a note."""
+        # Create a note to delete
+        create_resp = client.post(
+            "/api/notes",
+            json={"content": "Note to delete"},
+            content_type="application/json"
+        )
+        note_id = create_resp.json["id"]
+
+        # Delete it
+        response = client.delete(f"/api/notes/{note_id}")
+        assert response.status_code == 200
+        assert "deleted" in response.json.get("message", "").lower()
+
+        # Verify it's not returned in list
+        list_resp = client.get("/api/notes")
+        note_ids = [n["id"] for n in list_resp.json]
+        assert note_id not in note_ids
 
 
 @pytest.mark.web
@@ -114,9 +131,10 @@ class TestJSONResponses:
 
     def test_all_responses_are_json(self, client: FlaskClient) -> None:
         """Test that all API responses are JSON."""
+        note_id = get_note_uuid_hex(1)
         endpoints = [
             "/api/notes",
-            "/api/notes/1",
+            f"/api/notes/{note_id}",
             "/api/tags",
             "/api/search",
             "/api/health"
@@ -128,7 +146,9 @@ class TestJSONResponses:
 
     def test_error_responses_are_json(self, client: FlaskClient) -> None:
         """Test that error responses are also JSON."""
-        response = client.get("/api/notes/9999")
+        # Use valid UUID format but nonexistent
+        nonexistent_id = "00000000000070008000000000009999"
+        response = client.get(f"/api/notes/{nonexistent_id}")
 
         assert response.content_type == "application/json"
         data = json.loads(response.data)
@@ -137,7 +157,8 @@ class TestJSONResponses:
     def test_json_utf8_encoding(self, client: FlaskClient) -> None:
         """Test that JSON responses handle UTF-8 properly."""
         # Get note with Hebrew content
-        response = client.get("/api/notes/6")
+        note_id = get_note_uuid_hex(6)
+        response = client.get(f"/api/notes/{note_id}")
         note = json.loads(response.data)
 
         # Should properly decode Hebrew text

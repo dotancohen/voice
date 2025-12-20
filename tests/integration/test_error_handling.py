@@ -6,6 +6,7 @@ Tests how the system handles errors across interface layers.
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,9 @@ class TestCLIErrorHandling:
         cli_runner,
     ) -> None:
         """CLI handles nonexistent note gracefully."""
-        returncode, stdout, stderr = cli_runner("show-note", "9999")
+        # Use valid UUID format but nonexistent
+        nonexistent_id = "00000000000070008000000000009999"
+        returncode, stdout, stderr = cli_runner("show-note", nonexistent_id)
         assert returncode == 1
         assert "not found" in stderr.lower() or "not found" in stdout.lower()
 
@@ -51,7 +54,7 @@ class TestCLIErrorHandling:
     ) -> None:
         """CLI handles invalid note ID type."""
         returncode, stdout, stderr = cli_runner("show-note", "abc")
-        assert returncode != 0  # argparse error
+        assert returncode != 0  # validation error
         assert "invalid" in stderr.lower() or "error" in stderr.lower()
 
     def test_missing_required_argument(
@@ -89,7 +92,9 @@ class TestWebAPIErrorHandling:
         web_client,
     ) -> None:
         """API returns 404 for nonexistent note."""
-        response = web_client.get("/api/notes/9999")
+        # Use valid UUID format but nonexistent
+        nonexistent_id = "00000000000070008000000000009999"
+        response = web_client.get(f"/api/notes/{nonexistent_id}")
         assert response.status_code == 404
         data = response.get_json()
         assert "error" in data
@@ -102,7 +107,7 @@ class TestWebAPIErrorHandling:
     ) -> None:
         """API handles invalid note ID format."""
         response = web_client.get("/api/notes/abc")
-        assert response.status_code == 404  # Flask treats as not matching route
+        assert response.status_code == 400  # Invalid UUID format
 
     def test_nonexistent_endpoint(
         self,
@@ -148,12 +153,14 @@ class TestValidationErrorHandling:
         populated_db: Database,
     ) -> None:
         """Database raises ValidationError for invalid note ID."""
+        # Wrong type (integer)
         with pytest.raises(ValidationError) as exc:
-            populated_db.get_note(0)
+            populated_db.get_note(0)  # type: ignore
         assert exc.value.field == "note_id"
 
+        # Wrong length (short bytes)
         with pytest.raises(ValidationError) as exc:
-            populated_db.get_note(-1)
+            populated_db.get_note(b"short")
         assert exc.value.field == "note_id"
 
     def test_database_validates_tag_id(
@@ -162,7 +169,7 @@ class TestValidationErrorHandling:
     ) -> None:
         """Database raises ValidationError for invalid tag ID."""
         with pytest.raises(ValidationError) as exc:
-            populated_db.get_tag(0)
+            populated_db.get_tag(0)  # type: ignore
         assert exc.value.field == "tag_id"
 
     def test_database_validates_search_query_length(

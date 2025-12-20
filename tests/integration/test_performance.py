@@ -6,12 +6,29 @@ Tests system behavior with large datasets.
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 
 import pytest
 
 from core.database import Database
 from core.search import execute_search
+
+
+def generate_uuid(prefix: int, index: int) -> bytes:
+    """Generate a deterministic UUID bytes for testing.
+
+    Args:
+        prefix: First digit of the UUID's counter part (0-99)
+        index: Index to generate unique UUID (0-9999)
+
+    Returns:
+        16-byte UUID
+    """
+    # Format: 00000000-0000-7000-8000-0000PP00IIII
+    # Must be 32 hex characters (16 bytes)
+    hex_str = f"000000000000700080000000{prefix:02d}00{index:04d}"
+    return uuid.UUID(hex_str).bytes
 
 
 @pytest.mark.integration
@@ -73,8 +90,10 @@ class TestLargeDatabasePerformance:
     ) -> None:
         """Traversing deep tag hierarchy is fast."""
         # Get descendants of a tag at top of 10-level hierarchy
+        # First tag is at index 0, which is Branch 0, Level 0
+        first_tag_id = generate_uuid(1, 0)
         start = time.perf_counter()
-        descendants = large_db.get_tag_descendants(1)  # First tag
+        descendants = large_db.get_tag_descendants(first_tag_id)
         elapsed = time.perf_counter() - start
 
         assert len(descendants) == 10  # Tag plus 9 descendants
@@ -85,10 +104,15 @@ class TestLargeDatabasePerformance:
         large_db: Database,
     ) -> None:
         """Search with multiple tag filters is fast."""
+        # Use UUIDs for tags at different positions
+        tag_group_1 = [generate_uuid(1, i) for i in range(3)]
+        tag_group_2 = [generate_uuid(1, i) for i in range(10, 13)]
+        tag_group_3 = [generate_uuid(1, i) for i in range(20, 23)]
+
         start = time.perf_counter()
         # Search with multiple tag constraints
         notes = large_db.search_notes(
-            tag_id_groups=[[1, 2, 3], [11, 12, 13], [21, 22, 23]]
+            tag_id_groups=[tag_group_1, tag_group_2, tag_group_3]
         )
         elapsed = time.perf_counter() - start
 
@@ -132,7 +156,8 @@ class TestScalabilityLimits:
         """Getting a single note is fast regardless of database size."""
         times = []
 
-        for note_id in [1, 500, 1000]:
+        for note_num in [1, 500, 1000]:
+            note_id = generate_uuid(2, note_num)
             start = time.perf_counter()
             note = large_db.get_note(note_id)
             elapsed = time.perf_counter() - start
@@ -150,7 +175,8 @@ class TestScalabilityLimits:
         """Getting descendants works at all depths."""
         # Test at different depths of the hierarchy
         for branch in range(5):
-            tag_id = branch * 10 + 1  # Top of each branch
+            # Top of each branch is at index branch * 10
+            tag_id = generate_uuid(1, branch * 10)
             start = time.perf_counter()
             descendants = large_db.get_tag_descendants(tag_id)
             elapsed = time.perf_counter() - start

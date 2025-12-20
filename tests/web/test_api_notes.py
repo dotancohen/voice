@@ -10,6 +10,8 @@ import json
 import pytest
 from flask.testing import FlaskClient
 
+from tests.helpers import get_note_uuid_hex
+
 
 @pytest.mark.web
 class TestGetNotes:
@@ -35,7 +37,7 @@ class TestGetNotes:
             assert "id" in note
             assert "created_at" in note
             assert "content" in note
-            assert isinstance(note["id"], int)
+            assert isinstance(note["id"], str)  # UUID hex string
             assert isinstance(note["content"], str)
 
     def test_notes_include_tags(self, client: FlaskClient) -> None:
@@ -44,7 +46,8 @@ class TestGetNotes:
         notes = json.loads(response.data)
 
         # Find note 1 which has tags
-        note_1 = next(n for n in notes if n["id"] == 1)
+        note_1_id = get_note_uuid_hex(1)
+        note_1 = next(n for n in notes if n["id"] == note_1_id)
         assert "tag_names" in note_1
         assert "Work" in note_1["tag_names"]
 
@@ -64,18 +67,20 @@ class TestGetNote:
 
     def test_get_note_by_id(self, client: FlaskClient) -> None:
         """Test getting specific note by ID."""
-        response = client.get("/api/notes/1")
+        note_id = get_note_uuid_hex(1)
+        response = client.get(f"/api/notes/{note_id}")
 
         assert response.status_code == 200
         assert response.content_type == "application/json"
 
         note = json.loads(response.data)
-        assert note["id"] == 1
+        assert note["id"] == note_id
         assert "Meeting notes" in note["content"]
 
     def test_get_note_includes_tags(self, client: FlaskClient) -> None:
         """Test that single note includes tags."""
-        response = client.get("/api/notes/1")
+        note_id = get_note_uuid_hex(1)
+        response = client.get(f"/api/notes/{note_id}")
         note = json.loads(response.data)
 
         assert "tag_names" in note
@@ -84,15 +89,18 @@ class TestGetNote:
 
     def test_get_note_with_hebrew_content(self, client: FlaskClient) -> None:
         """Test getting note with Hebrew content."""
-        response = client.get("/api/notes/6")
+        note_id = get_note_uuid_hex(6)
+        response = client.get(f"/api/notes/{note_id}")
         note = json.loads(response.data)
 
-        assert note["id"] == 6
+        assert note["id"] == note_id
         assert "שלום עולם" in note["content"]
 
     def test_get_nonexistent_note(self, client: FlaskClient) -> None:
         """Test getting non-existent note returns 404."""
-        response = client.get("/api/notes/9999")
+        # Use valid UUID format but nonexistent
+        nonexistent_id = "00000000000070008000000000009999"
+        response = client.get(f"/api/notes/{nonexistent_id}")
 
         assert response.status_code == 404
         error = json.loads(response.data)
@@ -100,7 +108,7 @@ class TestGetNote:
         assert "not found" in error["error"].lower()
 
     def test_get_note_invalid_id(self, client: FlaskClient) -> None:
-        """Test getting note with invalid ID."""
+        """Test getting note with invalid ID returns 400."""
         response = client.get("/api/notes/invalid")
 
-        assert response.status_code == 404  # Flask routing returns 404 for non-int
+        assert response.status_code == 400  # Invalid UUID format

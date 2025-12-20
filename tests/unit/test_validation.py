@@ -5,6 +5,8 @@ Tests all validation functions in core/validation.py.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from core.validation import (
@@ -18,6 +20,9 @@ from core.validation import (
     validate_search_query,
     validate_parent_tag_id,
     validate_tag_id_groups,
+    validate_uuid,
+    validate_uuid_hex,
+    uuid_to_hex,
     MAX_TAG_NAME_LENGTH,
     MAX_NOTE_CONTENT_LENGTH,
     MAX_SEARCH_QUERY_LENGTH,
@@ -26,62 +31,129 @@ from core.validation import (
 )
 
 
+# Test UUIDs (16-byte bytes)
+TEST_UUID_1 = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
+TEST_UUID_2 = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+TEST_UUID_3 = uuid.UUID("00000000-0000-7000-8000-000000000003").bytes
+TEST_UUID_4 = uuid.UUID("00000000-0000-7000-8000-000000000004").bytes
+TEST_UUID_5 = uuid.UUID("00000000-0000-7000-8000-000000000005").bytes
+
+
+@pytest.mark.unit
+class TestValidateUuid:
+    """Tests for validate_uuid."""
+
+    def test_valid_uuid_bytes(self) -> None:
+        """Valid 16-byte bytes should pass."""
+        validate_uuid(TEST_UUID_1)
+        validate_uuid(TEST_UUID_2)
+
+    def test_wrong_length_raises(self) -> None:
+        """Non-16-byte bytes should raise ValidationError."""
+        with pytest.raises(ValidationError) as exc:
+            validate_uuid(b"short")
+        assert exc.value.field == "id"
+        assert "16 bytes" in exc.value.message
+
+    def test_non_bytes_raises(self) -> None:
+        """Non-bytes types should raise ValidationError."""
+        with pytest.raises(ValidationError) as exc:
+            validate_uuid(123)  # type: ignore
+        assert exc.value.field == "id"
+        assert "bytes" in exc.value.message
+
+        with pytest.raises(ValidationError):
+            validate_uuid("not-bytes")  # type: ignore
+
+
+@pytest.mark.unit
+class TestValidateUuidHex:
+    """Tests for validate_uuid_hex."""
+
+    def test_valid_hex_string(self) -> None:
+        """Valid 32-char hex string should return bytes."""
+        result = validate_uuid_hex("00000000000070008000000000000001")
+        assert result == TEST_UUID_1
+
+    def test_valid_hex_with_hyphens(self) -> None:
+        """Valid UUID format with hyphens should work."""
+        result = validate_uuid_hex("00000000-0000-7000-8000-000000000001")
+        assert result == TEST_UUID_1
+
+    def test_non_string_raises(self) -> None:
+        """Non-string types should raise ValidationError."""
+        with pytest.raises(ValidationError) as exc:
+            validate_uuid_hex(123)  # type: ignore
+        assert "string" in exc.value.message
+
+    def test_invalid_hex_raises(self) -> None:
+        """Invalid hex should raise ValidationError."""
+        with pytest.raises(ValidationError) as exc:
+            validate_uuid_hex("not-a-valid-hex-string")
+        assert "invalid UUID format" in exc.value.message
+
+
+@pytest.mark.unit
+class TestUuidToHex:
+    """Tests for uuid_to_hex."""
+
+    def test_converts_bytes_to_hex(self) -> None:
+        """Should convert bytes to hex string."""
+        result = uuid_to_hex(TEST_UUID_1)
+        assert result == "00000000000070008000000000000001"
+
+    def test_round_trip(self) -> None:
+        """Should round-trip correctly."""
+        original = TEST_UUID_2
+        hex_str = uuid_to_hex(original)
+        back = validate_uuid_hex(hex_str)
+        assert back == original
+
+
 @pytest.mark.unit
 class TestValidateNoteId:
     """Tests for validate_note_id."""
 
-    def test_valid_note_id(self) -> None:
-        """Valid positive integer should pass."""
-        validate_note_id(1)
-        validate_note_id(100)
-        validate_note_id(999999)
+    def test_valid_note_id_bytes(self) -> None:
+        """Valid UUID bytes should pass and return bytes."""
+        result = validate_note_id(TEST_UUID_1)
+        assert result == TEST_UUID_1
 
-    def test_zero_note_id_raises(self) -> None:
-        """Zero should raise ValidationError."""
+    def test_valid_note_id_hex_string(self) -> None:
+        """Valid hex string should pass and return bytes."""
+        result = validate_note_id("00000000000070008000000000000001")
+        assert result == TEST_UUID_1
+
+    def test_invalid_type_raises(self) -> None:
+        """Integer type should raise ValidationError."""
         with pytest.raises(ValidationError) as exc:
-            validate_note_id(0)
+            validate_note_id(1)  # type: ignore
         assert exc.value.field == "note_id"
-        assert "positive" in exc.value.message
+        assert "bytes" in exc.value.message or "string" in exc.value.message
 
-    def test_negative_note_id_raises(self) -> None:
-        """Negative number should raise ValidationError."""
+    def test_invalid_hex_raises(self) -> None:
+        """Invalid hex string should raise ValidationError."""
         with pytest.raises(ValidationError) as exc:
-            validate_note_id(-1)
+            validate_note_id("invalid-hex")
         assert exc.value.field == "note_id"
-
-    def test_non_integer_raises(self) -> None:
-        """Non-integer types should raise ValidationError."""
-        with pytest.raises(ValidationError) as exc:
-            validate_note_id("1")  # type: ignore
-        assert exc.value.field == "note_id"
-        assert "integer" in exc.value.message
-
-        with pytest.raises(ValidationError):
-            validate_note_id(1.5)  # type: ignore
 
 
 @pytest.mark.unit
 class TestValidateTagId:
     """Tests for validate_tag_id."""
 
-    def test_valid_tag_id(self) -> None:
-        """Valid positive integer should pass."""
-        validate_tag_id(1)
-        validate_tag_id(50)
+    def test_valid_tag_id_bytes(self) -> None:
+        """Valid UUID bytes should pass and return bytes."""
+        result = validate_tag_id(TEST_UUID_1)
+        assert result == TEST_UUID_1
 
-    def test_zero_tag_id_raises(self) -> None:
-        """Zero should raise ValidationError."""
-        with pytest.raises(ValidationError) as exc:
-            validate_tag_id(0)
-        assert exc.value.field == "tag_id"
+    def test_valid_tag_id_hex_string(self) -> None:
+        """Valid hex string should pass and return bytes."""
+        result = validate_tag_id("00000000000070008000000000000002")
+        assert result == TEST_UUID_2
 
-    def test_negative_tag_id_raises(self) -> None:
-        """Negative number should raise ValidationError."""
-        with pytest.raises(ValidationError):
-            validate_tag_id(-5)
-
-    def test_non_integer_raises(self) -> None:
-        """Non-integer types should raise ValidationError."""
+    def test_invalid_type_raises(self) -> None:
+        """Invalid types should raise ValidationError."""
         with pytest.raises(ValidationError):
             validate_tag_id(None)  # type: ignore
 
@@ -91,29 +163,29 @@ class TestValidateTagIds:
     """Tests for validate_tag_ids."""
 
     def test_valid_tag_ids(self) -> None:
-        """Valid list of positive integers should pass."""
-        validate_tag_ids([1, 2, 3])
-        validate_tag_ids([1])
+        """Valid list of UUID bytes should pass."""
+        validate_tag_ids([TEST_UUID_1, TEST_UUID_2, TEST_UUID_3])
+        validate_tag_ids([TEST_UUID_1])
         validate_tag_ids([])
 
     def test_non_list_raises(self) -> None:
         """Non-list types should raise ValidationError."""
         with pytest.raises(ValidationError) as exc:
-            validate_tag_ids((1, 2, 3))  # type: ignore
+            validate_tag_ids((TEST_UUID_1, TEST_UUID_2))  # type: ignore
         assert exc.value.field == "tag_ids"
         assert "list" in exc.value.message
 
     def test_invalid_item_raises(self) -> None:
         """Invalid items in list should raise ValidationError."""
         with pytest.raises(ValidationError) as exc:
-            validate_tag_ids([1, 0, 3])
+            validate_tag_ids([TEST_UUID_1, b"short", TEST_UUID_3])
         assert exc.value.field == "tag_ids"
         assert "item 1" in exc.value.message
 
-    def test_non_integer_item_raises(self) -> None:
-        """Non-integer items should raise ValidationError."""
+    def test_non_bytes_item_raises(self) -> None:
+        """Non-bytes items should raise ValidationError."""
         with pytest.raises(ValidationError):
-            validate_tag_ids([1, "2", 3])  # type: ignore
+            validate_tag_ids([TEST_UUID_1, "string", TEST_UUID_3])  # type: ignore
 
 
 @pytest.mark.unit
@@ -268,23 +340,20 @@ class TestValidateParentTagId:
     def test_valid_parent_id(self) -> None:
         """Valid parent IDs should pass."""
         validate_parent_tag_id(None)  # Root tag
-        validate_parent_tag_id(1)
-        validate_parent_tag_id(100, tag_id=50)
+        validate_parent_tag_id(TEST_UUID_1)
+        validate_parent_tag_id(TEST_UUID_2, tag_id=TEST_UUID_3)
 
     def test_self_reference_raises(self) -> None:
         """Tag cannot be its own parent."""
         with pytest.raises(ValidationError) as exc:
-            validate_parent_tag_id(5, tag_id=5)
+            validate_parent_tag_id(TEST_UUID_5, tag_id=TEST_UUID_5)
         assert exc.value.field == "parent_id"
         assert "own parent" in exc.value.message
 
     def test_invalid_parent_id_raises(self) -> None:
         """Invalid parent IDs should raise ValidationError."""
         with pytest.raises(ValidationError):
-            validate_parent_tag_id(0)
-
-        with pytest.raises(ValidationError):
-            validate_parent_tag_id(-1)
+            validate_parent_tag_id(b"short")  # Wrong length
 
 
 @pytest.mark.unit
@@ -295,8 +364,8 @@ class TestValidateTagIdGroups:
         """Valid tag ID groups should pass."""
         validate_tag_id_groups(None)
         validate_tag_id_groups([])
-        validate_tag_id_groups([[1, 2, 3]])
-        validate_tag_id_groups([[1], [2, 3], [4, 5, 6]])
+        validate_tag_id_groups([[TEST_UUID_1, TEST_UUID_2, TEST_UUID_3]])
+        validate_tag_id_groups([[TEST_UUID_1], [TEST_UUID_2, TEST_UUID_3], [TEST_UUID_4, TEST_UUID_5]])
 
     def test_non_list_raises(self) -> None:
         """Non-list types should raise ValidationError."""
@@ -307,13 +376,13 @@ class TestValidateTagIdGroups:
     def test_non_list_group_raises(self) -> None:
         """Non-list groups should raise ValidationError."""
         with pytest.raises(ValidationError) as exc:
-            validate_tag_id_groups([[1, 2], (3, 4)])  # type: ignore
+            validate_tag_id_groups([[TEST_UUID_1, TEST_UUID_2], (TEST_UUID_3, TEST_UUID_4)])  # type: ignore
         assert "group 1" in exc.value.message
 
     def test_invalid_id_in_group_raises(self) -> None:
         """Invalid IDs within groups should raise ValidationError."""
         with pytest.raises(ValidationError) as exc:
-            validate_tag_id_groups([[1, 2], [3, 0]])
+            validate_tag_id_groups([[TEST_UUID_1, TEST_UUID_2], [TEST_UUID_3, b"short"]])
         assert "group 1" in exc.value.message
 
 

@@ -14,6 +14,7 @@ from PySide6.QtTest import QSignalSpy
 
 from core.database import Database
 from ui.tags_pane import TagsPane
+from tests.helpers import get_tag_uuid_hex
 
 
 @pytest.mark.gui
@@ -157,7 +158,7 @@ class TestTagSelection:
         # Check signal was emitted
         assert spy.count() == 1
         args = spy.at(0)
-        assert args[0] == 1  # Work has ID 1
+        assert args[0] == get_tag_uuid_hex("Work")
 
     def test_emits_correct_tag_id(self, qapp, populated_db: Database) -> None:
         """Test that correct tag ID is emitted."""
@@ -178,10 +179,10 @@ class TestTagSelection:
         index = pane.model.indexFromItem(geography_item)
         pane.on_tag_clicked(index)
 
-        # Check correct ID emitted
+        # Check correct ID emitted (UUID hex string)
         assert spy.count() == 1
         args = spy.at(0)
-        assert args[0] == 8  # Geography has ID 8
+        assert args[0] == get_tag_uuid_hex("Geography")
 
     def test_clicking_child_tag_emits_signal(self, qapp, populated_db: Database) -> None:
         """Test that clicking child tag works."""
@@ -209,10 +210,10 @@ class TestTagSelection:
         index = pane.model.indexFromItem(projects_item)
         pane.on_tag_clicked(index)
 
-        # Check signal emitted with Projects ID (2)
+        # Check signal emitted with Projects UUID hex string
         assert spy.count() == 1
         args = spy.at(0)
-        assert args[0] == 2
+        assert args[0] == get_tag_uuid_hex("Projects")
 
 
 @pytest.mark.gui

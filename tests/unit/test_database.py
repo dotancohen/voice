@@ -15,6 +15,9 @@ from datetime import datetime
 import pytest
 
 from core.database import Database
+from tests.conftest import (
+    get_tag_uuid_hex, get_note_uuid_hex, TAG_UUIDS, NOTE_UUIDS, uuid_to_hex
+)
 
 
 class TestDatabaseInit:
@@ -43,6 +46,12 @@ class TestDatabaseInit:
             )
             assert cursor.fetchone() is not None
 
+            # Check sync-related tables exist
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_peers'"
+            )
+            assert cursor.fetchone() is not None
+
     def test_creates_indexes(self, empty_db: Database) -> None:
         """Test that indexes are created."""
         with empty_db.conn:
@@ -51,7 +60,7 @@ class TestDatabaseInit:
                 "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
             )
             indexes = cursor.fetchall()
-            assert len(indexes) >= 6  # Should have at least 6 indexes
+            assert len(indexes) >= 10  # Should have at least 10 indexes now
 
 
 class TestGetAllNotes:
@@ -64,20 +73,24 @@ class TestGetAllNotes:
         assert all("id" in note for note in notes)
         assert all("content" in note for note in notes)
         assert all("created_at" in note for note in notes)
+        # IDs should be hex strings
+        assert all(len(note["id"]) == 32 for note in notes)
 
     def test_excludes_deleted_notes(self, populated_db: Database) -> None:
         """Test that deleted notes are excluded."""
         # Mark note 1 as deleted
+        note_1_id = NOTE_UUIDS[1]
         with populated_db.conn:
             cursor = populated_db.conn.cursor()
             cursor.execute(
-                "UPDATE notes SET deleted_at = ? WHERE id = 1",
-                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),)
+                "UPDATE notes SET deleted_at = ? WHERE id = ?",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), note_1_id)
             )
 
         notes = populated_db.get_all_notes()
         assert len(notes) == 8  # 9 notes - 1 deleted
-        assert not any(note["id"] == 1 for note in notes)
+        note_1_hex = get_note_uuid_hex(1)
+        assert not any(note["id"] == note_1_hex for note in notes)
 
     def test_returns_empty_for_empty_db(self, empty_db: Database) -> None:
         """Test that empty list is returned for empty database."""
@@ -87,8 +100,9 @@ class TestGetAllNotes:
     def test_includes_tag_names(self, populated_db: Database) -> None:
         """Test that tag names are included in results."""
         notes = populated_db.get_all_notes()
+        note_1_hex = get_note_uuid_hex(1)
         # Note 1 has Work, Projects, Meetings
-        note1 = next(n for n in notes if n["id"] == 1)
+        note1 = next(n for n in notes if n["id"] == note_1_hex)
         assert "Work" in note1["tag_names"]
         assert "Projects" in note1["tag_names"]
         assert "Meetings" in note1["tag_names"]
@@ -99,19 +113,22 @@ class TestGetNote:
 
     def test_returns_note_by_id(self, populated_db: Database) -> None:
         """Test retrieving specific note by ID."""
-        note = populated_db.get_note(1)
+        note_1_hex = get_note_uuid_hex(1)
+        note = populated_db.get_note(note_1_hex)
         assert note is not None
-        assert note["id"] == 1
+        assert note["id"] == note_1_hex
         assert "Meeting notes" in note["content"]
 
     def test_returns_none_for_nonexistent_note(self, populated_db: Database) -> None:
         """Test that None is returned for non-existent note."""
-        note = populated_db.get_note(999)
+        fake_id = "00000000000070008000999999999999"
+        note = populated_db.get_note(fake_id)
         assert note is None
 
     def test_includes_tags(self, populated_db: Database) -> None:
         """Test that tags are included in note result."""
-        note = populated_db.get_note(1)
+        note_1_hex = get_note_uuid_hex(1)
+        note = populated_db.get_note(note_1_hex)
         assert note is not None
         assert note["tag_names"] is not None
 
@@ -146,28 +163,31 @@ class TestGetTagDescendants:
 
     def test_returns_self_and_descendants(self, populated_db: Database) -> None:
         """Test that tag and all descendants are returned."""
-        # Work (1) has children Projects (2), VoiceRewrite (3), Meetings (4)
-        descendants = populated_db.get_tag_descendants(1)
-        assert 1 in descendants  # Work itself
-        assert 2 in descendants  # Projects
-        assert 3 in descendants  # VoiceRewrite
-        assert 4 in descendants  # Meetings
+        # Work has children Projects, VoiceRewrite, Meetings
+        work_hex = get_tag_uuid_hex("Work")
+        descendants = populated_db.get_tag_descendants(work_hex)
+        assert TAG_UUIDS["Work"] in descendants  # Work itself
+        assert TAG_UUIDS["Projects"] in descendants  # Projects
+        assert TAG_UUIDS["VoiceRewrite"] in descendants  # VoiceRewrite
+        assert TAG_UUIDS["Meetings"] in descendants  # Meetings
         assert len(descendants) == 4
 
     def test_returns_only_self_for_leaf(self, populated_db: Database) -> None:
         """Test that leaf node returns only itself."""
-        # VoiceRewrite (3) has no children
-        descendants = populated_db.get_tag_descendants(3)
-        assert descendants == [3]
+        # VoiceRewrite has no children
+        vr_hex = get_tag_uuid_hex("VoiceRewrite")
+        descendants = populated_db.get_tag_descendants(vr_hex)
+        assert descendants == [TAG_UUIDS["VoiceRewrite"]]
 
     def test_handles_deep_hierarchy(self, populated_db: Database) -> None:
         """Test deep hierarchy navigation."""
-        # Europe (9) -> France (10) -> Paris (11)
-        descendants = populated_db.get_tag_descendants(9)
-        assert 9 in descendants   # Europe
-        assert 10 in descendants  # France
-        assert 11 in descendants  # Paris
-        assert 12 in descendants  # Germany
+        # Europe -> France -> Paris, Germany
+        europe_hex = get_tag_uuid_hex("Europe")
+        descendants = populated_db.get_tag_descendants(europe_hex)
+        assert TAG_UUIDS["Europe"] in descendants   # Europe
+        assert TAG_UUIDS["France"] in descendants  # France
+        assert TAG_UUIDS["Paris_France"] in descendants  # Paris
+        assert TAG_UUIDS["Germany"] in descendants  # Germany
 
 
 class TestGetTag:
@@ -175,14 +195,16 @@ class TestGetTag:
 
     def test_returns_tag_by_id(self, populated_db: Database) -> None:
         """Test retrieving tag by ID."""
-        tag = populated_db.get_tag(1)
+        work_hex = get_tag_uuid_hex("Work")
+        tag = populated_db.get_tag(work_hex)
         assert tag is not None
         assert tag["name"] == "Work"
         assert tag["parent_id"] is None
 
     def test_returns_none_for_nonexistent(self, populated_db: Database) -> None:
         """Test None returned for non-existent tag."""
-        tag = populated_db.get_tag(999)
+        fake_id = "00000000000070008000999999999999"
+        tag = populated_db.get_tag(fake_id)
         assert tag is None
 
 
@@ -275,39 +297,53 @@ class TestSearchNotes:
 
     def test_single_tag_group(self, populated_db: Database) -> None:
         """Test search with single tag (includes descendants)."""
-        # Personal (5) has descendants Family (6), Health (7)
+        # Personal has descendants Family, Health
         # Notes 3, 4, 5, 6 all have Personal or descendants
-        notes = populated_db.search_notes(tag_id_groups=[[5, 6, 7]])
+        personal_descendants = [
+            TAG_UUIDS["Personal"], TAG_UUIDS["Family"], TAG_UUIDS["Health"]
+        ]
+        notes = populated_db.search_notes(tag_id_groups=[personal_descendants])
         assert len(notes) == 4
         note_ids = {n["id"] for n in notes}
-        assert note_ids == {3, 4, 5, 6}
+        expected_ids = {get_note_uuid_hex(3), get_note_uuid_hex(4),
+                       get_note_uuid_hex(5), get_note_uuid_hex(6)}
+        assert note_ids == expected_ids
 
     def test_multiple_tag_groups_and_logic(self, populated_db: Database) -> None:
         """Test AND logic with multiple tag groups."""
-        # Group 1: Personal (5, 6, 7)
-        # Group 2: Family (6)
-        # Only notes with (5 OR 6 OR 7) AND (6) should match
-        notes = populated_db.search_notes(tag_id_groups=[[5, 6, 7], [6]])
+        # Group 1: Personal and descendants
+        # Group 2: Family only
+        # Only notes with (Personal OR Family OR Health) AND (Family) should match
+        group1 = [TAG_UUIDS["Personal"], TAG_UUIDS["Family"], TAG_UUIDS["Health"]]
+        group2 = [TAG_UUIDS["Family"]]
+        notes = populated_db.search_notes(tag_id_groups=[group1, group2])
         assert len(notes) == 1
-        assert notes[0]["id"] == 4  # Family reunion note
+        assert notes[0]["id"] == get_note_uuid_hex(4)  # Family reunion note
 
     def test_hierarchical_parent_includes_children(self, populated_db: Database) -> None:
         """Test that searching parent tag includes child tags."""
-        # Europe (9) includes France (10), Paris (11), Germany (12)
-        # Note 4 has Paris (11)
-        notes = populated_db.search_notes(tag_id_groups=[[9, 10, 11, 12]])
+        # Europe includes France, Paris, Germany
+        # Note 4 has Paris
+        europe_descendants = [
+            TAG_UUIDS["Europe"], TAG_UUIDS["France"],
+            TAG_UUIDS["Paris_France"], TAG_UUIDS["Germany"]
+        ]
+        notes = populated_db.search_notes(tag_id_groups=[europe_descendants])
         assert len(notes) == 1
         assert "Paris" in notes[0]["content"]
 
     def test_combined_text_and_tags(self, populated_db: Database) -> None:
         """Test combined text and tag search."""
         # Search for "reunion" in Personal notes
+        personal_descendants = [
+            TAG_UUIDS["Personal"], TAG_UUIDS["Family"], TAG_UUIDS["Health"]
+        ]
         notes = populated_db.search_notes(
             text_query="reunion",
-            tag_id_groups=[[5, 6, 7]]
+            tag_id_groups=[personal_descendants]
         )
         assert len(notes) == 1
-        assert notes[0]["id"] == 4
+        assert notes[0]["id"] == get_note_uuid_hex(4)
 
     def test_no_results(self, populated_db: Database) -> None:
         """Test search with no matching results."""
@@ -316,11 +352,9 @@ class TestSearchNotes:
 
     def test_empty_search_returns_all(self, populated_db: Database) -> None:
         """Test that empty search criteria returns all notes."""
-        # This should not happen in practice, but database should handle it
-        # by returning all notes
         all_notes = populated_db.get_all_notes()
-        # If both parameters are None/empty, the behavior depends on implementation
-        # Let's verify our implementation handles this gracefully
+        search_notes = populated_db.search_notes()
+        assert len(search_notes) == len(all_notes)
 
 
 class TestFilterNotes:
@@ -328,8 +362,8 @@ class TestFilterNotes:
 
     def test_filters_by_tag_ids(self, populated_db: Database) -> None:
         """Test filtering by tag IDs."""
-        # Filter by Work tag (1)
-        notes = populated_db.filter_notes([1])
+        # Filter by Work tag
+        notes = populated_db.filter_notes([TAG_UUIDS["Work"]])
         assert len(notes) >= 2  # At least notes 1 and 2 have Work
         assert all("Work" in note["tag_names"] for note in notes)
 
@@ -348,47 +382,54 @@ class TestAmbiguousTagHandling:
         assert len(tags) == 2
 
         # Should find both Paris tags
-        tag_ids = {tag["id"] for tag in tags}
-        assert 11 in tag_ids  # France/Paris
-        assert 21 in tag_ids  # Texas/Paris
+        tag_ids_bytes = {uuid_to_hex(TAG_UUIDS["Paris_France"]),
+                        uuid_to_hex(TAG_UUIDS["Paris_Texas"])}
+        actual_ids = {tag["id"] for tag in tags}
+        assert actual_ids == tag_ids_bytes
 
     def test_get_tags_by_name_finds_multiple_bar(self, populated_db: Database) -> None:
         """Test that get_tags_by_name finds both bar tags."""
         tags = populated_db.get_tags_by_name("bar")
         assert len(tags) == 2
 
-        tag_ids = {tag["id"] for tag in tags}
-        assert 16 in tag_ids  # Foo/bar
-        assert 18 in tag_ids  # Boom/bar
+        tag_ids_bytes = {uuid_to_hex(TAG_UUIDS["bar_Foo"]),
+                        uuid_to_hex(TAG_UUIDS["bar_Boom"])}
+        actual_ids = {tag["id"] for tag in tags}
+        assert actual_ids == tag_ids_bytes
 
     def test_get_all_tags_by_path_with_ambiguous_paris(self, populated_db: Database) -> None:
         """Test get_all_tags_by_path returns both Paris tags when searching for 'Paris'."""
         tags = populated_db.get_all_tags_by_path("Paris")
         assert len(tags) == 2
 
-        tag_ids = {tag["id"] for tag in tags}
-        assert 11 in tag_ids  # France/Paris
-        assert 21 in tag_ids  # Texas/Paris
+        tag_ids_bytes = {uuid_to_hex(TAG_UUIDS["Paris_France"]),
+                        uuid_to_hex(TAG_UUIDS["Paris_Texas"])}
+        actual_ids = {tag["id"] for tag in tags}
+        assert actual_ids == tag_ids_bytes
 
     def test_get_all_tags_by_path_with_full_path_france_paris(self, populated_db: Database) -> None:
         """Test get_all_tags_by_path with full path returns only France/Paris."""
         tags = populated_db.get_all_tags_by_path("Geography/Europe/France/Paris")
         assert len(tags) == 1
-        assert tags[0]["id"] == 11
+        assert tags[0]["id"] == get_tag_uuid_hex("Paris_France")
         assert tags[0]["name"] == "Paris"
 
     def test_get_all_tags_by_path_with_full_path_texas_paris(self, populated_db: Database) -> None:
         """Test get_all_tags_by_path with full path returns only Texas/Paris."""
         tags = populated_db.get_all_tags_by_path("Geography/US/Texas/Paris")
         assert len(tags) == 1
-        assert tags[0]["id"] == 21
+        assert tags[0]["id"] == get_tag_uuid_hex("Paris_Texas")
         assert tags[0]["name"] == "Paris"
 
     def test_search_with_ambiguous_paris_uses_or_logic(self, populated_db: Database) -> None:
         """Test that searching for ambiguous 'Paris' finds notes from both hierarchies."""
         # Get descendants for both Paris tags
-        france_paris_descendants = populated_db.get_tag_descendants(11)
-        texas_paris_descendants = populated_db.get_tag_descendants(21)
+        france_paris_descendants = populated_db.get_tag_descendants(
+            get_tag_uuid_hex("Paris_France")
+        )
+        texas_paris_descendants = populated_db.get_tag_descendants(
+            get_tag_uuid_hex("Paris_Texas")
+        )
 
         # Search with just "Paris" - should use OR logic
         notes = populated_db.search_notes(
@@ -398,8 +439,8 @@ class TestAmbiguousTagHandling:
         # Should find note 4 (France/Paris) and note 9 (Texas/Paris)
         assert len(notes) == 2
         note_ids = {n["id"] for n in notes}
-        assert 4 in note_ids  # Family reunion in Paris (France)
-        assert 9 in note_ids  # Cowboys in Paris, Texas
+        assert get_note_uuid_hex(4) in note_ids  # Family reunion in Paris (France)
+        assert get_note_uuid_hex(9) in note_ids  # Cowboys in Paris, Texas
 
     def test_search_with_specific_france_paris_path(self, populated_db: Database) -> None:
         """Test searching with full France/Paris path finds only French Paris note."""
@@ -414,7 +455,7 @@ class TestAmbiguousTagHandling:
 
         # Should find only note 4
         assert len(notes) == 1
-        assert notes[0]["id"] == 4
+        assert notes[0]["id"] == get_note_uuid_hex(4)
         assert "Family reunion" in notes[0]["content"]
 
     def test_search_with_specific_texas_paris_path(self, populated_db: Database) -> None:
@@ -428,5 +469,67 @@ class TestAmbiguousTagHandling:
 
         # Should find only note 9
         assert len(notes) == 1
-        assert notes[0]["id"] == 9
+        assert notes[0]["id"] == get_note_uuid_hex(9)
         assert "Cowboys" in notes[0]["content"]
+
+
+class TestCreateNote:
+    """Test create_note method."""
+
+    def test_creates_note_with_content(self, empty_db: Database) -> None:
+        """Test creating a note with content."""
+        note_id = empty_db.create_note("Test note content")
+        assert len(note_id) == 32  # UUID hex string
+
+        note = empty_db.get_note(note_id)
+        assert note is not None
+        assert note["content"] == "Test note content"
+
+    def test_creates_note_with_empty_content(self, empty_db: Database) -> None:
+        """Test creating a note with empty content."""
+        note_id = empty_db.create_note("")
+        assert len(note_id) == 32
+
+        note = empty_db.get_note(note_id)
+        assert note is not None
+        assert note["content"] == ""
+
+
+class TestUpdateNote:
+    """Test update_note method."""
+
+    def test_updates_note_content(self, populated_db: Database) -> None:
+        """Test updating a note's content."""
+        note_1_hex = get_note_uuid_hex(1)
+        result = populated_db.update_note(note_1_hex, "Updated content")
+        assert result is True
+
+        note = populated_db.get_note(note_1_hex)
+        assert note["content"] == "Updated content"
+        assert note["modified_at"] is not None
+
+    def test_returns_false_for_nonexistent_note(self, populated_db: Database) -> None:
+        """Test that False is returned for non-existent note."""
+        fake_id = "00000000000070008000999999999999"
+        result = populated_db.update_note(fake_id, "New content")
+        assert result is False
+
+
+class TestDeleteNote:
+    """Test delete_note method."""
+
+    def test_soft_deletes_note(self, populated_db: Database) -> None:
+        """Test soft-deleting a note."""
+        note_1_hex = get_note_uuid_hex(1)
+        result = populated_db.delete_note(note_1_hex)
+        assert result is True
+
+        # Note should still exist but be excluded from get_all_notes
+        notes = populated_db.get_all_notes()
+        assert not any(n["id"] == note_1_hex for n in notes)
+
+    def test_returns_false_for_nonexistent_note(self, populated_db: Database) -> None:
+        """Test that False is returned for non-existent note."""
+        fake_id = "00000000000070008000999999999999"
+        result = populated_db.delete_note(fake_id)
+        assert result is False

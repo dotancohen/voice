@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt
 from core.config import Config
 from core.database import Database
 from ui.notes_list_pane import NotesListPane
+from tests.helpers import get_note_uuid_hex, get_tag_uuid_hex
 
 
 @pytest.mark.gui
@@ -77,14 +78,17 @@ class TestNoteDisplay:
         """Test that long content is truncated with ellipsis."""
         # Add a note with very long content
         from datetime import datetime
+        import uuid
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         long_content = "A" * 200  # Much longer than 100 char limit
+        note_id = uuid.UUID("00000000-0000-7000-8000-000000000999").bytes
+        device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
 
         with populated_db.conn:
             cursor = populated_db.conn.cursor()
             cursor.execute(
-                "INSERT INTO notes (created_at, content) VALUES (?, ?)",
-                (now, long_content)
+                "INSERT INTO notes (id, created_at, content, device_id) VALUES (?, ?, ?, ?)",
+                (note_id, now, long_content, device_id)
             )
 
         pane = NotesListPane(test_config, populated_db)
@@ -139,10 +143,10 @@ class TestNoteSelection:
 
         # Signal should be emitted
         assert spy.count() == 1
-        # Should emit a note ID
+        # Should emit a note ID (UUID hex string)
         args = spy.at(0)
         assert len(args) == 1
-        assert isinstance(args[0], int)
+        assert isinstance(args[0], str)
 
     def test_emits_correct_note_id(
         self, qapp, test_config: Config, populated_db: Database
@@ -158,10 +162,10 @@ class TestNoteSelection:
                 pane.on_note_clicked(item)
                 break
 
-        # Should emit note ID 1
+        # Should emit note ID 1 (UUID hex string)
         assert spy.count() == 1
         args = spy.at(0)
-        assert args[0] == 1
+        assert args[0] == get_note_uuid_hex(1)
 
 
 @pytest.mark.gui
@@ -281,8 +285,8 @@ class TestTagFiltering:
         """Test filtering by tag with single name match."""
         pane = NotesListPane(test_config, populated_db)
 
-        # Filter by Work tag (ID 1)
-        pane.filter_by_tag(1)
+        # Filter by Work tag (UUID hex string)
+        pane.filter_by_tag(get_tag_uuid_hex("Work"))
 
         # Should add to search field and perform search
         assert "tag:Work" in pane.search_field.toPlainText()
@@ -295,9 +299,9 @@ class TestTagFiltering:
         """Test that filtering by parent includes child tags."""
         pane = NotesListPane(test_config, populated_db)
 
-        # Filter by Personal (ID 5)
+        # Filter by Personal (UUID hex string)
         # Should include notes with Family, Health (children)
-        pane.filter_by_tag(5)
+        pane.filter_by_tag(get_tag_uuid_hex("Personal"))
 
         # Should find 4 notes (3, 4, 5, 6)
         assert pane.list_widget.count() == 4
@@ -311,8 +315,8 @@ class TestTagFiltering:
         # Start with text search
         pane.search_field.setPlainText("reunion")
 
-        # Click tag
-        pane.filter_by_tag(5)  # Personal
+        # Click tag (UUID hex string)
+        pane.filter_by_tag(get_tag_uuid_hex("Personal"))
 
         # Should have both
         search_text = pane.search_field.toPlainText()
@@ -325,8 +329,8 @@ class TestTagFiltering:
         """Test that clicking an ambiguous tag in sidebar uses full path."""
         pane = NotesListPane(test_config, populated_db)
 
-        # Click France/Paris (ID 11) - should use full path since "Paris" is ambiguous
-        pane.filter_by_tag(11)
+        # Click France/Paris (UUID hex string) - should use full path since "Paris" is ambiguous
+        pane.filter_by_tag(get_tag_uuid_hex("Paris_France"))
 
         # Should add full path to search field
         search_text = pane.search_field.toPlainText()

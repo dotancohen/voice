@@ -16,6 +16,7 @@ from ui.main_window import MainWindow
 from ui.notes_list_pane import NotesListPane
 from ui.tags_pane import TagsPane
 from ui.note_pane import NotePane
+from tests.helpers import get_note_uuid_hex, get_tag_uuid_hex
 
 
 @pytest.mark.integration
@@ -36,7 +37,7 @@ class TestGUIWorkflows:
         # Connect signal
         selected_note_id = None
 
-        def on_note_selected(note_id: int) -> None:
+        def on_note_selected(note_id: str) -> None:
             nonlocal selected_note_id
             selected_note_id = note_id
             note_pane.load_note(note_id)
@@ -52,8 +53,8 @@ class TestGUIWorkflows:
         item = notes_pane.list_widget.item(0)
         notes_pane.list_widget.itemClicked.emit(item)
 
-        # Step 3: Verify note details are displayed
-        assert selected_note_id == 3
+        # Step 3: Verify note details are displayed (UUID hex string)
+        assert selected_note_id == get_note_uuid_hex(3)
         assert "Doctor appointment" in note_pane.content_text.toPlainText()
 
     def test_tag_click_filters_notes_workflow(
@@ -74,8 +75,8 @@ class TestGUIWorkflows:
         initial_count = notes_pane.list_widget.count()
         assert initial_count == 9
 
-        # Step 1: Click on Work tag (tag_id=1)
-        tags_pane.tag_selected.emit(1)
+        # Step 1: Click on Work tag (UUID hex string)
+        tags_pane.tag_selected.emit(get_tag_uuid_hex("Work"))
 
         # Step 2: Verify notes are filtered
         assert notes_pane.list_widget.count() == 2
@@ -116,12 +117,12 @@ class TestGUIWorkflows:
         notes_pane = NotesListPane(test_config, populated_db)
         tags_pane.tag_selected.connect(notes_pane.filter_by_tag)
 
-        # Step 1: Filter by Personal
-        tags_pane.tag_selected.emit(5)  # Personal
+        # Step 1: Filter by Personal (UUID hex string)
+        tags_pane.tag_selected.emit(get_tag_uuid_hex("Personal"))
         assert notes_pane.list_widget.count() == 4
 
-        # Step 2: Add Geography filter (AND logic)
-        tags_pane.tag_selected.emit(8)  # Geography
+        # Step 2: Add Geography filter (AND logic) - UUID hex string
+        tags_pane.tag_selected.emit(get_tag_uuid_hex("Geography"))
         # Note 4 and 5 have both Personal and Geography
         assert notes_pane.list_widget.count() == 2
 

@@ -47,7 +47,7 @@ class TagsPane(QWidget):
         model: Tree model for tags
     """
 
-    tag_selected = Signal(int)  # Emits tag_id
+    tag_selected = Signal(str)  # Emits tag_id (UUID hex string)
 
     def __init__(self, db: Database, parent: Optional[QWidget] = None) -> None:
         """Initialize the tags pane.
