@@ -22,8 +22,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.core.config import Config
+from src.core.conflicts import (
+    ConflictManager,
+    ResolutionChoice,
+    auto_merge_if_possible,
+    get_diff_preview,
+)
 from src.core.database import Database
 from src.core.search import resolve_tag_term
+from src.core.sync_client import SyncClient, sync_all_peers
 from src.core.validation import ValidationError
 
 
@@ -310,6 +317,423 @@ def cmd_search(db: Database, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Show sync status and device information.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success)
+    """
+    device_id = config.get_device_id_hex()
+    device_name = config.get_device_name()
+    sync_config = config.get_sync_config()
+
+    if args.format == "json":
+        status = {
+            "device_id": device_id,
+            "device_name": device_name,
+            "sync_enabled": sync_config.get("enabled", False),
+            "server_port": sync_config.get("server_port", 8384),
+            "peer_count": len(sync_config.get("peers", [])),
+        }
+        # Get conflict counts
+        conflict_mgr = ConflictManager(db)
+        status["conflicts"] = conflict_mgr.get_unresolved_count()
+        print(json.dumps(status, indent=2))
+    else:
+        print(f"Device ID: {device_id}")
+        print(f"Device Name: {device_name}")
+        print(f"Sync Enabled: {sync_config.get('enabled', False)}")
+        print(f"Server Port: {sync_config.get('server_port', 8384)}")
+        print(f"Configured Peers: {len(sync_config.get('peers', []))}")
+
+        # Show conflict counts
+        conflict_mgr = ConflictManager(db)
+        counts = conflict_mgr.get_unresolved_count()
+        if counts["total"] > 0:
+            print(f"\nUnresolved Conflicts: {counts['total']}")
+            if counts["note_content"] > 0:
+                print(f"  - Note content conflicts: {counts['note_content']}")
+            if counts["note_delete"] > 0:
+                print(f"  - Note delete conflicts: {counts['note_delete']}")
+            if counts["tag_rename"] > 0:
+                print(f"  - Tag rename conflicts: {counts['tag_rename']}")
+
+    return 0
+
+
+def cmd_sync_list_peers(config: Config, args: argparse.Namespace) -> int:
+    """List configured sync peers.
+
+    Args:
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success)
+    """
+    peers = config.get_peers()
+
+    if args.format == "json":
+        print(json.dumps(peers, indent=2))
+    elif args.format == "csv":
+        print("peer_id,peer_name,peer_url,fingerprint")
+        for peer in peers:
+            fp = peer.get("certificate_fingerprint", "")
+            print(f'{peer["peer_id"]},{peer["peer_name"]},{peer.get("peer_url", "")},{fp}')
+    else:
+        if not peers:
+            print("No sync peers configured.")
+            return 0
+
+        print(f"Configured Peers ({len(peers)}):\n")
+        for peer in peers:
+            print(f"  ID: {peer['peer_id']}")
+            print(f"  Name: {peer['peer_name']}")
+            if peer.get("peer_url"):
+                print(f"  URL: {peer['peer_url']}")
+            if peer.get("certificate_fingerprint"):
+                fp = peer["certificate_fingerprint"]
+                # Truncate fingerprint for display
+                print(f"  Fingerprint: {fp[:20]}...")
+            print()
+
+    return 0
+
+
+def cmd_sync_add_peer(config: Config, args: argparse.Namespace) -> int:
+    """Add a new sync peer.
+
+    Args:
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    peer_id = args.peer_id
+    peer_name = args.peer_name
+    peer_url = args.peer_url
+    fingerprint = getattr(args, 'fingerprint', None)
+
+    # Validate peer_id is 32 hex characters
+    if len(peer_id) != 32:
+        print(f"Error: Peer ID must be 32 hex characters, got {len(peer_id)}", file=sys.stderr)
+        return 1
+
+    try:
+        int(peer_id, 16)
+    except ValueError:
+        print("Error: Peer ID must be a valid hex string", file=sys.stderr)
+        return 1
+
+    # Check if peer already exists
+    existing = config.get_peer(peer_id)
+    if existing:
+        print(f"Error: Peer with ID {peer_id} already exists", file=sys.stderr)
+        return 1
+
+    config.add_peer(
+        peer_id=peer_id,
+        peer_name=peer_name,
+        peer_url=peer_url,
+        certificate_fingerprint=fingerprint,
+    )
+
+    if args.format == "json":
+        print(json.dumps({"added": True, "peer_id": peer_id, "peer_name": peer_name}))
+    else:
+        print(f"Added peer: {peer_name} ({peer_id})")
+
+    return 0
+
+
+def cmd_sync_remove_peer(config: Config, args: argparse.Namespace) -> int:
+    """Remove a sync peer.
+
+    Args:
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    peer_id = args.peer_id
+
+    # Check if peer exists
+    existing = config.get_peer(peer_id)
+    if not existing:
+        print(f"Error: Peer with ID {peer_id} not found", file=sys.stderr)
+        return 1
+
+    peer_name = existing.get("peer_name", "Unknown")
+    config.remove_peer(peer_id)
+
+    if args.format == "json":
+        print(json.dumps({"removed": True, "peer_id": peer_id}))
+    else:
+        print(f"Removed peer: {peer_name} ({peer_id})")
+
+    return 0
+
+
+def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Perform sync with peers.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for any failures)
+    """
+    peer_id = getattr(args, 'peer_id', None)
+
+    if peer_id:
+        # Sync with specific peer
+        client = SyncClient(db, config)
+        result = client.sync_with_peer(peer_id)
+
+        if args.format == "json":
+            print(json.dumps({
+                "peer_id": peer_id,
+                "success": result.success,
+                "pulled": result.pulled,
+                "pushed": result.pushed,
+                "conflicts": result.conflicts,
+                "errors": result.errors,
+            }, indent=2))
+        else:
+            if result.success:
+                print(f"Sync with {peer_id} completed:")
+                print(f"  Pulled: {result.pulled} changes")
+                print(f"  Pushed: {result.pushed} changes")
+                if result.conflicts > 0:
+                    print(f"  Conflicts: {result.conflicts}")
+            else:
+                print(f"Sync with {peer_id} failed:")
+                for error in result.errors:
+                    print(f"  - {error}")
+                return 1
+    else:
+        # Sync with all peers
+        results = sync_all_peers(db, config)
+
+        if not results:
+            if args.format == "json":
+                print(json.dumps({"message": "No peers configured"}))
+            else:
+                print("No peers configured for sync.")
+            return 0
+
+        all_success = all(r.success for r in results.values())
+
+        if args.format == "json":
+            output = {}
+            for pid, result in results.items():
+                output[pid] = {
+                    "success": result.success,
+                    "pulled": result.pulled,
+                    "pushed": result.pushed,
+                    "conflicts": result.conflicts,
+                    "errors": result.errors,
+                }
+            print(json.dumps(output, indent=2))
+        else:
+            print(f"Sync completed with {len(results)} peer(s):\n")
+            for pid, result in results.items():
+                peer = config.get_peer(pid)
+                peer_name = peer.get("peer_name", pid) if peer else pid
+
+                if result.success:
+                    print(f"  {peer_name}: OK (↓{result.pulled} ↑{result.pushed})")
+                    if result.conflicts > 0:
+                        print(f"    Conflicts: {result.conflicts}")
+                else:
+                    print(f"  {peer_name}: FAILED")
+                    for error in result.errors:
+                        print(f"    - {error}")
+
+        return 0 if all_success else 1
+
+    return 0
+
+
+def cmd_sync_conflicts(db: Database, args: argparse.Namespace) -> int:
+    """List unresolved sync conflicts.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success)
+    """
+    conflict_mgr = ConflictManager(db)
+
+    # Get all conflicts
+    note_content = conflict_mgr.get_note_content_conflicts()
+    note_delete = conflict_mgr.get_note_delete_conflicts()
+    tag_rename = conflict_mgr.get_tag_rename_conflicts()
+
+    if args.format == "json":
+        output = {
+            "note_content": [
+                {
+                    "id": c.id,
+                    "note_id": c.note_id,
+                    "local_device": c.local_device_name or c.local_device_id,
+                    "remote_device": c.remote_device_name or c.remote_device_id,
+                    "created_at": c.created_at,
+                }
+                for c in note_content
+            ],
+            "note_delete": [
+                {
+                    "id": c.id,
+                    "note_id": c.note_id,
+                    "surviving_device": c.surviving_device_name or c.surviving_device_id,
+                    "deleting_device": c.deleting_device_name or c.deleting_device_id,
+                    "created_at": c.created_at,
+                }
+                for c in note_delete
+            ],
+            "tag_rename": [
+                {
+                    "id": c.id,
+                    "tag_id": c.tag_id,
+                    "local_name": c.local_name,
+                    "remote_name": c.remote_name,
+                    "created_at": c.created_at,
+                }
+                for c in tag_rename
+            ],
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        total = len(note_content) + len(note_delete) + len(tag_rename)
+        if total == 0:
+            print("No unresolved conflicts.")
+            return 0
+
+        print(f"Unresolved Conflicts ({total}):\n")
+
+        if note_content:
+            print("Note Content Conflicts:")
+            for c in note_content:
+                local = c.local_device_name or c.local_device_id[:8]
+                remote = c.remote_device_name or c.remote_device_id[:8]
+                print(f"  [{c.id[:8]}] Note {c.note_id[:8]} - {local} vs {remote}")
+
+        if note_delete:
+            print("\nNote Delete Conflicts:")
+            for c in note_delete:
+                surviving = c.surviving_device_name or c.surviving_device_id[:8]
+                deleting = c.deleting_device_name or c.deleting_device_id[:8]
+                print(f"  [{c.id[:8]}] Note {c.note_id[:8]} - edited by {surviving}, deleted by {deleting}")
+
+        if tag_rename:
+            print("\nTag Rename Conflicts:")
+            for c in tag_rename:
+                print(f"  [{c.id[:8]}] Tag {c.tag_id[:8]} - '{c.local_name}' vs '{c.remote_name}'")
+
+    return 0
+
+
+def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
+    """Resolve a sync conflict.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    conflict_id = args.conflict_id
+    choice_str = args.choice
+    conflict_mgr = ConflictManager(db)
+
+    # Map choice string to enum
+    choice_map = {
+        "local": ResolutionChoice.KEEP_LOCAL,
+        "remote": ResolutionChoice.KEEP_REMOTE,
+        "merge": ResolutionChoice.MERGE,
+        "both": ResolutionChoice.KEEP_BOTH,
+    }
+
+    if choice_str not in choice_map:
+        print(f"Error: Invalid choice '{choice_str}'. Use: local, remote, merge, or both", file=sys.stderr)
+        return 1
+
+    choice = choice_map[choice_str]
+
+    # Try to find which type of conflict this is
+    # Check note content conflicts
+    content_conflicts = conflict_mgr.get_note_content_conflicts()
+    for c in content_conflicts:
+        if c.id.startswith(conflict_id) or c.id == conflict_id:
+            merged = None
+            if choice == ResolutionChoice.MERGE:
+                # Try auto-merge, otherwise show diff and fail
+                merged = auto_merge_if_possible(c.local_content, c.remote_content)
+                if merged is None:
+                    print("Cannot auto-merge. Use --content to provide merged content.")
+                    print("\nDiff preview:")
+                    print(get_diff_preview(c.local_content, c.remote_content))
+                    return 1
+
+            result = conflict_mgr.resolve_note_content_conflict(c.id, choice, merged)
+            if result:
+                print(f"Resolved note content conflict {c.id[:8]} with {choice_str}")
+                return 0
+            else:
+                print(f"Error: Failed to resolve conflict", file=sys.stderr)
+                return 1
+
+    # Check note delete conflicts
+    delete_conflicts = conflict_mgr.get_note_delete_conflicts()
+    for c in delete_conflicts:
+        if c.id.startswith(conflict_id) or c.id == conflict_id:
+            if choice not in [ResolutionChoice.KEEP_BOTH, ResolutionChoice.KEEP_REMOTE]:
+                print("Error: Delete conflicts can only be resolved with 'both' (restore) or 'remote' (accept delete)", file=sys.stderr)
+                return 1
+
+            result = conflict_mgr.resolve_note_delete_conflict(c.id, choice)
+            if result:
+                action = "restored" if choice == ResolutionChoice.KEEP_BOTH else "deleted"
+                print(f"Resolved note delete conflict {c.id[:8]} - note {action}")
+                return 0
+            else:
+                print(f"Error: Failed to resolve conflict", file=sys.stderr)
+                return 1
+
+    # Check tag rename conflicts
+    rename_conflicts = conflict_mgr.get_tag_rename_conflicts()
+    for c in rename_conflicts:
+        if c.id.startswith(conflict_id) or c.id == conflict_id:
+            if choice not in [ResolutionChoice.KEEP_LOCAL, ResolutionChoice.KEEP_REMOTE]:
+                print("Error: Tag rename conflicts can only be resolved with 'local' or 'remote'", file=sys.stderr)
+                return 1
+
+            result = conflict_mgr.resolve_tag_rename_conflict(c.id, choice)
+            if result:
+                name = c.local_name if choice == ResolutionChoice.KEEP_LOCAL else c.remote_name
+                print(f"Resolved tag rename conflict {c.id[:8]} - using '{name}'")
+                return 0
+            else:
+                print(f"Error: Failed to resolve conflict", file=sys.stderr)
+                return 1
+
+    print(f"Error: Conflict with ID starting with '{conflict_id}' not found", file=sys.stderr)
+    return 1
+
+
 def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add CLI subparser and its nested subcommands.
 
@@ -401,6 +825,60 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Tag path to filter by (can be specified multiple times for AND logic)"
     )
 
+    # sync command with subcommands
+    sync_parser = cli_subparsers.add_parser(
+        "sync",
+        help="Sync operations (status, peers, conflicts)"
+    )
+    sync_subparsers = sync_parser.add_subparsers(dest="sync_command", help="Sync commands")
+
+    # sync status
+    sync_subparsers.add_parser("status", help="Show sync status and device info")
+
+    # sync list-peers
+    sync_subparsers.add_parser("list-peers", help="List configured sync peers")
+
+    # sync add-peer
+    add_peer_parser = sync_subparsers.add_parser("add-peer", help="Add a new sync peer")
+    add_peer_parser.add_argument("peer_id", type=str, help="Peer device ID (32 hex characters)")
+    add_peer_parser.add_argument("peer_name", type=str, help="Peer display name")
+    add_peer_parser.add_argument("peer_url", type=str, help="Peer URL (e.g., https://host:8384)")
+    add_peer_parser.add_argument(
+        "--fingerprint",
+        type=str,
+        help="Certificate fingerprint (optional, for pre-trusted peers)"
+    )
+
+    # sync remove-peer
+    remove_peer_parser = sync_subparsers.add_parser("remove-peer", help="Remove a sync peer")
+    remove_peer_parser.add_argument("peer_id", type=str, help="Peer device ID to remove")
+
+    # sync now
+    sync_now_parser = sync_subparsers.add_parser("now", help="Perform sync with peers")
+    sync_now_parser.add_argument(
+        "--peer",
+        dest="peer_id",
+        type=str,
+        help="Sync with specific peer ID (default: all peers)"
+    )
+
+    # sync conflicts
+    sync_subparsers.add_parser("conflicts", help="List unresolved sync conflicts")
+
+    # sync resolve
+    resolve_parser = sync_subparsers.add_parser("resolve", help="Resolve a sync conflict")
+    resolve_parser.add_argument(
+        "conflict_id",
+        type=str,
+        help="Conflict ID (or prefix) to resolve"
+    )
+    resolve_parser.add_argument(
+        "choice",
+        type=str,
+        choices=["local", "remote", "merge", "both"],
+        help="Resolution choice: local, remote, merge (content), or both (delete)"
+    )
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -438,6 +916,29 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_list_tags(db, args)
         elif args.cli_command == "search":
             return cmd_search(db, args)
+        elif args.cli_command == "sync":
+            # Handle sync subcommands
+            sync_cmd = getattr(args, 'sync_command', None)
+            if not sync_cmd:
+                print("Error: No sync command specified. Use 'sync --help'.", file=sys.stderr)
+                return 1
+            if sync_cmd == "status":
+                return cmd_sync_status(db, config, args)
+            elif sync_cmd == "list-peers":
+                return cmd_sync_list_peers(config, args)
+            elif sync_cmd == "add-peer":
+                return cmd_sync_add_peer(config, args)
+            elif sync_cmd == "remove-peer":
+                return cmd_sync_remove_peer(config, args)
+            elif sync_cmd == "now":
+                return cmd_sync_now(db, config, args)
+            elif sync_cmd == "conflicts":
+                return cmd_sync_conflicts(db, args)
+            elif sync_cmd == "resolve":
+                return cmd_sync_resolve(db, args)
+            else:
+                print(f"Error: Unknown sync command '{sync_cmd}'", file=sys.stderr)
+                return 1
         else:
             print(f"Error: Unknown command '{args.cli_command}'", file=sys.stderr)
             return 1
