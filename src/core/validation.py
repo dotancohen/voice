@@ -92,40 +92,33 @@ def uuid_to_hex(value: bytes) -> str:
     return uuid.UUID(bytes=value).hex
 
 
-def validate_note_id(note_id: Union[bytes, str]) -> bytes:
-    """Validate a note ID.
+def validate_entity_id(entity_id: Union[bytes, str], field_name: str = "id") -> bytes:
+    """Validate a UUID entity ID (note, tag, device, etc.).
 
     Args:
-        note_id: The note ID to validate (bytes or hex string)
+        entity_id: The entity ID to validate (bytes or hex string)
+        field_name: Name of the field for error messages
 
     Returns:
-        note_id as bytes
+        entity_id as bytes
 
     Raises:
-        ValidationError: If note_id is invalid
+        ValidationError: If entity_id is invalid
     """
-    if isinstance(note_id, str):
-        return validate_uuid_hex(note_id, "note_id")
-    validate_uuid(note_id, "note_id")
-    return note_id
+    if isinstance(entity_id, str):
+        return validate_uuid_hex(entity_id, field_name)
+    validate_uuid(entity_id, field_name)
+    return entity_id
+
+
+def validate_note_id(note_id: Union[bytes, str]) -> bytes:
+    """Validate a note ID."""
+    return validate_entity_id(note_id, "note_id")
 
 
 def validate_tag_id(tag_id: Union[bytes, str]) -> bytes:
-    """Validate a tag ID.
-
-    Args:
-        tag_id: The tag ID to validate (bytes or hex string)
-
-    Returns:
-        tag_id as bytes
-
-    Raises:
-        ValidationError: If tag_id is invalid
-    """
-    if isinstance(tag_id, str):
-        return validate_uuid_hex(tag_id, "tag_id")
-    validate_uuid(tag_id, "tag_id")
-    return tag_id
+    """Validate a tag ID."""
+    return validate_entity_id(tag_id, "tag_id")
 
 
 def validate_tag_ids(tag_ids: List[Union[bytes, str]]) -> List[bytes]:
@@ -347,18 +340,5 @@ def validate_tag_id_groups(
 
 
 def validate_device_id(device_id: Union[bytes, str]) -> bytes:
-    """Validate a device ID.
-
-    Args:
-        device_id: The device ID to validate (bytes or hex string)
-
-    Returns:
-        device_id as bytes
-
-    Raises:
-        ValidationError: If device_id is invalid
-    """
-    if isinstance(device_id, str):
-        return validate_uuid_hex(device_id, "device_id")
-    validate_uuid(device_id, "device_id")
-    return device_id
+    """Validate a device ID."""
+    return validate_entity_id(device_id, "device_id")
