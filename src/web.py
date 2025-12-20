@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -39,21 +38,12 @@ from flask_cors import CORS
 
 from src.core.config import Config
 from src.core.database import Database
-from src.core.validation import ValidationError
+from src.core.validation import ValidationError, validate_uuid_hex
 
 logger = logging.getLogger(__name__)
 
 # Global database instance
 db: Optional[Database] = None
-
-
-def _is_valid_uuid_hex(value: str) -> bool:
-    """Check if a string is a valid UUID hex string."""
-    try:
-        uuid.UUID(hex=value.replace("-", ""))
-        return True
-    except ValueError:
-        return False
 
 
 def create_app(config_dir: Optional[Path] = None) -> Flask:
@@ -151,9 +141,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             JSON response with note data or error
         """
         try:
-            if not _is_valid_uuid_hex(note_id):
-                return jsonify({"error": f"Invalid note ID format: {note_id}"}), 400
-
+            validate_uuid_hex(note_id, "note_id")
             note = db.get_note(note_id)
             if note:
                 return jsonify(note), 200
@@ -179,9 +167,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             JSON response with updated note or error
         """
         try:
-            if not _is_valid_uuid_hex(note_id):
-                return jsonify({"error": f"Invalid note ID format: {note_id}"}), 400
-
+            validate_uuid_hex(note_id, "note_id")
             # Check if note exists
             note = db.get_note(note_id)
             if not note:
@@ -218,9 +204,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
             JSON response with success message or error
         """
         try:
-            if not _is_valid_uuid_hex(note_id):
-                return jsonify({"error": f"Invalid note ID format: {note_id}"}), 400
-
+            validate_uuid_hex(note_id, "note_id")
             deleted = db.delete_note(note_id)
             if deleted:
                 return jsonify({"message": f"Note {note_id} deleted"}), 200

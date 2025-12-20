@@ -468,6 +468,100 @@ class ConflictManager:
         logger.info(f"Resolved tag rename conflict {conflict_id} with {choice.value}")
         return True
 
+    def find_and_resolve_conflict(
+        self,
+        conflict_id_prefix: str,
+        choice: ResolutionChoice,
+        merged_content: Optional[str] = None,
+    ) -> Tuple[bool, str, Optional[str]]:
+        """Find a conflict by ID prefix and resolve it.
+
+        This method handles finding the conflict across all types and
+        validating that the resolution choice is valid for that type.
+
+        Args:
+            conflict_id_prefix: Full or partial conflict ID (UUID hex)
+            choice: How to resolve the conflict
+            merged_content: Merged content for MERGE resolution (optional)
+
+        Returns:
+            Tuple of (success, conflict_type, error_message)
+            - success: True if resolved
+            - conflict_type: "note_content", "note_delete", "tag_rename", or ""
+            - error_message: Error description if not successful, None otherwise
+        """
+        # Check note content conflicts
+        for c in self.get_note_content_conflicts():
+            if c.id.startswith(conflict_id_prefix) or c.id == conflict_id_prefix:
+                # Validate choice
+                if choice not in [
+                    ResolutionChoice.KEEP_LOCAL,
+                    ResolutionChoice.KEEP_REMOTE,
+                    ResolutionChoice.MERGE,
+                ]:
+                    return False, "note_content", (
+                        "Note content conflicts can only be resolved with "
+                        "'keep_local', 'keep_remote', or 'merge'"
+                    )
+
+                # Handle merge
+                actual_merged = merged_content
+                if choice == ResolutionChoice.MERGE and actual_merged is None:
+                    # Try auto-merge
+                    actual_merged = auto_merge_if_possible(
+                        c.local_content, c.remote_content
+                    )
+                    if actual_merged is None:
+                        return False, "note_content", (
+                            "Cannot auto-merge conflicting content. "
+                            "Provide merged_content explicitly."
+                        )
+
+                result = self.resolve_note_content_conflict(
+                    c.id, choice, actual_merged
+                )
+                if result:
+                    return True, "note_content", None
+                return False, "note_content", "Failed to resolve conflict"
+
+        # Check note delete conflicts
+        for c in self.get_note_delete_conflicts():
+            if c.id.startswith(conflict_id_prefix) or c.id == conflict_id_prefix:
+                # Validate choice
+                if choice not in [
+                    ResolutionChoice.KEEP_BOTH,
+                    ResolutionChoice.KEEP_REMOTE,
+                ]:
+                    return False, "note_delete", (
+                        "Note delete conflicts can only be resolved with "
+                        "'keep_both' (restore) or 'keep_remote' (accept delete)"
+                    )
+
+                result = self.resolve_note_delete_conflict(c.id, choice)
+                if result:
+                    return True, "note_delete", None
+                return False, "note_delete", "Failed to resolve conflict"
+
+        # Check tag rename conflicts
+        for c in self.get_tag_rename_conflicts():
+            if c.id.startswith(conflict_id_prefix) or c.id == conflict_id_prefix:
+                # Validate choice
+                if choice not in [
+                    ResolutionChoice.KEEP_LOCAL,
+                    ResolutionChoice.KEEP_REMOTE,
+                ]:
+                    return False, "tag_rename", (
+                        "Tag rename conflicts can only be resolved with "
+                        "'keep_local' or 'keep_remote'"
+                    )
+
+                result = self.resolve_tag_rename_conflict(c.id, choice)
+                if result:
+                    return True, "tag_rename", None
+                return False, "tag_rename", "Failed to resolve conflict"
+
+        return False, "", f"Conflict with ID starting with '{conflict_id_prefix}' not found"
+
 
 def diff3_merge(
     base: str,

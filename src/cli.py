@@ -22,12 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.core.config import Config
-from src.core.conflicts import (
-    ConflictManager,
-    ResolutionChoice,
-    auto_merge_if_possible,
-    get_diff_preview,
-)
+from src.core.conflicts import ConflictManager, ResolutionChoice
 from src.core.database import Database
 from src.core.search import resolve_tag_term
 from src.core.sync_client import SyncClient, sync_all_peers
@@ -420,29 +415,17 @@ def cmd_sync_add_peer(config: Config, args: argparse.Namespace) -> int:
     peer_url = args.peer_url
     fingerprint = getattr(args, 'fingerprint', None)
 
-    # Validate peer_id is 32 hex characters
-    if len(peer_id) != 32:
-        print(f"Error: Peer ID must be 32 hex characters, got {len(peer_id)}", file=sys.stderr)
-        return 1
-
     try:
-        int(peer_id, 16)
-    except ValueError:
-        print("Error: Peer ID must be a valid hex string", file=sys.stderr)
+        config.add_peer(
+            peer_id=peer_id,
+            peer_name=peer_name,
+            peer_url=peer_url,
+            certificate_fingerprint=fingerprint,
+            allow_update=False,  # Reject if peer already exists
+        )
+    except ValidationError as e:
+        print(f"Error: {e.message}", file=sys.stderr)
         return 1
-
-    # Check if peer already exists
-    existing = config.get_peer(peer_id)
-    if existing:
-        print(f"Error: Peer with ID {peer_id} already exists", file=sys.stderr)
-        return 1
-
-    config.add_peer(
-        peer_id=peer_id,
-        peer_name=peer_name,
-        peer_url=peer_url,
-        certificate_fingerprint=fingerprint,
-    )
 
     if args.format == "json":
         print(json.dumps({"added": True, "peer_id": peer_id, "peer_name": peer_name}))
@@ -673,65 +656,17 @@ def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
 
     choice = choice_map[choice_str]
 
-    # Try to find which type of conflict this is
-    # Check note content conflicts
-    content_conflicts = conflict_mgr.get_note_content_conflicts()
-    for c in content_conflicts:
-        if c.id.startswith(conflict_id) or c.id == conflict_id:
-            merged = None
-            if choice == ResolutionChoice.MERGE:
-                # Try auto-merge, otherwise show diff and fail
-                merged = auto_merge_if_possible(c.local_content, c.remote_content)
-                if merged is None:
-                    print("Cannot auto-merge. Use --content to provide merged content.")
-                    print("\nDiff preview:")
-                    print(get_diff_preview(c.local_content, c.remote_content))
-                    return 1
+    # Use core method to find and resolve conflict
+    success, conflict_type, error = conflict_mgr.find_and_resolve_conflict(
+        conflict_id, choice
+    )
 
-            result = conflict_mgr.resolve_note_content_conflict(c.id, choice, merged)
-            if result:
-                print(f"Resolved note content conflict {c.id[:8]} with {choice_str}")
-                return 0
-            else:
-                print(f"Error: Failed to resolve conflict", file=sys.stderr)
-                return 1
-
-    # Check note delete conflicts
-    delete_conflicts = conflict_mgr.get_note_delete_conflicts()
-    for c in delete_conflicts:
-        if c.id.startswith(conflict_id) or c.id == conflict_id:
-            if choice not in [ResolutionChoice.KEEP_BOTH, ResolutionChoice.KEEP_REMOTE]:
-                print("Error: Delete conflicts can only be resolved with 'both' (restore) or 'remote' (accept delete)", file=sys.stderr)
-                return 1
-
-            result = conflict_mgr.resolve_note_delete_conflict(c.id, choice)
-            if result:
-                action = "restored" if choice == ResolutionChoice.KEEP_BOTH else "deleted"
-                print(f"Resolved note delete conflict {c.id[:8]} - note {action}")
-                return 0
-            else:
-                print(f"Error: Failed to resolve conflict", file=sys.stderr)
-                return 1
-
-    # Check tag rename conflicts
-    rename_conflicts = conflict_mgr.get_tag_rename_conflicts()
-    for c in rename_conflicts:
-        if c.id.startswith(conflict_id) or c.id == conflict_id:
-            if choice not in [ResolutionChoice.KEEP_LOCAL, ResolutionChoice.KEEP_REMOTE]:
-                print("Error: Tag rename conflicts can only be resolved with 'local' or 'remote'", file=sys.stderr)
-                return 1
-
-            result = conflict_mgr.resolve_tag_rename_conflict(c.id, choice)
-            if result:
-                name = c.local_name if choice == ResolutionChoice.KEEP_LOCAL else c.remote_name
-                print(f"Resolved tag rename conflict {c.id[:8]} - using '{name}'")
-                return 0
-            else:
-                print(f"Error: Failed to resolve conflict", file=sys.stderr)
-                return 1
-
-    print(f"Error: Conflict with ID starting with '{conflict_id}' not found", file=sys.stderr)
-    return 1
+    if success:
+        print(f"Resolved {conflict_type} conflict with {choice_str}")
+        return 0
+    else:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
 
 
 def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, cast
 
 from uuid6 import uuid7
 
+from .validation import ValidationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -325,21 +327,36 @@ class Config:
         peer_name: str,
         peer_url: str,
         certificate_fingerprint: Optional[str] = None,
+        allow_update: bool = True,
     ) -> None:
         """Add a new sync peer.
 
         Args:
-            peer_id: UUID hex string of the peer device.
+            peer_id: UUID hex string of the peer device (32 hex chars).
             peer_name: Human-readable name of the peer.
             peer_url: URL to connect to the peer.
             certificate_fingerprint: Optional TLS certificate fingerprint (TOFU).
+            allow_update: If True, update existing peer. If False, raise error.
+
+        Raises:
+            ValidationError: If peer_id is invalid or peer exists and allow_update=False.
         """
+        # Validate peer_id format
+        if not isinstance(peer_id, str) or len(peer_id) != 32:
+            raise ValidationError("peer_id", "must be 32 hex characters")
+        try:
+            int(peer_id, 16)
+        except ValueError:
+            raise ValidationError("peer_id", "must be a valid hex string")
+
         sync_config = self.get_sync_config()
         peers = sync_config.get("peers", [])
 
         # Check if peer already exists
         for peer in peers:
             if peer.get("peer_id") == peer_id:
+                if not allow_update:
+                    raise ValidationError("peer_id", "peer already exists")
                 # Update existing peer
                 peer["peer_name"] = peer_name
                 peer["peer_url"] = peer_url
