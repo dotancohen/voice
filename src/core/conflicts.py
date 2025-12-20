@@ -31,6 +31,23 @@ from .validation import uuid_to_hex, validate_uuid_hex
 logger = logging.getLogger(__name__)
 
 
+def _convert_row_uuids(row: Dict[str, Any], uuid_fields: List[str]) -> Dict[str, Any]:
+    """Convert UUID bytes fields in a row to hex strings.
+
+    Args:
+        row: Database row as dict
+        uuid_fields: List of field names to convert
+
+    Returns:
+        New dict with specified fields converted to hex strings
+    """
+    result = dict(row)
+    for field_name in uuid_fields:
+        if field_name in result and result[field_name] is not None:
+            result[field_name] = uuid_to_hex(result[field_name])
+    return result
+
+
 class ConflictType(Enum):
     """Types of sync conflicts."""
 
@@ -179,24 +196,26 @@ class ConflictManager:
             query += " WHERE resolved_at IS NULL"
         query += " ORDER BY created_at DESC"
 
+        uuid_fields = ["id", "note_id", "local_device_id", "remote_device_id"]
         conflicts = []
         with self.db.conn:
             cursor = self.db.conn.cursor()
             cursor.execute(query)
             for row in cursor.fetchall():
+                converted = _convert_row_uuids(dict(row), uuid_fields)
                 conflicts.append(NoteContentConflict(
-                    id=uuid_to_hex(row["id"]),
-                    note_id=uuid_to_hex(row["note_id"]),
-                    local_content=row["local_content"],
-                    local_modified_at=row["local_modified_at"],
-                    local_device_id=uuid_to_hex(row["local_device_id"]),
-                    local_device_name=row.get("local_device_name"),
-                    remote_content=row["remote_content"],
-                    remote_modified_at=row["remote_modified_at"],
-                    remote_device_id=uuid_to_hex(row["remote_device_id"]),
-                    remote_device_name=row.get("remote_device_name"),
-                    created_at=row["created_at"],
-                    resolved_at=row.get("resolved_at"),
+                    id=converted["id"],
+                    note_id=converted["note_id"],
+                    local_content=converted["local_content"],
+                    local_modified_at=converted["local_modified_at"],
+                    local_device_id=converted["local_device_id"],
+                    local_device_name=converted.get("local_device_name"),
+                    remote_content=converted["remote_content"],
+                    remote_modified_at=converted["remote_modified_at"],
+                    remote_device_id=converted["remote_device_id"],
+                    remote_device_name=converted.get("remote_device_name"),
+                    created_at=converted["created_at"],
+                    resolved_at=converted.get("resolved_at"),
                 ))
 
         return conflicts
@@ -222,23 +241,25 @@ class ConflictManager:
             query += " WHERE resolved_at IS NULL"
         query += " ORDER BY created_at DESC"
 
+        uuid_fields = ["id", "note_id", "surviving_device_id", "deleting_device_id"]
         conflicts = []
         with self.db.conn:
             cursor = self.db.conn.cursor()
             cursor.execute(query)
             for row in cursor.fetchall():
+                converted = _convert_row_uuids(dict(row), uuid_fields)
                 conflicts.append(NoteDeleteConflict(
-                    id=uuid_to_hex(row["id"]),
-                    note_id=uuid_to_hex(row["note_id"]),
-                    surviving_content=row["surviving_content"],
-                    surviving_modified_at=row["surviving_modified_at"],
-                    surviving_device_id=uuid_to_hex(row["surviving_device_id"]),
-                    surviving_device_name=row.get("surviving_device_name"),
-                    deleted_at=row["deleted_at"],
-                    deleting_device_id=uuid_to_hex(row["deleting_device_id"]),
-                    deleting_device_name=row.get("deleting_device_name"),
-                    created_at=row["created_at"],
-                    resolved_at=row.get("resolved_at"),
+                    id=converted["id"],
+                    note_id=converted["note_id"],
+                    surviving_content=converted["surviving_content"],
+                    surviving_modified_at=converted["surviving_modified_at"],
+                    surviving_device_id=converted["surviving_device_id"],
+                    surviving_device_name=converted.get("surviving_device_name"),
+                    deleted_at=converted["deleted_at"],
+                    deleting_device_id=converted["deleting_device_id"],
+                    deleting_device_name=converted.get("deleting_device_name"),
+                    created_at=converted["created_at"],
+                    resolved_at=converted.get("resolved_at"),
                 ))
 
         return conflicts
@@ -264,24 +285,26 @@ class ConflictManager:
             query += " WHERE resolved_at IS NULL"
         query += " ORDER BY created_at DESC"
 
+        uuid_fields = ["id", "tag_id", "local_device_id", "remote_device_id"]
         conflicts = []
         with self.db.conn:
             cursor = self.db.conn.cursor()
             cursor.execute(query)
             for row in cursor.fetchall():
+                converted = _convert_row_uuids(dict(row), uuid_fields)
                 conflicts.append(TagRenameConflict(
-                    id=uuid_to_hex(row["id"]),
-                    tag_id=uuid_to_hex(row["tag_id"]),
-                    local_name=row["local_name"],
-                    local_modified_at=row["local_modified_at"],
-                    local_device_id=uuid_to_hex(row["local_device_id"]),
-                    local_device_name=row.get("local_device_name"),
-                    remote_name=row["remote_name"],
-                    remote_modified_at=row["remote_modified_at"],
-                    remote_device_id=uuid_to_hex(row["remote_device_id"]),
-                    remote_device_name=row.get("remote_device_name"),
-                    created_at=row["created_at"],
-                    resolved_at=row.get("resolved_at"),
+                    id=converted["id"],
+                    tag_id=converted["tag_id"],
+                    local_name=converted["local_name"],
+                    local_modified_at=converted["local_modified_at"],
+                    local_device_id=converted["local_device_id"],
+                    local_device_name=converted.get("local_device_name"),
+                    remote_name=converted["remote_name"],
+                    remote_modified_at=converted["remote_modified_at"],
+                    remote_device_id=converted["remote_device_id"],
+                    remote_device_name=converted.get("remote_device_name"),
+                    created_at=converted["created_at"],
+                    resolved_at=converted.get("resolved_at"),
                 ))
 
         return conflicts
