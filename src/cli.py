@@ -25,6 +25,7 @@ from src.core.config import Config
 from src.core.conflicts import ConflictManager, ResolutionChoice
 from src.core.database import Database
 from src.core.search import resolve_tag_term
+from src.core.sync import create_sync_server
 from src.core.sync_client import SyncClient, sync_all_peers
 from src.core.validation import ValidationError
 
@@ -669,6 +670,38 @@ def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Start the sync server.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success)
+    """
+    host = getattr(args, 'host', '0.0.0.0')
+    port = getattr(args, 'port', None) or config.get_sync_server_port()
+
+    device_id = config.get_device_id_hex()
+    device_name = config.get_device_name()
+
+    print(f"Starting sync server...")
+    print(f"  Device ID:   {device_id}")
+    print(f"  Device Name: {device_name}")
+    print(f"  Listening:   http://{host}:{port}")
+    print(f"  Endpoints:   /sync/status, /sync/changes, /sync/full, /sync/apply")
+    print()
+    print("Press Ctrl+C to stop.")
+    print()
+
+    app = create_sync_server(db, config, host=host, port=port)
+    app.run(host=host, port=port, debug=False)
+
+    return 0
+
+
 def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add CLI subparser and its nested subcommands.
 
@@ -814,6 +847,21 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Resolution choice: local, remote, merge (content), or both (delete)"
     )
 
+    # sync serve
+    serve_parser = sync_subparsers.add_parser("serve", help="Start the sync server")
+    serve_parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Host to bind to (default: 0.0.0.0)"
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to bind to (default: 8384 or from config)"
+    )
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -871,6 +919,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_sync_conflicts(db, args)
             elif sync_cmd == "resolve":
                 return cmd_sync_resolve(db, args)
+            elif sync_cmd == "serve":
+                return cmd_sync_serve(db, config, args)
             else:
                 print(f"Error: Unknown sync command '{sync_cmd}'", file=sys.stderr)
                 return 1

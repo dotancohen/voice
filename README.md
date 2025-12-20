@@ -186,6 +186,86 @@ curl http://127.0.0.1:5000/api/health
 
 All endpoints return JSON. CORS is enabled for cross-origin requests.
 
+## Server Deployment
+
+For deploying VoiceRewrite as a headless sync server (no GUI or TUI), use the minimal requirements file:
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/your-repo/voicerewrite.git
+cd voicerewrite
+
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install server-only dependencies (no GUI/TUI)
+pip install -r requirements-server.txt
+```
+
+### Starting the Sync Server
+
+```bash
+# Start with defaults (0.0.0.0:8384)
+python -m src.main cli sync serve
+
+# Custom host/port
+python -m src.main cli sync serve --host 0.0.0.0 --port 8384
+
+# With custom config directory
+python -m src.main -d /path/to/config cli sync serve
+```
+
+The database is created automatically on first start at `~/.config/voicerewrite/notes.db` (or in the custom config directory).
+
+### Running as a Service
+
+Create a systemd service file at `/etc/systemd/system/voicerewrite-sync.service`:
+
+```ini
+[Unit]
+Description=VoiceRewrite Sync Server
+After=network.target
+
+[Service]
+Type=simple
+User=voicerewrite
+WorkingDirectory=/opt/voicerewrite
+ExecStart=/opt/voicerewrite/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+```bash
+sudo systemctl enable voicerewrite-sync
+sudo systemctl start voicerewrite-sync
+```
+
+### Sync Endpoints
+
+The sync server exposes these endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/sync/handshake` | POST | Exchange device info |
+| `/sync/changes` | POST | Request changes since timestamp |
+| `/sync/apply` | POST | Apply changes from peer |
+| `/sync/full` | GET | Get full dataset for initial sync |
+
+### Configuring Peers
+
+On client devices, add the server as a peer:
+```bash
+python -m src.main cli sync add-peer --name "Server" --url http://server-ip:8384
+python -m src.main cli sync now  # Trigger sync
+```
+
 ## Testing
 
 The test suite is organized by interface type for clean separation:
