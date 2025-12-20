@@ -20,23 +20,13 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.database import Database
+from src.core.note_editor import NoteEditorMixin
+from src.ui.styles import BUTTON_STYLE
 
 logger = logging.getLogger(__name__)
 
-# Button focus style - makes focused buttons visually distinct
-BUTTON_STYLE = """
-    QPushButton {
-        padding: 5px 15px;
-    }
-    QPushButton:focus {
-        border: 2px solid #3daee9;
-        background-color: #3daee9;
-        color: white;
-    }
-"""
 
-
-class NotePane(QWidget):
+class NotePane(QWidget, NoteEditorMixin):
     """Pane displaying detailed note information with editing capability.
 
     Shows complete note details:
@@ -45,12 +35,16 @@ class NotePane(QWidget):
     - Associated tags (comma-separated)
     - Full content (editable)
 
+    Inherits from NoteEditorMixin to share editing state logic with TUI.
+
     Signals:
-        note_saved: Emitted when a note is saved (note_id: int)
+        note_saved: Emitted when a note is saved (note_id: str)
 
     Attributes:
         db: Database connection
-        current_note_id: ID of currently displayed note
+        current_note_id: ID of currently displayed note (hex string)
+        current_note_content: Content of current note
+        editing: Whether currently in edit mode
         created_label: Label for creation timestamp
         modified_label: Label for modification timestamp
         tags_label: Label for associated tags
@@ -60,7 +54,7 @@ class NotePane(QWidget):
         cancel_button: Button to cancel editing
     """
 
-    note_saved = Signal(int)  # Emits note_id when saved
+    note_saved = Signal(str)  # Emits note_id when saved
 
     def __init__(self, db: Database, parent: Optional[QWidget] = None) -> None:
         """Initialize the note pane.
@@ -71,8 +65,7 @@ class NotePane(QWidget):
         """
         super().__init__(parent)
         self.db = db
-        self.current_note_id: Optional[int] = None
-        self.editing = False
+        self.init_editor_state()  # Initialize mixin state
 
         self.setup_ui()
 
@@ -123,24 +116,18 @@ class NotePane(QWidget):
         button_layout.addStretch()
         layout.addLayout(button_layout)
 
-    def load_note(self, note_id: int) -> None:
+    def load_note(self, note_id: str) -> None:
         """Load and display note details.
 
         Args:
-            note_id: ID of the note to display
+            note_id: ID of the note to display (hex string)
         """
-        # Exit editing mode if switching notes
-        if self.editing:
-            self._set_view_mode()
-
         note = self.db.get_note(note_id)
 
         if note is None:
             logger.warning(f"Note {note_id} not found")
             self.clear()
             return
-
-        self.current_note_id = note_id
 
         # Update created timestamp
         created_at = note.get("created_at", "Unknown")
@@ -160,66 +147,52 @@ class NotePane(QWidget):
         else:
             self.tags_label.setText("Tags: None")
 
-        # Update content
+        # Use mixin to handle content and state
         content = note.get("content", "")
-        self.content_text.setPlainText(content)
+        self.load_note_content(note_id, content)
 
         logger.info(f"Loaded note {note_id}")
 
     def clear(self) -> None:
         """Clear all fields."""
-        self.current_note_id = None
         self.created_label.setText("Created: ")
         self.modified_label.setText("Modified: Never modified")
         self.tags_label.setText("Tags: ")
-        self.content_text.clear()
-        self._set_view_mode()
+        self.clear_editor()  # Handles content and state via mixin
 
-    def start_editing(self) -> None:
-        """Switch to edit mode."""
-        if self.current_note_id is None:
-            return
+    # ===== NoteEditorMixin abstract method implementations =====
 
-        self.editing = True
-        self.content_text.setReadOnly(False)
+    def _ui_set_content_editable(self, editable: bool) -> None:
+        """Set whether the content area is editable."""
+        self.content_text.setReadOnly(not editable)
+
+    def _ui_set_content_text(self, text: str) -> None:
+        """Set the content area text."""
+        self.content_text.setPlainText(text)
+
+    def _ui_get_content_text(self) -> str:
+        """Get the current content area text."""
+        return self.content_text.toPlainText()
+
+    def _ui_focus_content(self) -> None:
+        """Set focus to the content area."""
         self.content_text.setFocus()
 
-        # Update button visibility
+    def _ui_show_edit_buttons(self) -> None:
+        """Show Save/Cancel buttons, hide Edit button."""
         self.edit_button.hide()
         self.save_button.show()
         self.cancel_button.show()
 
-        logger.info(f"Started editing note {self.current_note_id}")
-
-    def save_note(self) -> None:
-        """Save the current note and return to view mode."""
-        if self.current_note_id is None:
-            return
-
-        content = self.content_text.toPlainText()
-        self.db.update_note(self.current_note_id, content)
-        logger.info(f"Saved note {self.current_note_id}")
-
-        # Reload the note to update modified timestamp
-        self.load_note(self.current_note_id)
-
-        # Emit signal so main window can refresh notes list
-        self.note_saved.emit(self.current_note_id)
-
-    def cancel_editing(self) -> None:
-        """Cancel editing and restore original content."""
-        if self.current_note_id is not None:
-            # Reload original content
-            self.load_note(self.current_note_id)
-        else:
-            self._set_view_mode()
-
-    def _set_view_mode(self) -> None:
-        """Switch to view mode (read-only)."""
-        self.editing = False
-        self.content_text.setReadOnly(True)
-
-        # Update button visibility
+    def _ui_show_view_buttons(self) -> None:
+        """Show Edit button, hide Save/Cancel buttons."""
         self.edit_button.show()
         self.save_button.hide()
         self.cancel_button.hide()
+
+    def _ui_on_note_saved(self) -> None:
+        """Called after a note is saved. Refresh UI and emit signal."""
+        # Reload the note to update modified timestamp
+        self.load_note(self.current_note_id)
+        # Emit signal so main window can refresh notes list
+        self.note_saved.emit(self.current_note_id)

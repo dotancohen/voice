@@ -661,7 +661,7 @@ class SyncClient:
                 error_body = e.read().decode("utf-8")
                 error_data = json.loads(error_body)
                 error_msg = error_data.get("error", str(e))
-            except:
+            except Exception:
                 error_msg = f"HTTP {e.code}: {e.reason}"
             return {"success": False, "error": error_msg}
 

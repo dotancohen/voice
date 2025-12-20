@@ -47,7 +47,7 @@ from rich.text import Text as RichText
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.events import Key
 from textual.widgets import (
     Button,
@@ -64,6 +64,7 @@ from textual.widgets.tree import TreeNode
 
 from src.core.config import Config
 from src.core.database import Database
+from src.core.note_editor import NoteEditorMixin
 from src.core.search import build_tag_search_term, execute_search
 
 # Re-export for tests
@@ -357,22 +358,22 @@ class NotesList(Container):
         self.clear_search()
 
 
-class NoteDetail(Container):
+class NoteDetail(Container, NoteEditorMixin):
     """Note detail view with editing.
 
     LLM NOTE: TextArea doesn't support RTL CSS. We use dual-mode display:
     - View mode: Static widget with RLI/PDI markers + CSS text-align:right
     - Edit mode: TextArea (LTR only - Textual limitation)
     Press Edit button to edit, Save to save, Cancel to discard.
+
+    Inherits from NoteEditorMixin to share editing state logic with GUI.
     """
 
     def __init__(self, db: Database) -> None:
         super().__init__(id="note-detail")
         self.db = db
-        self.current_note_id: Optional[int] = None
-        self.current_note_content: str = ""
+        self.init_editor_state()  # Initialize mixin state
         self.is_rtl: bool = False
-        self.editing: bool = False
 
     def compose(self) -> ComposeResult:
         yield Label("Select a note to view", id="note-header")
@@ -393,12 +394,14 @@ class NoteDetail(Container):
         self.query_one("#save-btn", Button).display = False
         self.query_one("#cancel-btn", Button).display = False
 
-    def show_note(self, note_id: int) -> None:
-        """Display a note in view mode."""
+    def show_note(self, note_id: str) -> None:
+        """Display a note in view mode.
+
+        Args:
+            note_id: ID of the note to display (hex string)
+        """
         note = self.db.get_note(note_id)
         if note:
-            self.current_note_id = note_id
-            self.current_note_content = note["content"]
             tags = note.get("tag_names") or ""
             self.is_rtl = detect_rtl(tags) or detect_rtl(note["content"])
 
@@ -412,60 +415,58 @@ class NoteDetail(Container):
                 header.update(header_text)
                 header.remove_class("rtl")
 
-            # Update view content with per-line RTL formatting
-            view = self.query_one("#note-view", Static)
-            lines = note["content"].split('\n')
-            formatted_lines = []
-            for line in lines:
-                if detect_rtl(line):
-                    formatted_lines.append(RLI + line + PDI)
-                else:
-                    formatted_lines.append(line)
-            view.update('\n'.join(formatted_lines))
-            view.remove_class("rtl")  # Don't force right-align on mixed content
+            # Use mixin to handle content and state
+            self.load_note_content(note_id, note["content"])
 
-            # Ensure we're in view mode
-            self._set_view_mode()
+    # ===== NoteEditorMixin abstract method implementations =====
 
-    def start_editing(self) -> None:
-        """Switch to edit mode."""
-        if self.current_note_id:
-            self.editing = True
-            # Hide view, show edit
-            self.query_one("#note-view", Static).display = False
-            edit_area = self.query_one("#note-edit", TextArea)
-            edit_area.display = True
-            edit_area.load_text(self.current_note_content)
-            edit_area.focus()
-            # Update buttons
-            self.query_one("#edit-btn", Button).display = False
-            self.query_one("#save-btn", Button).display = True
-            self.query_one("#cancel-btn", Button).display = True
+    def _ui_set_content_editable(self, editable: bool) -> None:
+        """Toggle between view (Static) and edit (TextArea) widgets."""
+        self.query_one("#note-view", Static).display = not editable
+        self.query_one("#note-edit", TextArea).display = editable
 
-    def _set_view_mode(self) -> None:
-        """Switch to view mode."""
-        self.editing = False
-        # Show view, hide edit
-        self.query_one("#note-view", Static).display = True
-        self.query_one("#note-edit", TextArea).display = False
-        # Update buttons
+    def _ui_set_content_text(self, text: str) -> None:
+        """Set content in both view and edit widgets."""
+        # Update view widget with per-line RTL formatting
+        view = self.query_one("#note-view", Static)
+        lines = text.split('\n')
+        formatted_lines = []
+        for line in lines:
+            if detect_rtl(line):
+                formatted_lines.append(RLI + line + PDI)
+            else:
+                formatted_lines.append(line)
+        view.update('\n'.join(formatted_lines))
+        view.remove_class("rtl")  # Don't force right-align on mixed content
+
+        # Also update edit widget for when editing starts
+        self.query_one("#note-edit", TextArea).load_text(text)
+
+    def _ui_get_content_text(self) -> str:
+        """Get the current content from the edit widget."""
+        return self.query_one("#note-edit", TextArea).text
+
+    def _ui_focus_content(self) -> None:
+        """Set focus to the edit widget."""
+        self.query_one("#note-edit", TextArea).focus()
+
+    def _ui_show_edit_buttons(self) -> None:
+        """Show Save/Cancel buttons, hide Edit button."""
+        self.query_one("#edit-btn", Button).display = False
+        self.query_one("#save-btn", Button).display = True
+        self.query_one("#cancel-btn", Button).display = True
+
+    def _ui_show_view_buttons(self) -> None:
+        """Show Edit button, hide Save/Cancel buttons."""
         self.query_one("#edit-btn", Button).display = True
         self.query_one("#save-btn", Button).display = False
         self.query_one("#cancel-btn", Button).display = False
 
-    def save_note(self) -> None:
-        """Save the current note and return to view mode."""
-        if self.current_note_id:
-            content = self.query_one("#note-edit", TextArea).text
-            self.db.update_note(self.current_note_id, content)
-            self.current_note_content = content
-            self.app.notify(f"Note #{self.current_note_id} saved!")
-            # Refresh the view
-            self.show_note(self.current_note_id)
-
-    def cancel_editing(self) -> None:
-        """Cancel editing and return to view mode."""
-        self._set_view_mode()
+    def _ui_on_note_saved(self) -> None:
+        """Called after a note is saved. Show notification."""
+        self.app.notify(f"Note saved!")
+        # Refresh the view to show updated content
+        self.show_note(self.current_note_id)
 
 
 class VoiceRewriteTUI(App):

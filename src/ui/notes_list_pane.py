@@ -11,15 +11,16 @@ from typing import Any, Dict, List, Optional, Union
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
 from PySide6.QtGui import (
+    QAbstractTextDocumentLayout,
     QColor,
+    QFont,
     QKeyEvent,
     QPainter,
     QPalette,
+    QPen,
     QTextCharFormat,
     QTextCursor,
-    QFont,
     QTextDocument,
-    QAbstractTextDocumentLayout,
 )
 from PySide6.QtWidgets import (
     QFrame,
@@ -45,20 +46,9 @@ from src.core.search import (
     execute_search,
     build_tag_search_term,
 )
+from src.ui.styles import BUTTON_STYLE
 
 logger = logging.getLogger(__name__)
-
-# Button focus style - makes focused buttons visually distinct
-BUTTON_STYLE = """
-    QPushButton {
-        padding: 5px 15px;
-    }
-    QPushButton:focus {
-        border: 2px solid #3daee9;
-        background-color: #3daee9;
-        color: white;
-    }
-"""
 
 # Constants
 CONTENT_TRUNCATE_LENGTH = 100
@@ -162,7 +152,6 @@ class HTMLDelegate(QStyledItemDelegate):
 
         # Draw subtle dividing line based on actual content height
         painter.save()
-        from PySide6.QtGui import QPen
         # Choose color based on theme
         if self.theme == "light":
             line_color = QColor("#cccccc")  # Medium gray for light theme
