@@ -11,7 +11,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QMainWindow, QMenuBar, QSplitter, QWidget
+from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget
 
 from src.core.config import Config
 from src.core.database import Database

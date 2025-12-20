@@ -7,7 +7,7 @@ including timestamps, tags, and full content with editing capability.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (

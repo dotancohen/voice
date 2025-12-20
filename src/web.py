@@ -31,7 +31,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS

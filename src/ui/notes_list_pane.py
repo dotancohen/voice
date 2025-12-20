@@ -13,7 +13,6 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAbstractTextDocumentLayout,
     QColor,
-    QFont,
     QKeyEvent,
     QPainter,
     QPalette,
@@ -40,11 +39,10 @@ from PySide6.QtWidgets import (
 from src.core.config import Config
 from src.core.database import Database
 from src.core.search import (
-    parse_search_input,
-    get_tag_full_path,
-    find_ambiguous_tags,
-    execute_search,
     build_tag_search_term,
+    execute_search,
+    find_ambiguous_tags,
+    parse_search_input,
 )
 from src.ui.styles import BUTTON_STYLE
 

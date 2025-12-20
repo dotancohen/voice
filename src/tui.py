@@ -394,8 +394,8 @@ class NoteDetail(Container, NoteEditorMixin):
         self.query_one("#save-btn", Button).display = False
         self.query_one("#cancel-btn", Button).display = False
 
-    def show_note(self, note_id: str) -> None:
-        """Display a note in view mode.
+    def load_note(self, note_id: str) -> None:
+        """Load and display note details.
 
         Args:
             note_id: ID of the note to display (hex string)
@@ -466,7 +466,7 @@ class NoteDetail(Container, NoteEditorMixin):
         """Called after a note is saved. Show notification."""
         self.app.notify(f"Note saved!")
         # Refresh the view to show updated content
-        self.show_note(self.current_note_id)
+        self.load_note(self.current_note_id)
 
 
 class VoiceRewriteTUI(App):
@@ -608,7 +608,7 @@ class VoiceRewriteTUI(App):
             if idx < len(notes_list.notes):
                 note = notes_list.notes[idx]
                 detail = self.query_one("#note-detail", NoteDetail)
-                detail.show_note(note["id"])
+                detail.load_note(note["id"])
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         """Handle tag selection - build search term and run search."""
@@ -686,7 +686,7 @@ class VoiceRewriteTUI(App):
 
         # Show the new note in detail pane and start editing
         detail = self.query_one("#note-detail", NoteDetail)
-        detail.show_note(note_id)
+        detail.load_note(note_id)
         detail.start_editing()
 
         self.notify(f"Created note #{note_id}")
