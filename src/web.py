@@ -29,9 +29,10 @@ PUT /api/notes/<id> body:
 from __future__ import annotations
 
 import argparse
+import functools
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
@@ -44,6 +45,24 @@ logger = logging.getLogger(__name__)
 
 # Global database instance
 db: Optional[Database] = None
+
+
+def api_endpoint(func: Callable) -> Callable:
+    """Decorator for consistent API error handling.
+
+    Catches ValidationError (400) and Exception (500) with proper
+    JSON error responses and logging.
+    """
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return func(*args, **kwargs)
+        except ValidationError as e:
+            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
+        except Exception as e:
+            logger.error(f"Error in {func.__name__}: {e}")
+            return jsonify({"error": str(e)}), 500
+    return wrapper
 
 
 def create_app(config_dir: Optional[Path] = None) -> Flask:
@@ -89,206 +108,117 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
 
     # Routes
     @app.route("/api/notes", methods=["GET"])
-    def get_notes() -> Response | tuple[Response, int]:
-        """Get all notes.
-
-        Returns:
-            JSON response with list of notes
-        """
-        try:
-            notes = db.get_all_notes()
-            return jsonify(notes)
-        except Exception as e:
-            logger.error(f"Error getting notes: {e}")
-            return jsonify({"error": str(e)}), 500
+    @api_endpoint
+    def get_notes() -> Response:
+        """Get all notes."""
+        notes = db.get_all_notes()
+        return jsonify(notes)
 
     @app.route("/api/notes", methods=["POST"])
+    @api_endpoint
     def create_note() -> tuple[Response, int]:
-        """Create a new note.
+        """Create a new note."""
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body is required"}), 400
 
-        Request body (JSON):
-            content: Note content (string, required)
+        content = data.get("content")
+        if not content:
+            return jsonify({"error": "Content is required"}), 400
 
-        Returns:
-            JSON response with created note ID (hex) and content, or error
-        """
-        try:
-            data = request.get_json()
-            if not data:
-                return jsonify({"error": "Request body is required"}), 400
-
-            content = data.get("content")
-            if not content:
-                return jsonify({"error": "Content is required"}), 400
-
-            note_id = db.create_note(content)
-            logger.info(f"Created note {note_id} via API")
-            return jsonify({"id": note_id, "content": content}), 201
-        except ValidationError as e:
-            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
-        except Exception as e:
-            logger.error(f"Error creating note: {e}")
-            return jsonify({"error": str(e)}), 500
+        note_id = db.create_note(content)
+        logger.info(f"Created note {note_id} via API")
+        return jsonify({"id": note_id, "content": content}), 201
 
     @app.route("/api/notes/<note_id>", methods=["GET"])
+    @api_endpoint
     def get_note(note_id: str) -> tuple[Response, int]:
-        """Get specific note by ID.
-
-        Args:
-            note_id: Note ID (UUID hex string) from URL path
-
-        Returns:
-            JSON response with note data or error
-        """
-        try:
-            validate_uuid_hex(note_id, "note_id")
-            note = db.get_note(note_id)
-            if note:
-                return jsonify(note), 200
-            else:
-                return jsonify({"error": f"Note {note_id} not found"}), 404
-        except ValidationError as e:
-            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
-        except Exception as e:
-            logger.error(f"Error getting note {note_id}: {e}")
-            return jsonify({"error": str(e)}), 500
+        """Get specific note by ID."""
+        validate_uuid_hex(note_id, "note_id")
+        note = db.get_note(note_id)
+        if note:
+            return jsonify(note), 200
+        return jsonify({"error": f"Note {note_id} not found"}), 404
 
     @app.route("/api/notes/<note_id>", methods=["PUT"])
+    @api_endpoint
     def update_note(note_id: str) -> tuple[Response, int]:
-        """Update a note.
+        """Update a note."""
+        validate_uuid_hex(note_id, "note_id")
+        note = db.get_note(note_id)
+        if not note:
+            return jsonify({"error": f"Note {note_id} not found"}), 404
 
-        Args:
-            note_id: Note ID (UUID hex string) from URL path
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body is required"}), 400
 
-        Request body (JSON):
-            content: New note content (string, required)
+        content = data.get("content")
+        if not content:
+            return jsonify({"error": "Content is required"}), 400
 
-        Returns:
-            JSON response with updated note or error
-        """
-        try:
-            validate_uuid_hex(note_id, "note_id")
-            # Check if note exists
-            note = db.get_note(note_id)
-            if not note:
-                return jsonify({"error": f"Note {note_id} not found"}), 404
-
-            data = request.get_json()
-            if not data:
-                return jsonify({"error": "Request body is required"}), 400
-
-            content = data.get("content")
-            if not content:
-                return jsonify({"error": "Content is required"}), 400
-
-            db.update_note(note_id, content)
-            logger.info(f"Updated note {note_id} via API")
-
-            # Return updated note
-            updated_note = db.get_note(note_id)
-            return jsonify(updated_note), 200
-        except ValidationError as e:
-            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
-        except Exception as e:
-            logger.error(f"Error updating note {note_id}: {e}")
-            return jsonify({"error": str(e)}), 500
+        db.update_note(note_id, content)
+        logger.info(f"Updated note {note_id} via API")
+        updated_note = db.get_note(note_id)
+        return jsonify(updated_note), 200
 
     @app.route("/api/notes/<note_id>", methods=["DELETE"])
+    @api_endpoint
     def delete_note(note_id: str) -> tuple[Response, int]:
-        """Delete a note (soft delete).
-
-        Args:
-            note_id: Note ID (UUID hex string) from URL path
-
-        Returns:
-            JSON response with success message or error
-        """
-        try:
-            validate_uuid_hex(note_id, "note_id")
-            deleted = db.delete_note(note_id)
-            if deleted:
-                return jsonify({"message": f"Note {note_id} deleted"}), 200
-            else:
-                return jsonify({"error": f"Note {note_id} not found"}), 404
-        except ValidationError as e:
-            return jsonify({"error": f"Invalid {e.field}: {e.message}"}), 400
-        except Exception as e:
-            logger.error(f"Error deleting note {note_id}: {e}")
-            return jsonify({"error": str(e)}), 500
+        """Delete a note (soft delete)."""
+        validate_uuid_hex(note_id, "note_id")
+        deleted = db.delete_note(note_id)
+        if deleted:
+            return jsonify({"message": f"Note {note_id} deleted"}), 200
+        return jsonify({"error": f"Note {note_id} not found"}), 404
 
     @app.route("/api/tags", methods=["GET"])
-    def get_tags() -> Response | tuple[Response, int]:
-        """Get all tags.
-
-        Returns:
-            JSON response with list of tags
-        """
-        try:
-            tags = db.get_all_tags()
-            return jsonify(tags)
-        except Exception as e:
-            logger.error(f"Error getting tags: {e}")
-            return jsonify({"error": str(e)}), 500
+    @api_endpoint
+    def get_tags() -> Response:
+        """Get all tags."""
+        tags = db.get_all_tags()
+        return jsonify(tags)
 
     @app.route("/api/search", methods=["GET"])
+    @api_endpoint
     def search_notes() -> tuple[Response, int]:
-        """Search notes by text and/or tags.
+        """Search notes by text and/or tags."""
+        text_query = request.args.get("text")
+        tag_paths = request.args.getlist("tag")
 
-        Query parameters:
-            text: Text to search for (optional)
-            tag: Tag path to filter by (can specify multiple, AND logic)
-                 Ambiguous tags (matching multiple tags) use OR logic within the group
+        # Build tag_id_groups
+        # For ambiguous tags, all matching tags' descendants go into ONE group (OR logic)
+        tag_id_groups: List[List[bytes]] = []
+        any_tag_not_found = False
 
-        Returns:
-            JSON response with matching notes
-        """
-        try:
-            # Get query parameters
-            text_query = request.args.get("text")
-            tag_paths = request.args.getlist("tag")  # Get all 'tag' parameters
+        for tag_path in tag_paths:
+            matching_tags = db.get_all_tags_by_path(tag_path)
 
-            # Build tag_id_groups
-            # For ambiguous tags, all matching tags' descendants go into ONE group (OR logic)
-            tag_id_groups: List[List[bytes]] = []
-            any_tag_not_found = False
+            if matching_tags:
+                # Collect all descendants from all matching tags into ONE group (OR logic)
+                all_descendants: List[bytes] = []
+                for tag in matching_tags:
+                    descendants = db.get_tag_descendants(tag["id"])
+                    all_descendants.extend(descendants)
 
-            for tag_path in tag_paths:
-                # Get ALL tags matching this path
-                matching_tags = db.get_all_tags_by_path(tag_path)
+                all_descendants = list(set(all_descendants))
+                tag_id_groups.append(all_descendants)
 
-                if matching_tags:
-                    # Collect all descendants from all matching tags into ONE group (OR logic)
-                    all_descendants: List[bytes] = []
-                    for tag in matching_tags:
-                        # tag["id"] is now a hex string, need to convert back for descendants query
-                        descendants = db.get_tag_descendants(tag["id"])
-                        all_descendants.extend(descendants)
-
-                    # Remove duplicates
-                    all_descendants = list(set(all_descendants))
-                    tag_id_groups.append(all_descendants)
-
-                    # Log if ambiguous (multiple matches)
-                    if len(matching_tags) > 1:
-                        logger.info(f"Tag '{tag_path}' is ambiguous - matching {len(matching_tags)} tags (using OR logic)")
-                else:
-                    logger.warning(f"Tag path '{tag_path}' not found")
-                    any_tag_not_found = True
-
-            # If any requested tag was not found, return empty results
-            if any_tag_not_found:
-                notes: List[Dict[str, Any]] = []
+                if len(matching_tags) > 1:
+                    logger.info(f"Tag '{tag_path}' is ambiguous - matching {len(matching_tags)} tags (using OR logic)")
             else:
-                # Perform search
-                notes = db.search_notes(
-                    text_query=text_query if text_query else None,
-                    tag_id_groups=tag_id_groups if tag_id_groups else None
-                )
+                logger.warning(f"Tag path '{tag_path}' not found")
+                any_tag_not_found = True
 
-            return jsonify(notes), 200
-        except Exception as e:
-            logger.error(f"Error searching notes: {e}")
-            return jsonify({"error": str(e)}), 500
+        if any_tag_not_found:
+            notes: List[Dict[str, Any]] = []
+        else:
+            notes = db.search_notes(
+                text_query=text_query if text_query else None,
+                tag_id_groups=tag_id_groups if tag_id_groups else None
+            )
+
+        return jsonify(notes), 200
 
     @app.route("/api/health", methods=["GET"])
     def health_check() -> tuple[Response, int]:
