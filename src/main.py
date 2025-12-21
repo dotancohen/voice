@@ -8,7 +8,7 @@ This module provides a unified entry point for all interfaces:
 - Web: RESTful HTTP API
 
 Usage:
-    python -m src.main                     # Use default interface from config (or TUI)
+    python -m src.main                     # Auto-detect: GUI if available, else TUI
     python -m src.main --theme light       # Launch default interface with light theme
     python -m src.main gui                 # Launch GUI
     python -m src.main tui                 # Launch TUI
@@ -128,7 +128,7 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m src.main                     Use default interface (from config or GUI)
+  python -m src.main                     Auto-detect interface (GUI if available, else TUI)
   python -m src.main gui --theme light   Launch GUI with light theme
   python -m src.main tui                 Launch terminal interface
   python -m src.main cli list-notes      List all notes via CLI
@@ -172,18 +172,46 @@ Examples:
     return parser
 
 
+def is_gui_available() -> bool:
+    """Check if GUI dependencies (PySide6, qdarktheme) are available.
+
+    Returns:
+        True if GUI can be used, False otherwise.
+    """
+    try:
+        import PySide6.QtWidgets  # noqa: F401
+        import qdarktheme  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def get_default_interface(config_dir: Optional[Path]) -> str:
-    """Get default interface from config file.
+    """Get default interface from config file, or detect based on available dependencies.
+
+    Priority:
+    1. Explicit setting in config file
+    2. GUI if PySide6/qdarktheme are installed
+    3. TUI otherwise
 
     Args:
         config_dir: Custom configuration directory or None for default
 
     Returns:
-        Interface name: "gui", "cli", or "web"
+        Interface name: "gui", "tui", "cli", or "web"
     """
     from src.core.config import Config
     config = Config(config_dir=config_dir)
-    return config.get("default_interface", "tui")
+
+    # Check if user has explicitly set a default interface
+    configured = config.get("default_interface")
+    if configured:
+        return configured
+
+    # Auto-detect: GUI if available, otherwise TUI
+    if is_gui_available():
+        return "gui"
+    return "tui"
 
 
 def main() -> NoReturn:

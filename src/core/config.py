@@ -80,7 +80,7 @@ class Config:
         """
         return {
             "database_file": str(self.config_dir / "notes.db"),
-            "default_interface": "tui",  # "gui", "tui", "cli", or "web"
+            "default_interface": None,  # None = auto-detect (GUI if available, else TUI)
             "window_geometry": None,
             "implementations": {},  # Future: component implementation selections
             "themes": {
