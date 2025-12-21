@@ -2,7 +2,7 @@
 
 ## Test Suite Overview
 
-The Voice Rewrite test suite provides comprehensive coverage across three interfaces: GUI, CLI, and Web API. Tests are organized by interface type to ensure clean separation and allow independent testing.
+The Voice Rewrite test suite provides comprehensive coverage across four interfaces: GUI, TUI, CLI, and Web API. Tests are organized by interface type to ensure clean separation and allow independent testing.
 
 ## Test Structure
 
@@ -402,10 +402,10 @@ pytest -m "not slow"
 - ✓ OPTIONS request supported
 
 **TestHTTPMethods** - HTTP method handling
-- ✓ GET method allowed
-- ✓ POST method not allowed (read-only API)
-- ✓ PUT method not allowed
-- ✓ DELETE method not allowed
+- ✓ GET method allowed for read operations
+- ✓ POST method allowed for note creation
+- ✓ PUT method allowed for note updates
+- ✓ DELETE method allowed for note deletion
 
 **TestJSONResponses** - JSON formatting
 - ✓ All responses are JSON

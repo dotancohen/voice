@@ -1,5 +1,9 @@
 # Claude Code Instructions
 
+## File Reading
+
+When reading files, read the whole file at once rather than searching for individual portions. This avoids requiring multiple authorization prompts.
+
 ## Teaching and Corrections
 
 When I make mistakes, point them out and teach me the correct way. This includes:

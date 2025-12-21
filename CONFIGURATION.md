@@ -28,15 +28,19 @@ Path to the SQLite database file that stores notes and tags.
 
 ### default_interface
 
-**Type**: `string`
-**Default**: `"gui"`
-**Options**: `"gui"`, `"cli"`, `"tui"`, `"web"`
+**Type**: `string` or `null`
+**Default**: `null` (auto-detect)
+**Options**: `"gui"`, `"tui"`, `"cli"`, `"web"`, or `null`
 
 The default interface to launch when no subcommand is specified.
 
+When set to `null` (the default), the application auto-detects the best interface:
+- **GUI** if PySide6 and qdarktheme are installed
+- **TUI** otherwise
+
 ```json
 {
-  "default_interface": "gui"
+  "default_interface": null
 }
 ```
 
@@ -122,7 +126,7 @@ Accepts Textual color names or hex colors.
 ```json
 {
   "database_file": "/home/user/.config/voicerewrite/notes.db",
-  "default_interface": "gui",
+  "default_interface": null,
   "window_geometry": null,
   "implementations": {},
   "themes": {

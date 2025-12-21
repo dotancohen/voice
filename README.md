@@ -49,7 +49,7 @@ All interfaces are accessed through a unified entry point: `python -m src.main`
 
 Launch the graphical interface:
 ```bash
-python -m src.main              # Uses default interface from config (TUI if not set)
+python -m src.main              # Auto-detect: GUI if available, else TUI
 python -m src.main gui          # Explicit GUI mode with dark theme
 python -m src.main gui --theme light   # Light theme
 python -m src.main gui --theme dark    # Dark theme (explicit)
@@ -60,7 +60,7 @@ With custom configuration directory:
 python -m src.main -d /path/to/config gui --theme light
 ```
 
-### TUI Mode (Default)
+### TUI Mode
 
 Launch the terminal user interface (requires Textual):
 ```bash
@@ -90,8 +90,8 @@ python -m src.main cli --format csv list-notes   # CSV output
 
 Show specific note:
 ```bash
-python -m src.main cli show-note 1
-python -m src.main cli --format json show-note 1
+python -m src.main cli show-note <note-uuid>
+python -m src.main cli --format json show-note a1b2c3d4e5f6789012345678abcdef01
 ```
 
 List tags (hierarchical):
@@ -153,7 +153,7 @@ curl http://127.0.0.1:5000/api/notes
 
 Get specific note:
 ```bash
-curl http://127.0.0.1:5000/api/notes/1
+curl http://127.0.0.1:5000/api/notes/<note-uuid>
 ```
 
 List all tags:
@@ -230,7 +230,7 @@ source .venv/bin/activate
 python -m src.main tui
 ```
 
-The TUI is the default interface, so simply running `python -m src.main` will launch it.
+On servers without GUI dependencies, simply running `python -m src.main` will launch the TUI.
 
 ### Running as a Service
 
@@ -265,17 +265,66 @@ The sync server exposes these endpoints:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/sync/status` | GET | Get sync server status |
 | `/sync/handshake` | POST | Exchange device info |
-| `/sync/changes` | POST | Request changes since timestamp |
+| `/sync/changes` | GET | Request changes since timestamp |
 | `/sync/apply` | POST | Apply changes from peer |
 | `/sync/full` | GET | Get full dataset for initial sync |
 
-### Configuring Peers
+### Sync Workflow
 
-On client devices, add the server as a peer:
+**Step 1: Get device IDs** (on each device):
 ```bash
-python -m src.main cli sync add-peer --name "Server" --url http://server-ip:8384
-python -m src.main cli sync now  # Trigger sync
+python -m src.main cli sync status
+# Output includes: Device ID: <32-character-hex-id>
+```
+
+**Step 2: Start the sync server** (on devices you want to sync from):
+```bash
+python -m src.main cli sync serve
+# Or run as a systemd service (see below)
+```
+
+**Step 3: Add peers** (on each device, add the other devices):
+```bash
+python -m src.main cli sync add-peer <peer-device-id> "PeerName" http://<peer-ip>:8384
+```
+
+Example:
+```bash
+python -m src.main cli sync add-peer a1b2c3d4e5f6789012345678abcdef01 "HomeServer" https://sync.example.com
+```
+
+**Step 4: Trigger sync**:
+```bash
+# Sync with all configured peers
+python -m src.main cli sync now
+
+# Sync with a specific peer only
+python -m src.main cli sync now --peer <peer-device-id>
+```
+
+**Step 5: Check for conflicts** (if any):
+```bash
+python -m src.main cli sync conflicts
+```
+
+**Step 6: Resolve conflicts** (if needed):
+```bash
+# Resolve a conflict by keeping local, remote, or merging
+python -m src.main cli sync resolve <conflict-id> local
+python -m src.main cli sync resolve <conflict-id> remote
+python -m src.main cli sync resolve <conflict-id> merge
+```
+
+### Managing Peers
+
+```bash
+# List all configured peers
+python -m src.main cli sync list-peers
+
+# Remove a peer
+python -m src.main cli sync remove-peer <peer-device-id>
 ```
 
 ### Firewall Configuration
@@ -344,9 +393,9 @@ sudo apt install certbot python3-certbot-nginx
 sudo certbot --nginx -d sync.example.com
 ```
 
-When using a reverse proxy, update the peer URL to use HTTPS:
+When using a reverse proxy, use HTTPS in the peer URL:
 ```bash
-python -m src.main cli sync add-peer --name "Server" --url https://sync.example.com
+python -m src.main cli sync add-peer <server-device-id> "Server" https://sync.example.com
 ```
 
 ### Security Considerations
@@ -467,7 +516,7 @@ For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 ```json
 {
   "database_file": "/path/to/notes.db",
-  "default_interface": "tui",
+  "default_interface": null,
   "window_geometry": null,
   "implementations": {},
   "themes": {
@@ -487,7 +536,7 @@ For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `database_file` | string | `<config_dir>/notes.db` | Path to SQLite database file |
-| `default_interface` | string | `tui` | Default interface when no subcommand given (`gui`, `tui`, `cli`, or `web`) |
+| `default_interface` | string\|null | `null` | Default interface (`gui`, `tui`, `cli`, `web`). If null, auto-detects: GUI if available, else TUI |
 | `window_geometry` | object\|null | `null` | Saved window size/position (set automatically) |
 | `implementations` | object | `{}` | Reserved for future component selection |
 | `themes.colours.warnings` | string | `#FFFF00` | Warning highlight color (backward compatible) |
@@ -521,21 +570,14 @@ Theme-specific colors take precedence:
 ```
 
 ## Adding Sample Data
-Since this is a read-only MVP, add notes and tags directly to the database:
 
-```sql
--- Add some tags
-INSERT INTO tags (name, parent_id) VALUES ('Work', NULL);
-INSERT INTO tags (name, parent_id) VALUES ('Meetings', 1);
-INSERT INTO tags (name, parent_id) VALUES ('Personal', NULL);
-
--- Add a note
-INSERT INTO notes (created_at, content, modified_at, deleted_at)
-VALUES (datetime('now'), 'This is my first note!', NULL, NULL);
-
--- Tag the note
-INSERT INTO note_tags (note_id, tag_id) VALUES (1, 2);
+Use the CLI to create notes:
+```bash
+python -m src.main cli new-note "This is my first note!"
+echo "Note from stdin" | python -m src.main cli new-note
 ```
+
+Or use the TUI/GUI to create and edit notes interactively.
 
 ## Search Syntax
 
@@ -562,11 +604,9 @@ Multiple terms are combined with AND logic:
 - `tag:A tag:B` - notes must have (A or descendants) AND (B or descendants)
 - `tag:A hello` - notes must have (A or descendants) AND contain "hello"
 
-## MVP Limitations
-- No editing notes or tags in UI (use DB directly for now)
-- Read-only interface
-- No keyboard shortcuts yet
+## Current Limitations
 - No audio recording functionality (coming in future iterations)
+- Tag management (create, rename, delete) not yet in UI
 
 ## Project Structure
 - `src/main.py` - Unified entry point (dispatches to GUI, TUI, CLI, or Web)
