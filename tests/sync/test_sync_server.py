@@ -311,11 +311,11 @@ class TestSyncApply:
         assert "RemoteTag" in tag_names
 
     def test_apply_updates_note(self, running_server_a: SyncNode):
-        """Apply endpoint updates existing notes with newer timestamp."""
+        """Apply endpoint creates conflict when content differs (no LWW)."""
         # Create a note locally
         note_id = create_note_on_node(running_server_a, "Original content")
 
-        # Apply update with newer timestamp
+        # Apply update - creates conflict because content differs
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
             json={
@@ -330,7 +330,7 @@ class TestSyncApply:
                             "id": note_id,
                             "created_at": "2025-01-01 10:00:00",
                             "content": "Updated content",
-                            "modified_at": "2099-01-01 10:00:00",  # Far future
+                            "modified_at": "2099-01-01 10:00:00",
                             "deleted_at": None,
                         },
                         "timestamp": "2099-01-01 10:00:00",
@@ -342,19 +342,22 @@ class TestSyncApply:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["applied"] == 1
+        assert data["conflicts"] == 1  # Conflict created, not silently applied
 
-        # Verify update
+        # Verify both versions are preserved in conflict markers
         note = running_server_a.db.get_note(note_id)
-        assert note["content"] == "Updated content"
+        assert "<<<<<<< LOCAL" in note["content"]
+        assert "Original content" in note["content"]
+        assert "Updated content" in note["content"]
+        assert ">>>>>>> REMOTE" in note["content"]
 
     def test_apply_skips_older_update(self, running_server_a: SyncNode):
-        """Apply endpoint skips updates with older timestamp."""
+        """Apply endpoint creates conflict even with older timestamp (no LWW)."""
         # Create a note locally with recent modification
         note_id = create_note_on_node(running_server_a, "Original content")
         running_server_a.db.update_note(note_id, "Local update")
 
-        # Try to apply update with older timestamp
+        # Apply update with older timestamp - still creates conflict (no LWW)
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
             json={
@@ -369,7 +372,7 @@ class TestSyncApply:
                             "id": note_id,
                             "created_at": "2020-01-01 10:00:00",
                             "content": "Old remote content",
-                            "modified_at": "2020-01-01 10:00:00",  # Old
+                            "modified_at": "2020-01-01 10:00:00",
                             "deleted_at": None,
                         },
                         "timestamp": "2020-01-01 10:00:00",
@@ -381,11 +384,13 @@ class TestSyncApply:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["applied"] == 0  # Skipped
+        assert data["conflicts"] == 1  # Conflict created
 
-        # Verify local content preserved
+        # Verify both versions preserved
         note = running_server_a.db.get_note(note_id)
-        assert note["content"] == "Local update"
+        assert "<<<<<<< LOCAL" in note["content"]
+        assert "Local update" in note["content"]
+        assert "Old remote content" in note["content"]
 
     def test_apply_missing_device_id(self, running_server_a: SyncNode):
         """Apply endpoint fails without device_id."""

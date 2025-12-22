@@ -81,10 +81,10 @@ class TestNoteContentConflicts:
             conflicts_b = conflict_mgr_b.get_note_content_conflicts()
             assert len(conflicts_a) > 0 or len(conflicts_b) > 0
 
-    def test_later_edit_wins(
+    def test_concurrent_edits_create_conflict_no_lww(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Later edit wins in last-write-wins resolution."""
+        """Concurrent edits create conflict regardless of timestamp (no LWW)."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note on A
@@ -104,13 +104,17 @@ class TestNoteContentConflicts:
         set_local_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "Edit from B - later")
 
-        # Sync
+        # Sync - both versions should be preserved as conflict
         sync_nodes(node_a, node_b)
         sync_nodes(node_b, node_a)
 
-        # B's edit should win (it was later)
-        assert node_a.db.get_note(note_id)["content"] == "Edit from B - later"
-        assert node_b.db.get_note(note_id)["content"] == "Edit from B - later"
+        # Both edits should be preserved in conflict markers (no LWW)
+        note_a_content = node_a.db.get_note(note_id)["content"]
+        note_b_content = node_b.db.get_note(note_id)["content"]
+
+        # Both versions preserved
+        assert "Edit from A" in note_a_content or "Edit from A" in note_b_content
+        assert "Edit from B - later" in note_a_content or "Edit from B - later" in note_b_content
 
 
 class TestEditDeleteConflicts:
@@ -153,10 +157,10 @@ class TestEditDeleteConflicts:
             # Deleted - check for conflict
             assert len(delete_conflicts) >= 0  # May or may not have conflict
 
-    def test_delete_propagates_when_no_edit(
+    def test_delete_creates_conflict_not_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Delete propagates cleanly when no conflicting edit."""
+        """Delete creates conflict when other node has content (no silent deletion)."""
         import time
 
         node_a, node_b = two_nodes_with_servers
@@ -175,13 +179,15 @@ class TestEditDeleteConflicts:
         set_local_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
-        # Sync
+        # Sync - should create conflict on B, not silently delete
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Should be deleted on B too
-        notes_b = node_b.db.get_all_notes()
-        assert all(n["id"] != note_id for n in notes_b)
+        # B should still have the note (not silently deleted)
+        # A conflict should be created
+        conflict_mgr_b = ConflictManager(node_b.db)
+        delete_conflicts = conflict_mgr_b.get_note_delete_conflicts()
+        assert len(delete_conflicts) > 0
 
 
 class TestTagRenameConflicts:
@@ -405,7 +411,7 @@ class TestConflictEdgeCases:
     def test_conflict_with_unicode_content(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Handle conflict with unicode content."""
+        """Handle conflict with unicode content - both preserved."""
         node_a, node_b = two_nodes_with_servers
 
         note_id = create_note_on_node(node_a, "Original שלום")
@@ -425,16 +431,14 @@ class TestConflictEdgeCases:
         set_local_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "Chinese: 你好世界")
 
-        # Sync
+        # Sync A to B - creates conflict on B
         sync_nodes(node_a, node_b)
         node_b.reload_db()
-        sync_nodes(node_b, node_a)
-        node_a.reload_db()
 
-        # Both should have same content (one wins)
-        content_a = node_a.db.get_note(note_id)["content"]
+        # Both unicode strings should be preserved in B's content
         content_b = node_b.db.get_note(note_id)["content"]
-        assert content_a == content_b
+        assert "שלום עולם" in content_b  # Hebrew preserved
+        assert "你好世界" in content_b  # Chinese preserved
 
     def test_multiple_conflicts_same_note(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]

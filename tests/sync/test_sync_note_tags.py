@@ -119,10 +119,10 @@ class TestNoteTAgAssociationSync:
 class TestNoteTagDeletion:
     """Tests for deleting note-tag associations."""
 
-    def test_remove_tag_from_note_syncs(
+    def test_remove_tag_from_note_doesnt_propagate(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Removing tag from note syncs to peer."""
+        """Tag removal doesn't propagate - favors keeping associations (no silent deletion)."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with tag
@@ -146,23 +146,23 @@ class TestNoteTagDeletion:
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
 
-        # Sync again
+        # Sync again - removal doesn't propagate (no silent deletion)
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Verify tag removed on B
+        # B still has the tag (removal not propagated)
         note_b = node_b.db.get_note(note_id)
-        assert "ToRemove" not in (note_b.get("tag_names") or "")
+        assert "ToRemove" in (note_b.get("tag_names") or "")
 
-    def test_remove_one_of_many_tags(
+    def test_remove_one_of_many_tags_doesnt_propagate(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Removing one tag leaves others intact."""
+        """Removing one tag doesn't propagate - favors keeping data."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with multiple tags
         tag1 = create_tag_on_node(node_a, "Keep1")
-        tag2 = create_tag_on_node(node_a, "Remove")
+        tag2 = create_tag_on_node(node_a, "ToRemove")
         tag3 = create_tag_on_node(node_a, "Keep2")
 
         note_id = create_note_on_node(node_a, "Note content")
@@ -177,29 +177,34 @@ class TestNoteTagDeletion:
         # Wait for timestamp precision
         time.sleep(1.1)
 
-        # Remove middle tag
+        # Remove middle tag on A
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag2)
 
-        # Sync again
+        # Sync again - removal doesn't propagate (no silent deletion)
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Verify
+        # Verify - B still has all tags (removal not propagated)
         note_b = node_b.db.get_note(note_id)
         tag_names = note_b.get("tag_names", "")
         assert "Keep1" in tag_names
         assert "Keep2" in tag_names
-        assert "Remove" not in tag_names
+        assert "ToRemove" in tag_names  # Still present - no silent deletion
+
+        # Verify A has removed it locally
+        note_a = node_a.db.get_note(note_id)
+        tag_names_a = note_a.get("tag_names", "")
+        assert "ToRemove" not in tag_names_a
 
 
 class TestNoteTagReactivation:
     """Tests for reactivating deleted note-tag associations."""
 
-    def test_readd_tag_after_removal(
+    def test_local_readd_tag_after_removal(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Re-adding tag after removal works."""
+        """Re-adding tag after local removal works and syncs the final state."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with tag
@@ -212,36 +217,43 @@ class TestNoteTagReactivation:
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Wait for timestamp precision
-        time.sleep(1.1)
-
-        # Remove tag
-        set_local_device_id(node_a.device_id)
-        node_a.db.remove_tag_from_note(note_id, tag_id)
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify removed
-        note_b = node_b.db.get_note(note_id)
-        assert "Toggle" not in (note_b.get("tag_names") or "")
-
-        # Wait for timestamp precision
-        time.sleep(1.1)
-
-        # Re-add tag
-        set_local_device_id(node_a.device_id)
-        node_a.db.add_tag_to_note(note_id, tag_id)
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify re-added
+        # Verify initial sync
         note_b = node_b.db.get_note(note_id)
         assert "Toggle" in (note_b.get("tag_names") or "")
 
-    def test_readd_tag_on_peer(
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Remove tag locally on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.remove_tag_from_note(note_id, tag_id)
+
+        # Verify local removal on A
+        note_a = node_a.db.get_note(note_id)
+        assert "Toggle" not in (note_a.get("tag_names") or "")
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Re-add tag locally on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.add_tag_to_note(note_id, tag_id)
+
+        # Verify local re-add on A
+        note_a = node_a.db.get_note(note_id)
+        assert "Toggle" in (note_a.get("tag_names") or "")
+
+        # Sync - since B never lost the tag, both should have it
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        note_b = node_b.db.get_note(note_id)
+        assert "Toggle" in (note_b.get("tag_names") or "")
+
+    def test_tag_removal_doesnt_propagate_peer_keeps_tag(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Peer can re-add a tag that was removed."""
+        """When A removes a tag, B still keeps it (no silent deletion)."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with tag on A
@@ -256,31 +268,38 @@ class TestNoteTagReactivation:
         sync_nodes(node_b, node_a)
         node_a.reload_db()
 
+        # Verify both have the tag
+        note_a = node_a.db.get_note(note_id)
+        note_b = node_b.db.get_note(note_id)
+        assert "Shared" in (note_a.get("tag_names") or "")
+        assert "Shared" in (note_b.get("tag_names") or "")
+
         # Wait for timestamp precision
         time.sleep(1.1)
 
         # Remove on A
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
+
+        # Verify A removed locally
+        note_a = node_a.db.get_note(note_id)
+        assert "Shared" not in (note_a.get("tag_names") or "")
+
+        # Sync - removal doesn't propagate
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Wait for timestamp precision
-        time.sleep(1.1)
+        # B still has the tag (no silent deletion)
+        note_b = node_b.db.get_note(note_id)
+        assert "Shared" in (note_b.get("tag_names") or "")
 
-        # B re-adds it
-        set_local_device_id(node_b.device_id)
-        tag_b = node_b.db.get_tag(tag_id)
-        if tag_b:
-            node_b.db.add_tag_to_note(note_id, tag_id)
-
-        # Sync from B to A
+        # If B syncs back to A, A's local removal stays (B's active tag doesn't restore A's)
         sync_nodes(node_b, node_a)
         node_a.reload_db()
 
-        # A should have the tag again (B's action is later)
+        # A still doesn't have the tag locally
         note_a = node_a.db.get_note(note_id)
-        assert "Shared" in (note_a.get("tag_names") or "")
+        assert "Shared" not in (note_a.get("tag_names") or "")
 
 
 class TestTagHierarchySync:
@@ -478,10 +497,10 @@ class TestComplexNoteTagScenarios:
         # Note: Actual tag deletion behavior depends on implementation
         # This test documents expected behavior
 
-    def test_tag_note_then_delete_note(
+    def test_tag_note_then_delete_note_creates_conflict(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Deleting a tagged note works correctly."""
+        """Deleting a tagged note on one node creates conflict on peer (no silent deletion)."""
         node_a, node_b = two_nodes_with_servers
 
         # Create tag and note
@@ -495,6 +514,9 @@ class TestComplexNoteTagScenarios:
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
+        # Verify B has the note
+        assert get_note_count(node_b) == 1
+
         # Wait for timestamp precision
         time.sleep(1.1)
 
@@ -502,13 +524,16 @@ class TestComplexNoteTagScenarios:
         set_local_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
-        # Sync
+        # Verify A has no notes
+        assert get_note_count(node_a) == 0
+
+        # Sync - deletion doesn't propagate (creates conflict)
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Note should be deleted on B
+        # Note still exists on B (no silent deletion)
+        assert get_note_count(node_b) == 1
         # Tag should still exist
-        assert get_note_count(node_b) == 0
         assert node_b.db.get_tag(tag_id) is not None
 
 

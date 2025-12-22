@@ -167,10 +167,10 @@ class TestInitialSyncLocalHasData:
         # B should have A's note
         assert node_b.db.get_note(note_a) is not None
 
-    def test_initial_sync_local_wins_on_same_id(
+    def test_initial_sync_creates_conflict_on_same_id(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """When same ID exists, later modification wins."""
+        """When same ID exists with different content, conflict is created (no LWW)."""
         import time
 
         node_a, node_b = two_nodes_with_servers
@@ -187,14 +187,17 @@ class TestInitialSyncLocalHasData:
         set_local_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "B's newer version")
 
-        # A does initial sync - should get B's version
+        # A does initial sync - should create conflict (not LWW)
         set_local_device_id(node_a.device_id)
         client = SyncClient(node_a.db, node_a.config)
         client.initial_sync(node_b.device_id_hex)
 
-        # A should have B's version (LWW)
+        # A should have conflict markers with both versions preserved
         note_a = node_a.db.get_note(note_id)
-        assert note_a["content"] == "B's newer version"
+        assert "<<<<<<< LOCAL" in note_a["content"]
+        assert "A's version" in note_a["content"]
+        assert "B's newer version" in note_a["content"]
+        assert ">>>>>>> REMOTE" in note_a["content"]
 
 
 class TestInitialSyncRemoteEmpty:

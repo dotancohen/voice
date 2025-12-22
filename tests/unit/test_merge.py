@@ -1,6 +1,6 @@
 """Unit tests for the merge module.
 
-Tests 3-way merge functionality to ensure no data loss during sync.
+Tests line-by-line diff and conflict marker functionality.
 """
 
 from __future__ import annotations
@@ -14,9 +14,8 @@ class TestMergeBasics:
     """Test basic merge functionality."""
 
     def test_identical_content_no_conflict(self) -> None:
-        """When all versions are identical, no conflict."""
+        """When both versions are identical, no conflict."""
         result = merge_content(
-            base="Hello\nWorld\n",
             local="Hello\nWorld\n",
             remote="Hello\nWorld\n",
         )
@@ -24,120 +23,71 @@ class TestMergeBasics:
         assert result.has_conflicts is False
         assert result.conflict_count == 0
 
-    def test_only_remote_changed(self) -> None:
-        """When only remote changed, use remote version."""
+    def test_different_content_creates_conflict(self) -> None:
+        """When content differs, conflict markers are added."""
         result = merge_content(
-            base="Original\n",
-            local="Original\n",
-            remote="Modified\n",
+            local="Local version\n",
+            remote="Remote version\n",
         )
-        assert result.content == "Modified\n"
-        assert result.has_conflicts is False
-
-    def test_only_local_changed(self) -> None:
-        """When only local changed, use local version."""
-        result = merge_content(
-            base="Original\n",
-            local="Modified\n",
-            remote="Original\n",
-        )
-        assert result.content == "Modified\n"
-        assert result.has_conflicts is False
-
-    def test_both_same_change(self) -> None:
-        """When both made same change, no conflict."""
-        result = merge_content(
-            base="Original\n",
-            local="Same change\n",
-            remote="Same change\n",
-        )
-        assert result.content == "Same change\n"
-        assert result.has_conflicts is False
-
-
-class TestMergeCleanMerge:
-    """Test clean merge scenarios (non-overlapping changes)."""
-
-    def test_non_overlapping_line_changes(self) -> None:
-        """Non-overlapping changes merge cleanly."""
-        base = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n"
-        local = "Line 1\nLocal edit\nLine 3\nLine 4\nLine 5\n"
-        remote = "Line 1\nLine 2\nLine 3\nLine 4\nRemote edit\n"
-
-        result = merge_content(base=base, local=local, remote=remote)
-
-        assert result.has_conflicts is False
-        assert "Local edit" in result.content
-        assert "Remote edit" in result.content
-
-    def test_local_adds_line_remote_edits(self) -> None:
-        """Local adds a line, remote edits existing - should merge."""
-        base = "Line 1\nLine 2\n"
-        local = "Line 1\nNew line\nLine 2\n"
-        remote = "Line 1\nModified line 2\n"
-
-        result = merge_content(base=base, local=local, remote=remote)
-
-        # Both changes should be present
-        assert "New line" in result.content
-        assert "Modified" in result.content
-
-
-class TestMergeConflicts:
-    """Test conflict detection and marking."""
-
-    def test_conflicting_same_line_edit(self) -> None:
-        """Edits to same line create conflict with markers."""
-        base = "Line 1\nLine 2\nLine 3\n"
-        local = "Line 1\nLocal version\nLine 3\n"
-        remote = "Line 1\nRemote version\nLine 3\n"
-
-        result = merge_content(base=base, local=local, remote=remote)
-
         assert result.has_conflicts is True
-        assert result.conflict_count >= 1
         assert "<<<<<<< LOCAL" in result.content
-        assert "=======" in result.content
-        assert ">>>>>>> REMOTE" in result.content
-        # Both versions preserved
         assert "Local version" in result.content
         assert "Remote version" in result.content
+        assert ">>>>>>> REMOTE" in result.content
 
-    def test_conflict_preserves_unchanged_lines(self) -> None:
-        """Conflict markers only affect conflicting region."""
-        base = "Line 1\nLine 2\nLine 3\n"
-        local = "Line 1\nLocal\nLine 3\n"
-        remote = "Line 1\nRemote\nLine 3\n"
 
-        result = merge_content(base=base, local=local, remote=remote)
+class TestLineLevelDiff:
+    """Test that conflicts are at line level, not whole content."""
 
-        # Unchanged lines should be present without markers
-        assert "Line 1\n" in result.content
-        assert "Line 3\n" in result.content
+    def test_matching_lines_not_in_conflict(self) -> None:
+        """Lines that match between local and remote are not wrapped in markers."""
+        local = "Same line 1\nDifferent local\nSame line 3\n"
+        remote = "Same line 1\nDifferent remote\nSame line 3\n"
+
+        result = merge_content(local=local, remote=remote)
+
+        # The matching lines should appear without conflict markers
+        lines = result.content.split("\n")
+        # Same line 1 should be present and not between conflict markers
+        assert "Same line 1" in result.content
+        assert "Same line 3" in result.content
+        # Differing lines should be in conflict
+        assert "Different local" in result.content
+        assert "Different remote" in result.content
+
+    def test_only_differing_section_has_markers(self) -> None:
+        """Only the differing section gets conflict markers."""
+        local = "Line 1\nLine 2\nLocal line 3\nLine 4\nLine 5\n"
+        remote = "Line 1\nLine 2\nRemote line 3\nLine 4\nLine 5\n"
+
+        result = merge_content(local=local, remote=remote)
+
+        # Count conflict marker pairs
+        assert result.conflict_count == 1
+        # Both versions of line 3 preserved
+        assert "Local line 3" in result.content
+        assert "Remote line 3" in result.content
 
 
 class TestNoDataLoss:
     """Critical tests to ensure no data is ever lost during merge."""
 
-    def test_no_data_loss_both_add_different_content(self) -> None:
-        """When both add different content, both must be preserved."""
-        base = ""
+    def test_both_versions_preserved(self) -> None:
+        """Both local and remote content must be in result."""
         local = "Local added this content\n"
         remote = "Remote added this content\n"
 
-        result = merge_content(base=base, local=local, remote=remote)
+        result = merge_content(local=local, remote=remote)
 
-        # Both additions must be in the result
         assert "Local added this content" in result.content
         assert "Remote added this content" in result.content
 
-    def test_no_data_loss_conflicting_multiline(self) -> None:
-        """Multiline conflicts preserve all content from both sides."""
-        base = "Original content\n"
+    def test_multiline_content_preserved(self) -> None:
+        """Multiline content is fully preserved."""
         local = "Local line 1\nLocal line 2\nLocal line 3\n"
         remote = "Remote line 1\nRemote line 2\n"
 
-        result = merge_content(base=base, local=local, remote=remote)
+        result = merge_content(local=local, remote=remote)
 
         # All local lines must be present
         assert "Local line 1" in result.content
@@ -147,36 +97,22 @@ class TestNoDataLoss:
         assert "Remote line 1" in result.content
         assert "Remote line 2" in result.content
 
-    def test_no_data_loss_unicode_content(self) -> None:
+    def test_unicode_content_preserved(self) -> None:
         """Unicode content is preserved in conflicts."""
-        base = "Hello\n"
         local = "Hello שלום\n"
         remote = "Hello 你好\n"
 
-        result = merge_content(base=base, local=local, remote=remote)
+        result = merge_content(local=local, remote=remote)
 
-        # Both unicode strings must be present
         assert "שלום" in result.content
         assert "你好" in result.content
 
-    def test_no_data_loss_empty_base(self) -> None:
-        """With empty base, all content is preserved."""
-        base = ""
-        local = "Content A\n"
-        remote = "Content B\n"
-
-        result = merge_content(base=base, local=local, remote=remote)
-
-        assert "Content A" in result.content
-        assert "Content B" in result.content
-
-    def test_no_data_loss_long_content(self) -> None:
-        """Long content is fully preserved in conflicts."""
-        base = "short\n"
+    def test_long_content_preserved(self) -> None:
+        """Long content is fully preserved."""
         local = "A" * 1000 + "\n"
         remote = "B" * 1000 + "\n"
 
-        result = merge_content(base=base, local=local, remote=remote)
+        result = merge_content(local=local, remote=remote)
 
         assert "A" * 1000 in result.content
         assert "B" * 1000 in result.content
@@ -188,7 +124,6 @@ class TestConflictMarkerFormat:
     def test_custom_labels(self) -> None:
         """Custom labels appear in conflict markers."""
         result = merge_content(
-            base="a\n",
             local="local\n",
             remote="remote\n",
             local_label="MY_DEVICE",
@@ -201,7 +136,6 @@ class TestConflictMarkerFormat:
     def test_conflict_structure(self) -> None:
         """Conflict markers have correct structure."""
         result = merge_content(
-            base="base\n",
             local="local\n",
             remote="remote\n",
         )
@@ -223,41 +157,38 @@ class TestConflictMarkerFormat:
 class TestEdgeCases:
     """Test edge cases and special scenarios."""
 
-    def test_empty_content_all_versions(self) -> None:
-        """Empty content in all versions."""
-        result = merge_content(base="", local="", remote="")
+    def test_empty_content_both_versions(self) -> None:
+        """Empty content in both versions."""
+        result = merge_content(local="", remote="")
         assert result.content == ""
         assert result.has_conflicts is False
 
-    def test_whitespace_only_differences(self) -> None:
+    def test_whitespace_differences(self) -> None:
         """Whitespace-only differences are detected."""
-        base = "line\n"
         local = "line \n"  # trailing space
         remote = "line  \n"  # two trailing spaces
 
-        result = merge_content(base=base, local=local, remote=remote)
+        result = merge_content(local=local, remote=remote)
 
         # Both whitespace variants should be present
-        assert "line " in result.content
+        assert result.has_conflicts is True
 
-    def test_newline_at_end_variations(self) -> None:
+    def test_newline_variations(self) -> None:
         """Handle missing/present newlines at end."""
-        base = "content"
         local = "content\n"
         remote = "content"
 
-        result = merge_content(base=base, local=local, remote=remote)
+        result = merge_content(local=local, remote=remote)
         # Should handle gracefully (no crash)
         assert "content" in result.content
 
     def test_very_long_lines(self) -> None:
         """Very long lines are handled correctly."""
         long_line = "x" * 10000
-        base = long_line + "\n"
         local = long_line + " local\n"
         remote = long_line + " remote\n"
 
-        result = merge_content(base=base, local=local, remote=remote)
+        result = merge_content(local=local, remote=remote)
 
         assert long_line in result.content
         assert "local" in result.content

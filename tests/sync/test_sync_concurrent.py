@@ -318,10 +318,10 @@ class TestRaceConditions:
         assert get_note_count(node_a) == 20
         assert get_note_count(node_b) == 20
 
-    def test_concurrent_update_same_note(
+    def test_concurrent_update_same_note_creates_conflict(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Concurrent updates to same note from different threads."""
+        """Concurrent updates to same note preserve both versions with conflict markers."""
         node_a, node_b = two_nodes_with_servers
 
         # Create shared note
@@ -370,9 +370,13 @@ class TestRaceConditions:
         note_b = node_b.db.get_note(note_id)
         assert note_a is not None
         assert note_b is not None
-        # After sync, both should have same content (B's update was later, so B2 wins)
-        assert note_a["content"] == note_b["content"]
-        assert note_a["content"] == "Update B2"
+
+        # Both final updates should be preserved on both nodes (no data loss)
+        # Content may include conflict markers, but both A2 and B2 should be present
+        assert "Update A2" in note_a["content"]
+        assert "Update B2" in note_a["content"]
+        assert "Update A2" in note_b["content"]
+        assert "Update B2" in note_b["content"]
 
     def test_sync_while_creating(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -469,15 +473,15 @@ class TestStressTests:
             note_b = node_b.db.get_note(note_id)
             assert note_b is not None
 
-    def test_interleaved_operations(
+    def test_interleaved_operations_delete_doesnt_propagate(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Interleaved create, update, delete, and sync operations."""
+        """Interleaved operations - delete doesn't propagate (no silent deletion)."""
         node_a, node_b = two_nodes_with_servers
 
         note_ids = []
 
-        # Round 1: Create on A, sync
+        # Round 1: Create on A, sync (3 notes)
         for i in range(3):
             note_id = create_note_on_node(node_a, f"Round 1 note {i}")
             note_ids.append(note_id)
@@ -487,7 +491,7 @@ class TestStressTests:
         # Wait for timestamp precision
         time.sleep(1.1)
 
-        # Round 2: Update on B, create on A, sync
+        # Round 2: Update on B, create on A, sync (3 more = 6 total)
         set_local_device_id(node_b.device_id)
         if note_ids:
             node_b.db.update_note(note_ids[0], "Updated on B")
@@ -502,7 +506,7 @@ class TestStressTests:
         # Wait for timestamp precision
         time.sleep(1.1)
 
-        # Round 3: Delete on A, create on B, sync
+        # Round 3: Delete on A, create on B, sync (3 more = 9 total, A deletes 1)
         set_local_device_id(node_a.device_id)
         if len(note_ids) > 1:
             node_a.db.delete_note(note_ids[1])
@@ -514,7 +518,9 @@ class TestStressTests:
         sync_nodes(node_b, node_a)
         node_a.reload_db()
 
-        # Should have consistent state
+        # A has 8 notes (deleted 1 locally)
+        # B has 9 notes (delete didn't propagate - no silent deletion)
         count_a = get_note_count(node_a)
         count_b = get_note_count(node_b)
-        assert count_a == count_b
+        assert count_a == 8  # 9 created - 1 deleted locally
+        assert count_b == 9  # All notes preserved (no silent deletion)

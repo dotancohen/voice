@@ -617,67 +617,38 @@ def apply_note_change(
         if local_content == remote_content:
             return "skipped"
 
-        # Perform 3-way merge to combine changes
-        # Use the older version as base (heuristic: assumes older is closer to common ancestor)
-        # This allows clean merge when only one side changed from the older version
-        if local_modified <= remote_modified:
-            # Local is older or same age - use local as base, remote as the change
-            base_content = local_content
-        else:
-            # Remote is older - use remote as base, local as the change
-            base_content = remote_content
+        # Content differs - merge line-by-line, adding conflict markers
+        # only around lines that actually differ (not the entire content)
+        merge_result = merge_content(local_content, remote_content)
+        merged_content = merge_result.content
 
-        merge_result = merge_content(
-            base=base_content,
-            local=local_content,
-            remote=remote_content,
-            local_label="LOCAL",
-            remote_label="REMOTE",
+        cursor.execute(
+            """UPDATE notes SET content = ?, modified_at = datetime('now')
+               WHERE id = ?""",
+            (merged_content, note_id),
         )
 
-        # If only local changed (remote == base), skip - nothing to apply
-        if remote_content == base_content and not merge_result.has_conflicts:
-            return "skipped"
-
-        if merge_result.has_conflicts:
-            # Merge produced conflict markers - apply merged content and create conflict record
-            # Preserve remote's modified_at to maintain proper timestamp ordering
-            cursor.execute(
-                """UPDATE notes SET content = ?, modified_at = ?
-                   WHERE id = ?""",
-                (merge_result.content, remote_modified, note_id),
-            )
-
-            # Create conflict record for tracking
-            conflict_id = uuid7().bytes
-            remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id, remote_device_name, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    local_content,
-                    local_modified,
-                    None,  # local_device_id no longer tracked
-                    remote_content,
-                    remote_modified,
-                    remote_device_id_bytes,
-                    peer_device_name,
-                ),
-            )
-            return "conflict"
-        else:
-            # Clean merge - apply merged content
-            # Preserve remote's modified_at to maintain proper timestamp ordering
-            cursor.execute(
-                """UPDATE notes SET content = ?, modified_at = ?
-                   WHERE id = ?""",
-                (merge_result.content, remote_modified, note_id),
-            )
-            return "applied"
+        # Create conflict record for tracking
+        conflict_id = uuid7().bytes
+        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
+        cursor.execute(
+            """INSERT INTO conflicts_note_content
+               (id, note_id, local_content, local_modified_at, local_device_id,
+                remote_content, remote_modified_at, remote_device_id, remote_device_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            (
+                conflict_id,
+                note_id,
+                local_content,
+                local_modified,
+                None,  # local_device_id no longer tracked
+                remote_content,
+                remote_modified,
+                remote_device_id_bytes,
+                peer_device_name,
+            ),
+        )
+        return "conflict"
 
     elif change.operation == "delete":
         if not existing:
@@ -698,44 +669,31 @@ def apply_note_change(
         if existing.get("deleted_at"):
             return "skipped"  # Already deleted
 
-        # Check for edit-delete conflict
+        # Local has content, remote wants to delete - always create conflict
+        # Timestamps are NOT used for conflict resolution (no LWW)
+        # Never silently delete content
         local_modified = existing.get("modified_at") or existing["created_at"]
         remote_deleted = data.get("deleted_at")
 
-        if local_modified > remote_deleted:
-            # Local edit is newer than remote delete - create conflict
-            # Note: device_id stored in conflict tables only
-            conflict_id = uuid7().bytes
-            remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-            cursor.execute(
-                """INSERT INTO conflicts_note_delete
-                   (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
-                    deleted_at, deleting_device_id, deleting_device_name, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    existing["content"],
-                    local_modified,
-                    None,  # surviving_device_id no longer tracked
-                    remote_deleted,
-                    remote_device_id_bytes,
-                    peer_device_name,
-                ),
-            )
-            return "conflict"
-        else:
-            # Apply delete
-            cursor.execute(
-                """UPDATE notes SET deleted_at = ?, modified_at = ?
-                   WHERE id = ?""",
-                (
-                    data.get("deleted_at"),
-                    data.get("deleted_at"),
-                    note_id,
-                ),
-            )
-            return "applied"
+        conflict_id = uuid7().bytes
+        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
+        cursor.execute(
+            """INSERT INTO conflicts_note_delete
+               (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
+                deleted_at, deleting_device_id, deleting_device_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            (
+                conflict_id,
+                note_id,
+                existing["content"],
+                local_modified,
+                None,  # surviving_device_id no longer tracked
+                remote_deleted,
+                remote_device_id_bytes,
+                peer_device_name,
+            ),
+        )
+        return "conflict"
 
     return "skipped"
 
@@ -792,52 +750,43 @@ def apply_tag_change(cursor: Any, change: SyncChange) -> str:
             )
             return "applied"
 
-        # Compare timestamps for LWW
+        # If names are the same, no conflict needed
+        if data["name"] == existing["name"]:
+            return "skipped"
+
+        # Names differ - always create conflict
+        # Timestamps are NOT used for conflict resolution (no LWW)
         local_modified = existing.get("modified_at") or existing["created_at"]
         remote_modified = data.get("modified_at") or data["created_at"]
 
-        if remote_modified > local_modified:
-            cursor.execute(
-                """UPDATE tags SET name = ?, parent_id = ?, modified_at = ?
-                   WHERE id = ?""",
-                (
-                    data["name"],
-                    parent_id_bytes,
-                    data.get("modified_at"),
-                    tag_id,
-                ),
-            )
-            return "applied"
-        elif remote_modified == local_modified and data["name"] != existing["name"]:
-            # Same timestamp but different name - create conflict
-            # Note: device_id stored in conflict tables only
-            conflict_id = uuid7().bytes
-            remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-            cursor.execute(
-                """INSERT INTO conflicts_tag_rename
-                   (id, tag_id, local_name, local_modified_at, local_device_id,
-                    remote_name, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    tag_id,
-                    existing["name"],
-                    local_modified,
-                    None,  # local_device_id no longer tracked
-                    data["name"],
-                    remote_modified,
-                    remote_device_id_bytes,
-                ),
-            )
-            return "conflict"
-        else:
-            return "skipped"
+        conflict_id = uuid7().bytes
+        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
+        cursor.execute(
+            """INSERT INTO conflicts_tag_rename
+               (id, tag_id, local_name, local_modified_at, local_device_id,
+                remote_name, remote_modified_at, remote_device_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            (
+                conflict_id,
+                tag_id,
+                existing["name"],
+                local_modified,
+                None,  # local_device_id no longer tracked
+                data["name"],
+                remote_modified,
+                remote_device_id_bytes,
+            ),
+        )
+        return "conflict"
 
     return "skipped"
 
 
 def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
-    """Apply a note-tag association change with LWW logic.
+    """Apply a note-tag association change.
+
+    Timestamps are NOT used for conflict resolution (no LWW).
+    Favors keeping associations active (no silent deletion).
 
     Returns: "applied" or "skipped"
     """
@@ -859,66 +808,36 @@ def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
     )
     existing = cursor.fetchone()
 
-    # Determine incoming timestamp for LWW comparison
-    incoming_timestamp = (
-        data.get("modified_at") or data.get("deleted_at") or data["created_at"]
-    )
-
     if change.operation == "create":
         if existing:
-            # Get local timestamp for LWW comparison
-            local_timestamp = (
-                existing.get("modified_at")
-                or existing.get("deleted_at")
-                or existing["created_at"]
-            )
-
             if existing.get("deleted_at") is None:
-                # Already active - only update if incoming is newer
-                if incoming_timestamp > local_timestamp:
-                    cursor.execute(
-                        """UPDATE note_tags SET modified_at = ?
-                           WHERE note_id = ? AND tag_id = ?""",
-                        (
-                            data.get("modified_at"),
-                            note_id,
-                            tag_id,
-                        ),
-                    )
-                    return "applied"
+                # Already active - nothing to do
                 return "skipped"
             else:
-                # Currently deleted - reactivate if incoming is newer
-                if incoming_timestamp > local_timestamp:
-                    cursor.execute(
-                        """UPDATE note_tags SET deleted_at = NULL, modified_at = ?
-                           WHERE note_id = ? AND tag_id = ?""",
-                        (
-                            data.get("modified_at") or incoming_timestamp,
-                            note_id,
-                            tag_id,
-                        ),
-                    )
-                    return "applied"
-                return "skipped"
+                # Currently deleted, remote wants active - reactivate (favor keeping data)
+                cursor.execute(
+                    """UPDATE note_tags SET deleted_at = NULL, modified_at = datetime('now')
+                       WHERE note_id = ? AND tag_id = ?""",
+                    (note_id, tag_id),
+                )
+                return "applied"
         else:
-            # New association - insert with all fields
+            # New association - insert as active
             cursor.execute(
                 """INSERT INTO note_tags (note_id, tag_id, created_at, modified_at, deleted_at)
-                   VALUES (?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, NULL)""",
                 (
                     note_id,
                     tag_id,
                     data["created_at"],
                     data.get("modified_at"),
-                    data.get("deleted_at"),
                 ),
             )
             return "applied"
 
     elif change.operation == "delete":
         if not existing:
-            # Doesn't exist - create as deleted
+            # Doesn't exist - create as deleted (for sync consistency)
             cursor.execute(
                 """INSERT INTO note_tags (note_id, tag_id, created_at, modified_at, deleted_at)
                    VALUES (?, ?, ?, ?, ?)""",
@@ -935,20 +854,8 @@ def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
         if existing.get("deleted_at"):
             return "skipped"  # Already deleted
 
-        # Check LWW - apply if incoming is newer
-        local_timestamp = existing.get("modified_at") or existing["created_at"]
-        if incoming_timestamp >= local_timestamp:
-            cursor.execute(
-                """UPDATE note_tags SET deleted_at = ?, modified_at = ?
-                   WHERE note_id = ? AND tag_id = ?""",
-                (
-                    data.get("deleted_at"),
-                    data.get("modified_at") or data.get("deleted_at"),
-                    note_id,
-                    tag_id,
-                ),
-            )
-            return "applied"
+        # Local has active association, remote wants to delete
+        # Do NOT delete - favor keeping data (no silent deletion)
         return "skipped"
 
     return "skipped"
