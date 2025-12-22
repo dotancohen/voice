@@ -135,8 +135,7 @@ class Database:
                     created_at DATETIME NOT NULL,
                     content TEXT NOT NULL,
                     modified_at DATETIME,
-                    deleted_at DATETIME,
-                    device_id BLOB NOT NULL
+                    deleted_at DATETIME
                 )
             """)
 
@@ -148,7 +147,6 @@ class Database:
                     parent_id BLOB,
                     created_at DATETIME NOT NULL,
                     modified_at DATETIME,
-                    device_id BLOB NOT NULL,
                     FOREIGN KEY (parent_id) REFERENCES tags (id) ON DELETE CASCADE
                 )
             """)
@@ -159,8 +157,8 @@ class Database:
                     note_id BLOB NOT NULL,
                     tag_id BLOB NOT NULL,
                     created_at DATETIME NOT NULL,
+                    modified_at DATETIME,
                     deleted_at DATETIME,
-                    device_id BLOB NOT NULL,
                     FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE,
                     FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE,
                     PRIMARY KEY (note_id, tag_id)
@@ -181,17 +179,19 @@ class Database:
             """)
 
             # Create conflicts_note_content table
+            # Note: device_id columns are nullable because device_id is no longer
+            # stored in main tables; only recorded when available from sync
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS conflicts_note_content (
                     id BLOB PRIMARY KEY,
                     note_id BLOB NOT NULL,
                     local_content TEXT NOT NULL,
                     local_modified_at DATETIME NOT NULL,
-                    local_device_id BLOB NOT NULL,
+                    local_device_id BLOB,
                     local_device_name TEXT,
                     remote_content TEXT NOT NULL,
                     remote_modified_at DATETIME NOT NULL,
-                    remote_device_id BLOB NOT NULL,
+                    remote_device_id BLOB,
                     remote_device_name TEXT,
                     created_at DATETIME NOT NULL,
                     resolved_at DATETIME,
@@ -206,10 +206,10 @@ class Database:
                     note_id BLOB NOT NULL,
                     surviving_content TEXT NOT NULL,
                     surviving_modified_at DATETIME NOT NULL,
-                    surviving_device_id BLOB NOT NULL,
+                    surviving_device_id BLOB,
                     surviving_device_name TEXT,
                     deleted_at DATETIME NOT NULL,
-                    deleting_device_id BLOB NOT NULL,
+                    deleting_device_id BLOB,
                     deleting_device_name TEXT,
                     created_at DATETIME NOT NULL,
                     resolved_at DATETIME,
@@ -224,11 +224,11 @@ class Database:
                     tag_id BLOB NOT NULL,
                     local_name TEXT NOT NULL,
                     local_modified_at DATETIME NOT NULL,
-                    local_device_id BLOB NOT NULL,
+                    local_device_id BLOB,
                     local_device_name TEXT,
                     remote_name TEXT NOT NULL,
                     remote_modified_at DATETIME NOT NULL,
-                    remote_device_id BLOB NOT NULL,
+                    remote_device_id BLOB,
                     remote_device_name TEXT,
                     created_at DATETIME NOT NULL,
                     resolved_at DATETIME,
@@ -284,16 +284,82 @@ class Database:
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_note_tags_deleted_at ON note_tags(deleted_at)"
             )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_note_tags_modified_at ON note_tags(modified_at)"
+            )
+
+            # Migration: Add modified_at to note_tags if it doesn't exist (for existing DBs)
+            try:
+                cursor.execute("SELECT modified_at FROM note_tags LIMIT 1")
+            except Exception:
+                cursor.execute("ALTER TABLE note_tags ADD COLUMN modified_at DATETIME")
+                logger.info("Added modified_at column to note_tags table")
+
+            # Migration: Drop device_id from notes, tags, note_tags (no longer needed)
+            # SQLite 3.35+ supports ALTER TABLE DROP COLUMN
+            self._migrate_drop_device_id(cursor)
 
             self.conn.commit()
             logger.info("Database schema created successfully")
+
+    def _migrate_drop_device_id(self, cursor: sqlite3.Cursor) -> None:
+        """Drop device_id column from notes, tags, and note_tags tables.
+
+        This migration removes sync-specific device tracking from main data tables.
+        Device info is only needed in conflict tables.
+        """
+        tables_to_migrate = [
+            ("notes", ["id", "created_at", "content", "modified_at", "deleted_at"]),
+            ("tags", ["id", "name", "parent_id", "created_at", "modified_at"]),
+            ("note_tags", ["note_id", "tag_id", "created_at", "modified_at", "deleted_at"]),
+        ]
+
+        for table_name, columns in tables_to_migrate:
+            # Check if device_id column exists
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            table_columns = [row["name"] for row in cursor.fetchall()]
+
+            if "device_id" not in table_columns:
+                continue  # Already migrated
+
+            logger.info(f"Migrating {table_name}: dropping device_id column")
+
+            # Use ALTER TABLE DROP COLUMN (SQLite 3.35+)
+            try:
+                cursor.execute(f"ALTER TABLE {table_name} DROP COLUMN device_id")
+                logger.info(f"Dropped device_id from {table_name}")
+            except sqlite3.OperationalError as e:
+                # Fallback for older SQLite: table rebuild
+                logger.warning(f"ALTER TABLE DROP COLUMN failed for {table_name}, using table rebuild: {e}")
+                columns_str = ", ".join(columns)
+                cursor.execute(f"CREATE TABLE {table_name}_new AS SELECT {columns_str} FROM {table_name}")
+                cursor.execute(f"DROP TABLE {table_name}")
+                cursor.execute(f"ALTER TABLE {table_name}_new RENAME TO {table_name}")
+                # Recreate primary key constraint for note_tags
+                if table_name == "note_tags":
+                    cursor.execute("""
+                        CREATE TABLE note_tags_temp (
+                            note_id BLOB NOT NULL,
+                            tag_id BLOB NOT NULL,
+                            created_at DATETIME NOT NULL,
+                            modified_at DATETIME,
+                            deleted_at DATETIME,
+                            FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE,
+                            FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE,
+                            PRIMARY KEY (note_id, tag_id)
+                        )
+                    """)
+                    cursor.execute("INSERT INTO note_tags_temp SELECT * FROM note_tags")
+                    cursor.execute("DROP TABLE note_tags")
+                    cursor.execute("ALTER TABLE note_tags_temp RENAME TO note_tags")
+                logger.info(f"Rebuilt {table_name} without device_id")
 
     def get_all_notes(self) -> List[Dict[str, Any]]:
         """Get all non-deleted notes with their associated tag names.
 
         Returns:
             List of note dictionaries, each containing id (hex), created_at, content,
-            modified_at, deleted_at, device_id (hex), and tag_names (comma-separated string).
+            modified_at, deleted_at, and tag_names (comma-separated string).
         """
         query = """
             SELECT
@@ -302,7 +368,6 @@ class Database:
                 n.content,
                 n.modified_at,
                 n.deleted_at,
-                n.device_id,
                 GROUP_CONCAT(t.name, ', ') as tag_names
             FROM notes n
             LEFT JOIN note_tags nt ON n.id = nt.note_id AND nt.deleted_at IS NULL
@@ -337,7 +402,6 @@ class Database:
                 n.content,
                 n.modified_at,
                 n.deleted_at,
-                n.device_id,
                 GROUP_CONCAT(t.name, ', ') as tag_names
             FROM notes n
             LEFT JOIN note_tags nt ON n.id = nt.note_id AND nt.deleted_at IS NULL
@@ -368,16 +432,15 @@ class Database:
             sqlite3.DatabaseError: If database insert fails.
         """
         note_id = uuid7().bytes
-        device_id = get_local_device_id()
 
         query = """
-            INSERT INTO notes (id, content, created_at, device_id)
-            VALUES (?, ?, datetime('now'), ?)
+            INSERT INTO notes (id, content, created_at)
+            VALUES (?, ?, datetime('now'))
         """
         try:
             with self.conn:
                 cursor = self.conn.cursor()
-                cursor.execute(query, (note_id, content, device_id))
+                cursor.execute(query, (note_id, content))
                 self.conn.commit()
                 note_id_hex = uuid_to_hex(note_id)
                 logger.info(f"Created note {note_id_hex}")
@@ -404,17 +467,15 @@ class Database:
         if not content or not content.strip():
             raise ValidationError("content", "Note content cannot be empty")
 
-        device_id = get_local_device_id()
-
         query = """
             UPDATE notes
-            SET content = ?, modified_at = datetime('now'), device_id = ?
+            SET content = ?, modified_at = datetime('now')
             WHERE id = ? AND deleted_at IS NULL
         """
         try:
             with self.conn:
                 cursor = self.conn.cursor()
-                cursor.execute(query, (content, device_id, note_id_bytes))
+                cursor.execute(query, (content, note_id_bytes))
                 self.conn.commit()
                 updated = cursor.rowcount > 0
                 if updated:
@@ -440,17 +501,16 @@ class Database:
             sqlite3.DatabaseError: If database update fails.
         """
         note_id_bytes = validate_note_id(note_id)
-        device_id = get_local_device_id()
 
         query = """
             UPDATE notes
-            SET deleted_at = datetime('now'), modified_at = datetime('now'), device_id = ?
+            SET deleted_at = datetime('now'), modified_at = datetime('now')
             WHERE id = ? AND deleted_at IS NULL
         """
         try:
             with self.conn:
                 cursor = self.conn.cursor()
-                cursor.execute(query, (device_id, note_id_bytes))
+                cursor.execute(query, (note_id_bytes,))
                 self.conn.commit()
                 deleted = cursor.rowcount > 0
                 if deleted:
@@ -465,10 +525,10 @@ class Database:
 
         Returns:
             List of tag dictionaries, each containing id (hex), name, parent_id (hex),
-            created_at, modified_at, and device_id (hex). Ordered by name for display.
+            created_at, and modified_at. Ordered by name for display.
         """
         query = """
-            SELECT id, name, parent_id, created_at, modified_at, device_id
+            SELECT id, name, parent_id, created_at, modified_at
             FROM tags
             ORDER BY name
         """
@@ -534,7 +594,6 @@ class Database:
                 n.content,
                 n.modified_at,
                 n.deleted_at,
-                n.device_id,
                 GROUP_CONCAT(t.name, ', ') as tag_names
             FROM notes n
             INNER JOIN note_tags nt ON n.id = nt.note_id AND nt.deleted_at IS NULL
@@ -565,7 +624,7 @@ class Database:
             ValidationError: If tag_id is invalid.
         """
         tag_id_bytes = validate_tag_id(tag_id)
-        query = "SELECT id, name, parent_id, created_at, modified_at, device_id FROM tags WHERE id = ?"
+        query = "SELECT id, name, parent_id, created_at, modified_at FROM tags WHERE id = ?"
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(query, (tag_id_bytes,))
@@ -581,7 +640,7 @@ class Database:
         Returns:
             List of tag dictionaries matching the name (ids as hex).
         """
-        query = "SELECT id, name, parent_id, created_at, modified_at, device_id FROM tags WHERE LOWER(name) = LOWER(?)"
+        query = "SELECT id, name, parent_id, created_at, modified_at FROM tags WHERE LOWER(name) = LOWER(?)"
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(query, (name,))
@@ -610,10 +669,10 @@ class Database:
 
             # Find tag with this name and current parent
             if current_parent_id is None:
-                query = "SELECT id, name, parent_id, created_at, modified_at, device_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id IS NULL"
+                query = "SELECT id, name, parent_id, created_at, modified_at FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id IS NULL"
                 params: Tuple[Any, ...] = (part,)
             else:
-                query = "SELECT id, name, parent_id, created_at, modified_at, device_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id = ?"
+                query = "SELECT id, name, parent_id, created_at, modified_at FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id = ?"
                 params = (part, current_parent_id)
 
             with self.conn:
@@ -660,7 +719,7 @@ class Database:
         current_tags: List[Dict[str, Any]] = []
         first_part = parts[0].strip()
 
-        query = "SELECT id, name, parent_id, created_at, modified_at, device_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id IS NULL"
+        query = "SELECT id, name, parent_id, created_at, modified_at FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id IS NULL"
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(query, (first_part,))
@@ -679,7 +738,7 @@ class Database:
             for tag in current_tags:
                 # Convert hex back to bytes for query
                 tag_id_bytes = uuid.UUID(hex=tag["id"]).bytes
-                query = "SELECT id, name, parent_id, created_at, modified_at, device_id FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id = ?"
+                query = "SELECT id, name, parent_id, created_at, modified_at FROM tags WHERE LOWER(name) = LOWER(?) AND parent_id = ?"
                 with self.conn:
                     cursor = self.conn.cursor()
                     cursor.execute(query, (part, tag_id_bytes))
@@ -738,7 +797,6 @@ class Database:
                 n.content,
                 n.modified_at,
                 n.deleted_at,
-                n.device_id,
                 GROUP_CONCAT(t.name, ', ') as tag_names
             FROM notes n
             LEFT JOIN note_tags nt ON n.id = nt.note_id AND nt.deleted_at IS NULL
@@ -791,19 +849,18 @@ class Database:
             sqlite3.DatabaseError: If database insert fails.
         """
         tag_id = uuid7().bytes
-        device_id = get_local_device_id()
         parent_id_bytes = None
         if parent_id is not None:
             parent_id_bytes = validate_tag_id(parent_id)
 
         query = """
-            INSERT INTO tags (id, name, parent_id, created_at, device_id)
-            VALUES (?, ?, ?, datetime('now'), ?)
+            INSERT INTO tags (id, name, parent_id, created_at)
+            VALUES (?, ?, ?, datetime('now'))
         """
         try:
             with self.conn:
                 cursor = self.conn.cursor()
-                cursor.execute(query, (tag_id, name, parent_id_bytes, device_id))
+                cursor.execute(query, (tag_id, name, parent_id_bytes))
                 self.conn.commit()
                 tag_id_hex = uuid_to_hex(tag_id)
                 logger.info(f"Created tag {tag_id_hex}: {name}")
@@ -828,7 +885,6 @@ class Database:
         """
         note_id_bytes = validate_note_id(note_id)
         tag_id_bytes = validate_tag_id(tag_id)
-        device_id = get_local_device_id()
 
         # Check if association exists (including soft-deleted)
         check_query = "SELECT deleted_at FROM note_tags WHERE note_id = ? AND tag_id = ?"
@@ -839,13 +895,13 @@ class Database:
 
             if existing:
                 if existing["deleted_at"] is not None:
-                    # Reactivate soft-deleted association
+                    # Reactivate soft-deleted association - set modified_at for sync tracking
                     update_query = """
                         UPDATE note_tags
-                        SET deleted_at = NULL, device_id = ?
+                        SET deleted_at = NULL, modified_at = datetime('now')
                         WHERE note_id = ? AND tag_id = ?
                     """
-                    cursor.execute(update_query, (device_id, note_id_bytes, tag_id_bytes))
+                    cursor.execute(update_query, (note_id_bytes, tag_id_bytes))
                     self.conn.commit()
                     return True
                 else:
@@ -854,11 +910,11 @@ class Database:
 
             # Create new association
             insert_query = """
-                INSERT INTO note_tags (note_id, tag_id, created_at, device_id)
-                VALUES (?, ?, datetime('now'), ?)
+                INSERT INTO note_tags (note_id, tag_id, created_at)
+                VALUES (?, ?, datetime('now'))
             """
             try:
-                cursor.execute(insert_query, (note_id_bytes, tag_id_bytes, device_id))
+                cursor.execute(insert_query, (note_id_bytes, tag_id_bytes))
                 self.conn.commit()
                 return True
             except sqlite3.IntegrityError:
@@ -880,16 +936,15 @@ class Database:
         """
         note_id_bytes = validate_note_id(note_id)
         tag_id_bytes = validate_tag_id(tag_id)
-        device_id = get_local_device_id()
 
         query = """
             UPDATE note_tags
-            SET deleted_at = datetime('now'), device_id = ?
+            SET deleted_at = datetime('now'), modified_at = datetime('now')
             WHERE note_id = ? AND tag_id = ? AND deleted_at IS NULL
         """
         with self.conn:
             cursor = self.conn.cursor()
-            cursor.execute(query, (device_id, note_id_bytes, tag_id_bytes))
+            cursor.execute(query, (note_id_bytes, tag_id_bytes))
             self.conn.commit()
             return cursor.rowcount > 0
 
@@ -907,7 +962,7 @@ class Database:
         """
         note_id_bytes = validate_note_id(note_id)
         query = """
-            SELECT t.id, t.name, t.parent_id, t.created_at, t.modified_at, t.device_id
+            SELECT t.id, t.name, t.parent_id, t.created_at, t.modified_at
             FROM tags t
             INNER JOIN note_tags nt ON t.id = nt.tag_id
             WHERE nt.note_id = ? AND nt.deleted_at IS NULL

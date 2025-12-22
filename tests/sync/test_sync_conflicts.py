@@ -33,7 +33,6 @@ from .conftest import (
 class TestNoteContentConflicts:
     """Tests for note content conflicts."""
 
-    @pytest.mark.xfail(reason="Conflict detection needs investigation")
     def test_concurrent_edit_same_timestamp_creates_conflict(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -45,6 +44,10 @@ class TestNoteContentConflicts:
 
         # Sync to B
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Now both have the note - edit on both with forced same timestamp
         # This is hard to do naturally, but the sync logic should handle it
@@ -58,7 +61,9 @@ class TestNoteContentConflicts:
 
         # Sync - one should win based on timestamp, or create conflict
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # Both should have same content (last write wins)
         content_a = node_a.db.get_note(note_id)["content"]
@@ -148,11 +153,12 @@ class TestEditDeleteConflicts:
             # Deleted - check for conflict
             assert len(delete_conflicts) >= 0  # May or may not have conflict
 
-    @pytest.mark.xfail(reason="Delete propagation needs implementation")
     def test_delete_propagates_when_no_edit(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
         """Delete propagates cleanly when no conflicting edit."""
+        import time
+
         node_a, node_b = two_nodes_with_servers
 
         # Create note on A
@@ -160,6 +166,10 @@ class TestEditDeleteConflicts:
 
         # Sync to B
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Delete on A only
         set_local_device_id(node_a.device_id)
@@ -167,6 +177,7 @@ class TestEditDeleteConflicts:
 
         # Sync
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         # Should be deleted on B too
         notes_b = node_b.db.get_all_notes()
@@ -391,7 +402,6 @@ class TestConflictEdgeCases:
         assert note_a is not None
         assert len(note_a["content"]) > 0
 
-    @pytest.mark.xfail(reason="Unicode conflict resolution needs investigation")
     def test_conflict_with_unicode_content(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -400,17 +410,26 @@ class TestConflictEdgeCases:
 
         note_id = create_note_on_node(node_a, "Original שלום")
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Edit with different unicode on each
         set_local_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "Hebrew: שלום עולם")
+
+        # Wait so B's edit is later
+        time.sleep(1.1)
 
         set_local_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "Chinese: 你好世界")
 
         # Sync
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # Both should have same content (one wins)
         content_a = node_a.db.get_note(note_id)["content"]

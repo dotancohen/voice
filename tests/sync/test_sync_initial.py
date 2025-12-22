@@ -167,11 +167,12 @@ class TestInitialSyncLocalHasData:
         # B should have A's note
         assert node_b.db.get_note(note_a) is not None
 
-    @pytest.mark.xfail(reason="LWW behavior during initial sync needs investigation")
     def test_initial_sync_local_wins_on_same_id(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
         """When same ID exists, later modification wins."""
+        import time
+
         node_a, node_b = two_nodes_with_servers
 
         # Create note on A
@@ -179,10 +180,10 @@ class TestInitialSyncLocalHasData:
 
         # Sync to B
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
-        # Modify on B (later)
-        import time
-        time.sleep(0.1)
+        # Modify on B (later) - use full second for timestamp precision
+        time.sleep(1.1)
         set_local_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "B's newer version")
 
@@ -393,11 +394,12 @@ class TestInitialSyncErrorHandling:
 class TestInitialSyncVsRegularSync:
     """Tests comparing initial sync vs regular sync."""
 
-    @pytest.mark.xfail(reason="Regular sync after initial sync needs investigation")
     def test_initial_then_regular_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
         """Regular sync after initial sync works correctly."""
+        import time
+
         node_a, node_b = two_nodes_with_servers
 
         # Create initial data on B
@@ -407,6 +409,9 @@ class TestInitialSyncVsRegularSync:
         set_local_device_id(node_a.device_id)
         client = SyncClient(node_a.db, node_a.config)
         client.initial_sync(node_b.device_id_hex)
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Create more data on B
         note2 = create_note_on_node(node_b, "New note")

@@ -78,8 +78,8 @@ def large_db(test_config_dir: Path) -> Generator[Database, None, None]:
                 tag_uuids.append(tag_id)
                 tag_time = base_time + timedelta(minutes=tag_index)
                 cursor.execute(
-                    "INSERT INTO tags (id, name, parent_id, created_at, device_id) VALUES (?, ?, ?, ?, ?)",
-                    (tag_id, f"Tag_B{branch}_L{level}", parent_id, tag_time.strftime("%Y-%m-%d %H:%M:%S"), LARGE_DB_DEVICE_ID),
+                    "INSERT INTO tags (id, name, parent_id, created_at) VALUES (?, ?, ?, ?)",
+                    (tag_id, f"Tag_B{branch}_L{level}", parent_id, tag_time.strftime("%Y-%m-%d %H:%M:%S")),
                 )
                 parent_id = tag_id
                 tag_index += 1
@@ -94,8 +94,8 @@ def large_db(test_config_dir: Path) -> Generator[Database, None, None]:
             content = f"Note {note_num}: " + "x" * content_length
 
             cursor.execute(
-                "INSERT INTO notes (id, created_at, content, device_id) VALUES (?, ?, ?, ?)",
-                (note_id, created_at.strftime("%Y-%m-%d %H:%M:%S"), content, LARGE_DB_DEVICE_ID),
+                "INSERT INTO notes (id, created_at, content) VALUES (?, ?, ?)",
+                (note_id, created_at.strftime("%Y-%m-%d %H:%M:%S"), content),
             )
 
             # Assign 1-5 tags per note
@@ -105,8 +105,8 @@ def large_db(test_config_dir: Path) -> Generator[Database, None, None]:
                 assigned_tag_id = tag_uuids[assigned_tag_idx]
                 try:
                     cursor.execute(
-                        "INSERT INTO note_tags (note_id, tag_id, created_at, device_id) VALUES (?, ?, ?, ?)",
-                        (note_id, assigned_tag_id, created_at.strftime("%Y-%m-%d %H:%M:%S"), LARGE_DB_DEVICE_ID),
+                        "INSERT INTO note_tags (note_id, tag_id, created_at) VALUES (?, ?, ?)",
+                        (note_id, assigned_tag_id, created_at.strftime("%Y-%m-%d %H:%M:%S")),
                     )
                 except Exception:
                     pass  # Ignore duplicate key errors

@@ -248,7 +248,6 @@ class TestNetworkPartition:
         node_b.reload_db()
         assert node_b.db.get_note(note_2) is not None
 
-    @pytest.mark.xfail(reason="Partition editing needs implementation")
     def test_both_nodes_edit_during_partition(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -258,7 +257,12 @@ class TestNetworkPartition:
         # Initial sync
         note_id = create_note_on_node(node_a, "Shared note")
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Stop B's server to simulate partition
         node_b.stop_server()
@@ -274,9 +278,14 @@ class TestNetworkPartition:
         start_sync_server(node_b)
         node_b.wait_for_server()
 
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
         # Sync should reconcile
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # Both should have B's new note
         assert node_a.db.get_note(note_b) is not None

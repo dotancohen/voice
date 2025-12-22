@@ -51,13 +51,12 @@ def conflict_manager(conflict_db: Database) -> ConflictManager:
 def sample_note(conflict_db: Database) -> str:
     """Create a sample note and return its ID hex."""
     note_id = uuid7().bytes
-    device_id = uuid.UUID("00000000-0000-7000-8000-000000000003").bytes
     with conflict_db.conn:
         cursor = conflict_db.conn.cursor()
         cursor.execute(
-            """INSERT INTO notes (id, content, created_at, modified_at, device_id)
-               VALUES (?, ?, datetime('now'), datetime('now'), ?)""",
-            (note_id, "Original content", device_id),
+            """INSERT INTO notes (id, content, created_at, modified_at)
+               VALUES (?, ?, datetime('now'), datetime('now'))""",
+            (note_id, "Original content"),
         )
         conflict_db.conn.commit()
     return uuid_to_hex(note_id)
@@ -67,13 +66,12 @@ def sample_note(conflict_db: Database) -> str:
 def sample_tag(conflict_db: Database) -> str:
     """Create a sample tag and return its ID hex."""
     tag_id = uuid7().bytes
-    device_id = uuid.UUID("00000000-0000-7000-8000-000000000003").bytes
     with conflict_db.conn:
         cursor = conflict_db.conn.cursor()
         cursor.execute(
-            """INSERT INTO tags (id, name, created_at, modified_at, device_id)
-               VALUES (?, ?, datetime('now'), datetime('now'), ?)""",
-            (tag_id, "original_tag", device_id),
+            """INSERT INTO tags (id, name, created_at, modified_at)
+               VALUES (?, ?, datetime('now'), datetime('now'))""",
+            (tag_id, "original_tag"),
         )
         conflict_db.conn.commit()
     return uuid_to_hex(tag_id)
@@ -594,13 +592,12 @@ class TestResolveNoteDeleteConflict:
         """Keep both resolution restores the deleted note."""
         # Create a deleted note
         note_id = uuid7().bytes
-        device_id = uuid.UUID("00000000-0000-7000-8000-000000000003").bytes
         with conflict_db.conn:
             cursor = conflict_db.conn.cursor()
             cursor.execute(
-                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at, device_id)
-                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'), ?)""",
-                (note_id, "Deleted content", device_id),
+                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at)
+                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'))""",
+                (note_id, "Deleted content"),
             )
             conflict_db.conn.commit()
 
@@ -647,13 +644,12 @@ class TestResolveNoteDeleteConflict:
         """Keep remote resolution accepts the deletion."""
         # Create a deleted note
         note_id = uuid7().bytes
-        device_id = uuid.UUID("00000000-0000-7000-8000-000000000003").bytes
         with conflict_db.conn:
             cursor = conflict_db.conn.cursor()
             cursor.execute(
-                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at, device_id)
-                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'), ?)""",
-                (note_id, "Deleted content", device_id),
+                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at)
+                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'))""",
+                (note_id, "Deleted content"),
             )
             conflict_db.conn.commit()
 

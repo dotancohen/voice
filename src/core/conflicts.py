@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from uuid6 import uuid7
 
-from .database import Database, get_local_device_id
+from .database import Database
 from .validation import uuid_to_hex, validate_uuid_hex
 
 logger = logging.getLogger(__name__)
@@ -326,7 +326,6 @@ class ConflictManager:
             True if resolved successfully
         """
         conflict_id_bytes = uuid.UUID(hex=conflict_id).bytes
-        device_id = get_local_device_id()
 
         with self.db.conn:
             cursor = self.db.conn.cursor()
@@ -357,9 +356,9 @@ class ConflictManager:
 
             # Update the note
             cursor.execute(
-                """UPDATE notes SET content = ?, modified_at = datetime('now'), device_id = ?
+                """UPDATE notes SET content = ?, modified_at = datetime('now')
                    WHERE id = ?""",
-                (new_content, device_id, note_id),
+                (new_content, note_id),
             )
 
             # Mark conflict as resolved
@@ -389,7 +388,6 @@ class ConflictManager:
             True if resolved successfully
         """
         conflict_id_bytes = uuid.UUID(hex=conflict_id).bytes
-        device_id = get_local_device_id()
 
         with self.db.conn:
             cursor = self.db.conn.cursor()
@@ -410,9 +408,9 @@ class ConflictManager:
                 # Restore the note with surviving content
                 cursor.execute(
                     """UPDATE notes SET content = ?, deleted_at = NULL,
-                       modified_at = datetime('now'), device_id = ?
+                       modified_at = datetime('now')
                        WHERE id = ?""",
-                    (row["surviving_content"], device_id, note_id),
+                    (row["surviving_content"], note_id),
                 )
             elif choice == ResolutionChoice.KEEP_REMOTE:
                 # Accept the deletion - note stays deleted
@@ -447,7 +445,6 @@ class ConflictManager:
             True if resolved successfully
         """
         conflict_id_bytes = uuid.UUID(hex=conflict_id).bytes
-        device_id = get_local_device_id()
 
         with self.db.conn:
             cursor = self.db.conn.cursor()
@@ -474,9 +471,9 @@ class ConflictManager:
 
             # Update the tag
             cursor.execute(
-                """UPDATE tags SET name = ?, modified_at = datetime('now'), device_id = ?
+                """UPDATE tags SET name = ?, modified_at = datetime('now')
                    WHERE id = ?""",
-                (new_name, device_id, tag_id),
+                (new_name, tag_id),
             )
 
             # Mark conflict as resolved

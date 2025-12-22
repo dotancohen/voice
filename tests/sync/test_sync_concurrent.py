@@ -318,7 +318,6 @@ class TestRaceConditions:
         assert get_note_count(node_a) == 20
         assert get_note_count(node_b) == 20
 
-    @pytest.mark.xfail(reason="Concurrent update race condition needs investigation")
     def test_concurrent_update_same_note(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -328,19 +327,26 @@ class TestRaceConditions:
         # Create shared note
         note_id = create_note_on_node(node_a, "Initial")
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
-        # Update from multiple threads
+        # Wait for timestamp precision before updates
+        time.sleep(1.1)
+
+        # Update from multiple threads - stagger start by >1s to ensure different final timestamps
+        # (SQLite timestamps are second-precision)
         def update_on_a():
-            for i in range(5):
+            for i in range(3):
                 set_local_device_id(node_a.device_id)
                 node_a.db.update_note(note_id, f"Update A{i}")
-                time.sleep(0.02)
+                time.sleep(0.5)
 
         def update_on_b():
-            for i in range(5):
+            # B starts 1.1s later so its final update has a later timestamp
+            time.sleep(1.1)
+            for i in range(3):
                 set_local_device_id(node_b.device_id)
                 node_b.db.update_note(note_id, f"Update B{i}")
-                time.sleep(0.02)
+                time.sleep(0.5)
 
         thread_a = threading.Thread(target=update_on_a)
         thread_b = threading.Thread(target=update_on_b)
@@ -349,17 +355,24 @@ class TestRaceConditions:
         thread_a.join()
         thread_b.join()
 
-        # Sync
-        sync_nodes(node_a, node_b)
-        sync_nodes(node_b, node_a)
+        # Wait for timestamp precision before sync
+        time.sleep(1.1)
+
+        # Multiple sync rounds for convergence
+        for _ in range(2):
+            sync_nodes(node_a, node_b)
+            node_b.reload_db()
+            sync_nodes(node_b, node_a)
+            node_a.reload_db()
 
         # Note should exist and have some content
         note_a = node_a.db.get_note(note_id)
         note_b = node_b.db.get_note(note_id)
         assert note_a is not None
         assert note_b is not None
-        # After sync, both should have same content
+        # After sync, both should have same content (B's update was later, so B2 wins)
         assert note_a["content"] == note_b["content"]
+        assert note_a["content"] == "Update B2"
 
     def test_sync_while_creating(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -456,7 +469,6 @@ class TestStressTests:
             note_b = node_b.db.get_note(note_id)
             assert note_b is not None
 
-    @pytest.mark.xfail(reason="Interleaved operations count mismatch needs investigation")
     def test_interleaved_operations(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -470,6 +482,10 @@ class TestStressTests:
             note_id = create_note_on_node(node_a, f"Round 1 note {i}")
             note_ids.append(note_id)
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Round 2: Update on B, create on A, sync
         set_local_device_id(node_b.device_id)
@@ -479,7 +495,12 @@ class TestStressTests:
             note_id = create_note_on_node(node_a, f"Round 2 note {i}")
             note_ids.append(note_id)
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Round 3: Delete on A, create on B, sync
         set_local_device_id(node_a.device_id)
@@ -489,7 +510,9 @@ class TestStressTests:
             note_id = create_note_on_node(node_b, f"Round 3 note from B {i}")
             note_ids.append(note_id)
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # Should have consistent state
         count_a = get_note_count(node_a)

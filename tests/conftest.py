@@ -229,8 +229,8 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
             tag_id = TAG_UUIDS[uuid_key]
             parent_id = TAG_UUIDS[parent_key] if parent_key else None
             cursor.execute(
-                "INSERT INTO tags (id, name, parent_id, created_at, device_id) VALUES (?, ?, ?, ?, ?)",
-                (tag_id, name, parent_id, base_time.strftime("%Y-%m-%d %H:%M:%S"), TEST_DEVICE_ID)
+                "INSERT INTO tags (id, name, parent_id, created_at) VALUES (?, ?, ?, ?)",
+                (tag_id, name, parent_id, base_time.strftime("%Y-%m-%d %H:%M:%S"))
             )
 
         # Create notes
@@ -252,16 +252,16 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
             # Stagger creation times
             created_at = base_time.replace(hour=10 + i)
             cursor.execute(
-                "INSERT INTO notes (id, created_at, content, device_id) VALUES (?, ?, ?, ?)",
-                (note_id, created_at.strftime("%Y-%m-%d %H:%M:%S"), content, TEST_DEVICE_ID)
+                "INSERT INTO notes (id, created_at, content) VALUES (?, ?, ?)",
+                (note_id, created_at.strftime("%Y-%m-%d %H:%M:%S"), content)
             )
 
             # Associate tags
             for tag_key in tag_keys:
                 tag_id = TAG_UUIDS[tag_key]
                 cursor.execute(
-                    "INSERT INTO note_tags (note_id, tag_id, created_at, device_id) VALUES (?, ?, ?, ?)",
-                    (note_id, tag_id, created_at.strftime("%Y-%m-%d %H:%M:%S"), TEST_DEVICE_ID)
+                    "INSERT INTO note_tags (note_id, tag_id, created_at) VALUES (?, ?, ?)",
+                    (note_id, tag_id, created_at.strftime("%Y-%m-%d %H:%M:%S"))
                 )
 
         db.conn.commit()

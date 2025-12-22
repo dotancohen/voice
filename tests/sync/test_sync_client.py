@@ -427,11 +427,12 @@ class TestSyncClientDeletes:
         note_ids = [n["id"] for n in notes]
         assert note_id not in note_ids
 
-    @pytest.mark.xfail(reason="Delete sync needs investigation")
     def test_delete_after_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
         """Deleting after sync propagates on next sync."""
+        import time
+
         node_a, node_b = two_nodes_with_servers
 
         # Create note on A
@@ -439,10 +440,15 @@ class TestSyncClientDeletes:
 
         # Sync to B
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # Verify on B
         assert node_b.db.get_note(note_id) is not None
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Delete on A
         set_local_device_id(node_a.device_id)
@@ -450,7 +456,9 @@ class TestSyncClientDeletes:
 
         # Sync again
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # Should be deleted on B too (if delete is newer)
         notes_b = node_b.db.get_all_notes()

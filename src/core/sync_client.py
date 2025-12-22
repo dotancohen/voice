@@ -503,7 +503,7 @@ class SyncClient:
     def _apply_full_sync(
         self, data: Dict[str, Any], peer_id: str
     ) -> Tuple[int, int, List[str]]:
-        """Apply full sync data.
+        """Apply full sync data with proper LWW logic.
 
         Args:
             data: Full sync data with notes, tags, note_tags
@@ -519,37 +519,51 @@ class SyncClient:
         # Create changes from full data
         changes = []
 
-        # Process notes
+        # Process notes - use proper operation type to trigger LWW comparison
         for note in data.get("notes", []):
+            if note.get("deleted_at"):
+                operation = "delete"
+            elif note.get("modified_at"):
+                operation = "update"
+            else:
+                operation = "create"
+
             changes.append(SyncChange(
                 entity_type="note",
                 entity_id=note["id"],
-                operation="create",
+                operation=operation,
                 data=note,
                 timestamp=note.get("modified_at") or note["created_at"],
-                device_id=note["device_id"],
+                device_id="",  # device_id no longer stored in main tables
             ))
 
-        # Process tags
+        # Process tags - use "update" to trigger LWW when modified
         for tag in data.get("tags", []):
+            operation = "update" if tag.get("modified_at") else "create"
+
             changes.append(SyncChange(
                 entity_type="tag",
                 entity_id=tag["id"],
-                operation="create",
+                operation=operation,
                 data=tag,
                 timestamp=tag.get("modified_at") or tag["created_at"],
-                device_id=tag["device_id"],
+                device_id="",  # device_id no longer stored in main tables
             ))
 
-        # Process note_tags
+        # Process note_tags - include modified_at in timestamp calculation
         for nt in data.get("note_tags", []):
+            if nt.get("deleted_at"):
+                operation = "delete"
+            else:
+                operation = "create"
+
             changes.append(SyncChange(
                 entity_type="note_tag",
                 entity_id=f"{nt['note_id']}:{nt['tag_id']}",
-                operation="create" if not nt.get("deleted_at") else "delete",
+                operation=operation,
                 data=nt,
-                timestamp=nt.get("deleted_at") or nt["created_at"],
-                device_id=nt["device_id"],
+                timestamp=nt.get("modified_at") or nt.get("deleted_at") or nt["created_at"],
+                device_id="",  # device_id no longer stored in main tables
             ))
 
         # Apply all changes

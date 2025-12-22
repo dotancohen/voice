@@ -87,7 +87,6 @@ class TestNoteTAgAssociationSync:
         assert "Work" in tag_names
         assert "Project" in tag_names
 
-    @pytest.mark.xfail(reason="Incremental note-tag sync may need implementation")
     def test_add_tag_after_initial_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -98,6 +97,9 @@ class TestNoteTAgAssociationSync:
         note_id = create_note_on_node(node_a, "Note content")
         sync_nodes(node_a, node_b)
 
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
         # Create tag and add to note
         tag_id = create_tag_on_node(node_a, "NewTag")
         set_local_device_id(node_a.device_id)
@@ -105,6 +107,9 @@ class TestNoteTAgAssociationSync:
 
         # Sync again
         sync_nodes(node_a, node_b)
+
+        # Reload B's db to see changes from sync server
+        node_b.reload_db()
 
         # Verify tag added on B
         note_b = node_b.db.get_note(note_id)
@@ -114,7 +119,6 @@ class TestNoteTAgAssociationSync:
 class TestNoteTagDeletion:
     """Tests for deleting note-tag associations."""
 
-    @pytest.mark.xfail(reason="Note-tag removal sync may need implementation")
     def test_remove_tag_from_note_syncs(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -129,10 +133,14 @@ class TestNoteTagDeletion:
 
         # Initial sync
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         # Verify tag on B
         note_b = node_b.db.get_note(note_id)
         assert "ToRemove" in (note_b.get("tag_names") or "")
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Remove tag on A
         set_local_device_id(node_a.device_id)
@@ -140,12 +148,12 @@ class TestNoteTagDeletion:
 
         # Sync again
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         # Verify tag removed on B
         note_b = node_b.db.get_note(note_id)
         assert "ToRemove" not in (note_b.get("tag_names") or "")
 
-    @pytest.mark.xfail(reason="Note-tag removal sync may need implementation")
     def test_remove_one_of_many_tags(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -166,12 +174,16 @@ class TestNoteTagDeletion:
         # Sync
         sync_nodes(node_a, node_b)
 
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
         # Remove middle tag
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag2)
 
         # Sync again
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         # Verify
         note_b = node_b.db.get_note(note_id)
@@ -184,7 +196,6 @@ class TestNoteTagDeletion:
 class TestNoteTagReactivation:
     """Tests for reactivating deleted note-tag associations."""
 
-    @pytest.mark.xfail(reason="Note-tag reactivation sync may need implementation")
     def test_readd_tag_after_removal(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -199,26 +210,34 @@ class TestNoteTagReactivation:
 
         # Sync
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Remove tag
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         # Verify removed
         note_b = node_b.db.get_note(note_id)
         assert "Toggle" not in (note_b.get("tag_names") or "")
 
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
         # Re-add tag
         set_local_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         # Verify re-added
         note_b = node_b.db.get_note(note_id)
         assert "Toggle" in (note_b.get("tag_names") or "")
 
-    @pytest.mark.xfail(reason="Note-tag reactivation sync may need implementation")
     def test_readd_tag_on_peer(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -233,12 +252,21 @@ class TestNoteTagReactivation:
 
         # Sync both ways
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Remove on A
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # B re-adds it
         set_local_device_id(node_b.device_id)
@@ -248,6 +276,7 @@ class TestNoteTagReactivation:
 
         # Sync from B to A
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # A should have the tag again (B's action is later)
         note_a = node_a.db.get_note(note_id)
@@ -384,7 +413,6 @@ class TestComplexNoteTagScenarios:
         for i in range(10):
             assert f"Tag{i}" in tag_names
 
-    @pytest.mark.xfail(reason="Bidirectional note-tag sync may need implementation")
     def test_bidirectional_tagging(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -398,7 +426,12 @@ class TestComplexNoteTagScenarios:
 
         # Sync initial state
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # A tags note1
         set_local_device_id(node_a.device_id)
@@ -410,7 +443,9 @@ class TestComplexNoteTagScenarios:
 
         # Sync both ways
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
         # Both notes should have the tag on both nodes
         for node in [node_a, node_b]:
@@ -443,7 +478,6 @@ class TestComplexNoteTagScenarios:
         # Note: Actual tag deletion behavior depends on implementation
         # This test documents expected behavior
 
-    @pytest.mark.xfail(reason="Note deletion with tags may need implementation")
     def test_tag_note_then_delete_note(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -459,6 +493,10 @@ class TestComplexNoteTagScenarios:
 
         # Sync
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Delete note on A
         set_local_device_id(node_a.device_id)
@@ -466,6 +504,7 @@ class TestComplexNoteTagScenarios:
 
         # Sync
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         # Note should be deleted on B
         # Tag should still exist
@@ -506,7 +545,6 @@ class TestNoteTagEdgeCases:
         except Exception:
             pass  # Expected
 
-    @pytest.mark.xfail(reason="Rapid tag cycle sync may need implementation")
     def test_rapid_tag_untag_cycles(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
@@ -524,13 +562,19 @@ class TestNoteTagEdgeCases:
 
         # Final state: no tag
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         note_b = node_b.db.get_note(note_id)
         assert "Rapid" not in (note_b.get("tag_names") or "")
 
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
         # Add tag finally
+        set_local_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
 
         note_b = node_b.db.get_note(note_id)
         assert "Rapid" in (note_b.get("tag_names") or "")

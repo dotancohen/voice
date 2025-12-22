@@ -82,13 +82,11 @@ class TestNoteDisplay:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         long_content = "A" * 200  # Much longer than 100 char limit
         note_id = uuid.UUID("00000000-0000-7000-8000-000000000999").bytes
-        device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-
         with populated_db.conn:
             cursor = populated_db.conn.cursor()
             cursor.execute(
-                "INSERT INTO notes (id, created_at, content, device_id) VALUES (?, ?, ?, ?)",
-                (note_id, now, long_content, device_id)
+                "INSERT INTO notes (id, created_at, content) VALUES (?, ?, ?)",
+                (note_id, now, long_content)
             )
 
         pane = NotesListPane(test_config, populated_db)

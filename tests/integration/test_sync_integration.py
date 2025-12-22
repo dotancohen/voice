@@ -331,9 +331,9 @@ class TestConflictResolution:
         with db.conn:
             cursor = db.conn.cursor()
             cursor.execute(
-                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at, device_id)
-                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'), ?)""",
-                (note_id, "Deleted content", device_id),
+                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at)
+                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'))""",
+                (note_id, "Deleted content"),
             )
             db.conn.commit()
 
