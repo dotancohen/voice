@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import Config
@@ -85,6 +85,39 @@ class SyncClient:
         self.device_id = config.get_device_id_hex()
         self.device_name = config.get_device_name()
 
+    def _adjust_timestamp_for_skew(
+        self, timestamp: Optional[str], clock_skew_seconds: float
+    ) -> Optional[str]:
+        """Adjust a timestamp to account for clock skew between peers.
+
+        Goes back in time by 2x the absolute skew value to ensure we don't
+        miss changes that might appear earlier due to clock differences.
+        Only adjusts if skew exceeds 1 second (to avoid sub-second noise).
+
+        Args:
+            timestamp: ISO format timestamp string, or None
+            clock_skew_seconds: Measured clock skew (positive = peer ahead)
+
+        Returns:
+            Adjusted timestamp string, or None if input was None
+        """
+        if timestamp is None:
+            return None
+
+        # Only adjust if skew is significant (> 1 second)
+        # This avoids unnecessary adjustments for same-machine or low-latency scenarios
+        if abs(clock_skew_seconds) <= 1.0:
+            return timestamp
+
+        try:
+            ts = datetime.fromisoformat(timestamp)
+            # Go back by 2x the absolute skew to be safe
+            adjustment = timedelta(seconds=2 * abs(clock_skew_seconds))
+            adjusted = ts - adjustment
+            return adjusted.isoformat()
+        except (ValueError, TypeError):
+            return timestamp  # If parsing fails, return original
+
     def sync_with_peer(self, peer_id: str) -> SyncResult:
         """Perform full sync with a peer.
 
@@ -126,16 +159,21 @@ class SyncClient:
                 )
 
             last_sync = handshake_result.get("last_sync_timestamp")
+            clock_skew = handshake_result.get("clock_skew_seconds", 0.0)
 
-            # Step 2: Pull changes from peer
-            pull_result = self._pull_changes(peer_url, peer_id, last_sync)
+            # Adjust pull timestamp to go back further and catch changes
+            # that might appear earlier due to clock skew
+            adjusted_since = self._adjust_timestamp_for_skew(last_sync, clock_skew)
+
+            # Step 2: Pull changes from peer (use adjusted timestamp)
+            pull_result = self._pull_changes(peer_url, peer_id, adjusted_since)
             if pull_result["success"]:
                 result.pulled = pull_result.get("applied", 0)
                 result.conflicts += pull_result.get("conflicts", 0)
             else:
                 result.errors.append(f"Pull failed: {pull_result.get('error')}")
 
-            # Step 3: Push local changes to peer
+            # Step 3: Push local changes to peer (use original timestamp)
             push_result = self._push_changes(peer_url, peer_id, last_sync)
             if push_result["success"]:
                 result.pushed = push_result.get("applied", 0)
@@ -190,9 +228,11 @@ class SyncClient:
                 )
 
             last_sync = handshake_result.get("last_sync_timestamp")
+            clock_skew = handshake_result.get("clock_skew_seconds", 0.0)
+            adjusted_since = self._adjust_timestamp_for_skew(last_sync, clock_skew)
 
-            # Pull changes
-            pull_result = self._pull_changes(peer_url, peer_id, last_sync)
+            # Pull changes (use adjusted timestamp)
+            pull_result = self._pull_changes(peer_url, peer_id, adjusted_since)
             if pull_result["success"]:
                 result.pulled = pull_result.get("applied", 0)
                 result.conflicts = pull_result.get("conflicts", 0)
@@ -351,8 +391,10 @@ class SyncClient:
             peer_id: Peer's device ID
 
         Returns:
-            Dict with handshake result
+            Dict with handshake result including clock_skew_seconds
         """
+        local_time_before = datetime.now()
+
         response = self._make_request(
             f"{peer_url}/sync/handshake",
             peer_id,
@@ -364,12 +406,28 @@ class SyncClient:
             },
         )
 
+        local_time_after = datetime.now()
+
         if response.get("success"):
+            # Calculate clock skew from server timestamp
+            clock_skew_seconds = 0.0
+            server_timestamp_str = response["data"].get("server_timestamp")
+            if server_timestamp_str:
+                try:
+                    server_time = datetime.fromisoformat(server_timestamp_str)
+                    # Use midpoint of request for more accurate skew calculation
+                    local_midpoint = local_time_before + (local_time_after - local_time_before) / 2
+                    skew = server_time - local_midpoint
+                    clock_skew_seconds = skew.total_seconds()
+                except (ValueError, TypeError):
+                    pass  # If parsing fails, assume no skew
+
             return {
                 "success": True,
                 "peer_device_id": response["data"].get("device_id"),
                 "peer_device_name": response["data"].get("device_name"),
                 "last_sync_timestamp": response["data"].get("last_sync_timestamp"),
+                "clock_skew_seconds": clock_skew_seconds,
             }
         else:
             return {"success": False, "error": response.get("error")}

@@ -72,6 +72,7 @@ class HandshakeResponse:
     device_name: str
     protocol_version: str = "1.0"
     last_sync_timestamp: Optional[str] = None
+    server_timestamp: Optional[str] = None  # For clock skew detection
 
 
 def create_sync_blueprint(db: Database, device_id: str, device_name: str) -> Blueprint:
@@ -134,6 +135,7 @@ def create_sync_blueprint(db: Database, device_id: str, device_name: str) -> Blu
                 device_name=device_name,
                 protocol_version="1.0",
                 last_sync_timestamp=last_sync,
+                server_timestamp=datetime.now().isoformat(),
             )
 
             return jsonify(asdict(response)), 200
