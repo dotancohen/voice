@@ -119,10 +119,10 @@ class TestNoteTAgAssociationSync:
 class TestNoteTagDeletion:
     """Tests for deleting note-tag associations."""
 
-    def test_remove_tag_from_note_doesnt_propagate(
+    def test_remove_tag_from_note_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Tag removal doesn't propagate - favors keeping associations (no silent deletion)."""
+        """Tag removal propagates to peers."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with tag
@@ -146,18 +146,18 @@ class TestNoteTagDeletion:
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
 
-        # Sync again - removal doesn't propagate (no silent deletion)
+        # Sync again - removal propagates
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # B still has the tag (removal not propagated)
+        # B no longer has the tag (removal propagated)
         note_b = node_b.db.get_note(note_id)
-        assert "ToRemove" in (note_b.get("tag_names") or "")
+        assert "ToRemove" not in (note_b.get("tag_names") or "")
 
-    def test_remove_one_of_many_tags_doesnt_propagate(
+    def test_remove_one_of_many_tags_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Removing one tag doesn't propagate - favors keeping data."""
+        """Removing one tag propagates - only that tag is removed."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with multiple tags
@@ -181,16 +181,16 @@ class TestNoteTagDeletion:
         set_local_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag2)
 
-        # Sync again - removal doesn't propagate (no silent deletion)
+        # Sync again - removal propagates
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Verify - B still has all tags (removal not propagated)
+        # Verify - B still has Keep1 and Keep2, but ToRemove is gone
         note_b = node_b.db.get_note(note_id)
         tag_names = note_b.get("tag_names", "")
         assert "Keep1" in tag_names
         assert "Keep2" in tag_names
-        assert "ToRemove" in tag_names  # Still present - no silent deletion
+        assert "ToRemove" not in tag_names  # Removed via sync
 
         # Verify A has removed it locally
         note_a = node_a.db.get_note(note_id)
@@ -250,10 +250,10 @@ class TestNoteTagReactivation:
         note_b = node_b.db.get_note(note_id)
         assert "Toggle" in (note_b.get("tag_names") or "")
 
-    def test_tag_removal_doesnt_propagate_peer_keeps_tag(
+    def test_tag_removal_propagates_to_peer(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """When A removes a tag, B still keeps it (no silent deletion)."""
+        """When A removes a tag, B also removes it."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with tag on A
@@ -285,21 +285,23 @@ class TestNoteTagReactivation:
         note_a = node_a.db.get_note(note_id)
         assert "Shared" not in (note_a.get("tag_names") or "")
 
-        # Sync - removal doesn't propagate
+        # Sync - removal propagates
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # B still has the tag (no silent deletion)
+        # B also has tag removed (propagated)
         note_b = node_b.db.get_note(note_id)
-        assert "Shared" in (note_b.get("tag_names") or "")
+        assert "Shared" not in (note_b.get("tag_names") or "")
 
-        # If B syncs back to A, A's local removal stays (B's active tag doesn't restore A's)
+        # Syncing back doesn't change anything - both have it removed
         sync_nodes(node_b, node_a)
         node_a.reload_db()
 
-        # A still doesn't have the tag locally
+        # Both still don't have the tag
         note_a = node_a.db.get_note(note_id)
+        note_b = node_b.db.get_note(note_id)
         assert "Shared" not in (note_a.get("tag_names") or "")
+        assert "Shared" not in (note_b.get("tag_names") or "")
 
 
 class TestTagHierarchySync:

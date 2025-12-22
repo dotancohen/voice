@@ -501,6 +501,9 @@ def apply_sync_changes(
     conflicts = 0
     errors: List[str] = []
 
+    # Get last sync timestamp with this peer (for detecting unchanged local)
+    last_sync_at = get_peer_last_sync(db, peer_device_id)
+
     with db.conn:
         cursor = db.conn.cursor()
 
@@ -508,7 +511,7 @@ def apply_sync_changes(
             try:
                 if change.entity_type == "note":
                     result = apply_note_change(
-                        cursor, change, peer_device_name
+                        cursor, change, peer_device_name, last_sync_at
                     )
                 elif change.entity_type == "tag":
                     result = apply_tag_change(cursor, change)
@@ -540,8 +543,15 @@ def apply_note_change(
     cursor: Any,
     change: SyncChange,
     peer_device_name: Optional[str] = None,
+    last_sync_at: Optional[str] = None,
 ) -> str:
     """Apply a note change.
+
+    Args:
+        cursor: Database cursor
+        change: The sync change to apply
+        peer_device_name: Human-readable name of the peer device
+        last_sync_at: When we last synced with this peer (for detecting unchanged local)
 
     Returns: "applied", "conflict", or "skipped"
     """
@@ -686,7 +696,24 @@ def apply_note_change(
         if local_content == remote_content:
             return "skipped"
 
-        # Content differs - merge line-by-line, adding conflict markers
+        # Content differs - check if local is unchanged since last sync
+        # If local_modified < last_sync_at, local hasn't edited → just take remote
+        local_unchanged = (
+            last_sync_at is not None
+            and local_modified is not None
+            and local_modified < last_sync_at
+        )
+
+        if local_unchanged:
+            # Local unchanged, remote edited → update local without conflict
+            cursor.execute(
+                """UPDATE notes SET content = ?, modified_at = ?
+                   WHERE id = ?""",
+                (remote_content, remote_modified, note_id),
+            )
+            return "applied"
+
+        # Both edited - merge line-by-line, adding conflict markers
         # only around lines that actually differ (not the entire content)
         merge_result = merge_content(local_content, remote_content)
         merged_content = merge_result.content
@@ -937,8 +964,18 @@ def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
             return "skipped"  # Already deleted
 
         # Local has active association, remote wants to delete
-        # Do NOT delete - favor keeping data (no silent deletion)
-        return "skipped"
+        # Apply the delete (soft delete)
+        cursor.execute(
+            """UPDATE note_tags SET deleted_at = ?, modified_at = ?
+               WHERE note_id = ? AND tag_id = ?""",
+            (
+                data.get("deleted_at"),
+                data.get("modified_at") or data.get("deleted_at"),
+                note_id,
+                tag_id,
+            ),
+        )
+        return "applied"
 
     return "skipped"
 
