@@ -483,8 +483,10 @@ def apply_sync_changes(
 ) -> Tuple[int, int, List[str]]:
     """Apply changes from a peer.
 
-    Uses Last-Write-Wins (LWW) conflict resolution with timestamp comparison.
-    For content conflicts where LWW doesn't apply, creates conflict records.
+    Uses last_sync_at to detect which side(s) changed since last sync:
+    - Only remote changed → apply remote
+    - Only local changed → skip (keep local)
+    - Both changed → create conflict (merge for notes, combined name for tags)
 
     Args:
         db: Database instance
@@ -956,8 +958,7 @@ def apply_tag_change(
 def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
     """Apply a note-tag association change.
 
-    Timestamps are NOT used for conflict resolution (no LWW).
-    Favors keeping associations active (no silent deletion).
+    Adds and deletes propagate without conflict detection.
 
     Returns: "applied" or "skipped"
     """

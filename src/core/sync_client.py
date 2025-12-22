@@ -503,7 +503,7 @@ class SyncClient:
     def _apply_full_sync(
         self, data: Dict[str, Any], peer_id: str
     ) -> Tuple[int, int, List[str]]:
-        """Apply full sync data with proper LWW logic.
+        """Apply full sync data using change detection logic.
 
         Args:
             data: Full sync data with notes, tags, note_tags
@@ -519,7 +519,7 @@ class SyncClient:
         # Create changes from full data
         changes = []
 
-        # Process notes - use proper operation type to trigger LWW comparison
+        # Process notes - use proper operation type for change detection
         for note in data.get("notes", []):
             if note.get("deleted_at"):
                 operation = "delete"
@@ -537,7 +537,7 @@ class SyncClient:
                 device_id="",  # device_id no longer stored in main tables
             ))
 
-        # Process tags - use "update" to trigger LWW when modified
+        # Process tags - use "update" to trigger change detection when modified
         for tag in data.get("tags", []):
             operation = "update" if tag.get("modified_at") else "create"
 
