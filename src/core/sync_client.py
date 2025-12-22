@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import ssl
+import urllib.parse
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
@@ -388,7 +389,7 @@ class SyncClient:
         """
         url = f"{peer_url}/sync/changes"
         if since:
-            url += f"?since={since}"
+            url += f"?since={urllib.parse.quote(since)}"
 
         response = self._make_request(url, peer_id, method="GET")
 
