@@ -560,23 +560,50 @@ def apply_note_change(
             # Note already exists - check if it's deleted
             if existing.get("deleted_at") is None:
                 return "skipped"  # Already have this active note
-            else:
-                # Note is deleted - check LWW to potentially resurrect
-                local_deleted = existing["deleted_at"]
-                remote_modified = data.get("modified_at") or data["created_at"]
-                if remote_modified > local_deleted:
-                    # Remote create is newer - resurrect the note
-                    cursor.execute(
-                        """UPDATE notes SET content = ?, modified_at = ?, deleted_at = NULL
-                           WHERE id = ?""",
-                        (
-                            data["content"],
-                            data.get("modified_at"),
-                            note_id,
-                        ),
-                    )
-                    return "applied"
+
+            # Local deleted - compare content to see if remote edited
+            local_deleted_content = existing["content"]
+            remote_content = data["content"]
+
+            if local_deleted_content == remote_content:
+                # Remote didn't edit - keep deleted
                 return "skipped"
+
+            # Remote edited, local deleted - resurrect and create conflict
+            local_deleted = existing["deleted_at"]
+            remote_modified = data.get("modified_at") or data["created_at"]
+
+            cursor.execute(
+                """UPDATE notes SET content = ?, modified_at = ?, deleted_at = NULL
+                   WHERE id = ?""",
+                (
+                    remote_content,
+                    data.get("modified_at"),
+                    note_id,
+                ),
+            )
+
+            # Create delete conflict record
+            conflict_id = uuid7().bytes
+            remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
+            cursor.execute(
+                """INSERT INTO conflicts_note_delete
+                   (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
+                    deleted_content, deleted_at, deleting_device_id, deleting_device_name, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                (
+                    conflict_id,
+                    note_id,
+                    remote_content,  # Remote edited content survives
+                    remote_modified,
+                    remote_device_id_bytes,  # Remote device has surviving content
+                    local_deleted_content,  # Local content before deletion
+                    local_deleted,
+                    None,  # Local device deleted (no device_id tracked)
+                    None,  # Local device name unknown
+                ),
+            )
+            return "conflict"
         else:
             # Create new note
             cursor.execute(
@@ -607,6 +634,48 @@ def apply_note_change(
                 ),
             )
             return "applied"
+
+        # Check if local note is deleted
+        if existing.get("deleted_at"):
+            local_deleted_content = existing["content"]
+            remote_content = data["content"]
+
+            if local_deleted_content == remote_content:
+                # Remote didn't edit - keep deleted
+                return "skipped"
+
+            # Remote edited, local deleted - resurrect and create conflict
+            local_deleted = existing["deleted_at"]
+            remote_modified = data.get("modified_at") or data["created_at"]
+
+            # Resurrect the note with remote content
+            cursor.execute(
+                """UPDATE notes SET content = ?, modified_at = ?, deleted_at = NULL
+                   WHERE id = ?""",
+                (remote_content, remote_modified, note_id),
+            )
+
+            # Create delete conflict record
+            conflict_id = uuid7().bytes
+            remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
+            cursor.execute(
+                """INSERT INTO conflicts_note_delete
+                   (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
+                    deleted_content, deleted_at, deleting_device_id, deleting_device_name, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                (
+                    conflict_id,
+                    note_id,
+                    remote_content,  # Remote edited content survives
+                    remote_modified,
+                    remote_device_id_bytes,
+                    local_deleted_content,  # Local content before deletion
+                    local_deleted,
+                    None,  # local device deleted it
+                    None,
+                ),
+            )
+            return "conflict"
 
         local_content = existing["content"]
         remote_content = data["content"]
@@ -669,9 +738,21 @@ def apply_note_change(
         if existing.get("deleted_at"):
             return "skipped"  # Already deleted
 
-        # Local has content, remote wants to delete - always create conflict
-        # Timestamps are NOT used for conflict resolution (no LWW)
-        # Never silently delete content
+        # Compare content to determine if local edited
+        local_content = existing["content"]
+        remote_content = data.get("content")
+
+        if local_content == remote_content:
+            # Local didn't edit - propagate the delete
+            cursor.execute(
+                """UPDATE notes SET deleted_at = ?, modified_at = ?
+                   WHERE id = ?""",
+                (data.get("deleted_at"), data.get("deleted_at"), note_id),
+            )
+            return "applied"
+
+        # Local edited, remote wants to delete - create conflict
+        # Preserve local edits, don't silently delete
         local_modified = existing.get("modified_at") or existing["created_at"]
         remote_deleted = data.get("deleted_at")
 
@@ -680,14 +761,15 @@ def apply_note_change(
         cursor.execute(
             """INSERT INTO conflicts_note_delete
                (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
-                deleted_at, deleting_device_id, deleting_device_name, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                deleted_content, deleted_at, deleting_device_id, deleting_device_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
             (
                 conflict_id,
                 note_id,
-                existing["content"],
+                local_content,  # Local edited content survives
                 local_modified,
                 None,  # surviving_device_id no longer tracked
+                remote_content,  # Remote content before deletion
                 remote_deleted,
                 remote_device_id_bytes,
                 peer_device_name,

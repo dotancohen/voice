@@ -270,15 +270,15 @@ class TestApplyChanges:
         )
         assert response.status_code == 400
 
-    def test_apply_update_note_lww(
+    def test_apply_update_note_creates_conflict(
         self, sync_db: Database, sync_client: FlaskClient
     ) -> None:
-        """Apply uses LWW for conflicting updates."""
+        """Apply creates conflict when content differs (no LWW - preserve both)."""
         # Create local note
         note_id = sync_db.create_note("Local content")
         peer_id = uuid.uuid4().hex
 
-        # Apply remote update with newer timestamp
+        # Apply remote update - should create conflict, not overwrite
         response = sync_client.post(
             "/sync/apply",
             json={
@@ -293,7 +293,7 @@ class TestApplyChanges:
                             "id": note_id,
                             "created_at": "2025-01-15 10:00:00",
                             "content": "Remote content - newer",
-                            "modified_at": "2099-01-01 00:00:00",  # Far future
+                            "modified_at": "2099-01-01 00:00:00",
                             "deleted_at": None,
                         },
                         "timestamp": "2099-01-01 00:00:00",
@@ -305,11 +305,13 @@ class TestApplyChanges:
 
         assert response.status_code == 200
         data = response.get_json()
-        assert data["applied"] == 1
+        # Should create conflict, not silently apply
+        assert data["conflicts"] == 1
 
-        # Verify content was updated
+        # Verify BOTH versions are preserved in merged content
         note = sync_db.get_note(note_id)
-        assert note["content"] == "Remote content - newer"
+        assert "Local content" in note["content"]
+        assert "Remote content - newer" in note["content"]
 
 
 class TestGetChangesSince:
@@ -405,6 +407,177 @@ class TestApplySyncChanges:
         tag = sync_db.get_tag(tag_id)
         assert tag is not None
         assert tag["name"] == "RemoteTag"
+
+
+class TestApplySyncChangesDeleteConflicts:
+    """Test apply_sync_changes handles edit-delete conflicts."""
+
+    def test_create_on_deleted_note_resurrects(self, sync_db: Database) -> None:
+        """Create operation on deleted note resurrects it and creates conflict."""
+        # Create and delete a note locally
+        note_id = sync_db.create_note("Original content")
+        sync_db.delete_note(note_id)
+
+        # Verify it's deleted
+        note = sync_db.get_note(note_id)
+        assert note["deleted_at"] is not None
+
+        peer_id = uuid.uuid4().hex
+
+        # Remote sends "create" for the same note ID with different content
+        changes = [
+            SyncChange(
+                entity_type="note",
+                entity_id=note_id,
+                operation="create",
+                data={
+                    "id": note_id,
+                    "created_at": "2025-01-15 10:00:00",
+                    "content": "Content from remote",
+                    "modified_at": "2025-01-15 11:00:00",
+                    "deleted_at": None,
+                },
+                timestamp="2025-01-15 11:00:00",
+                device_id=peer_id,
+            )
+        ]
+
+        applied, conflicts, errors = apply_sync_changes(
+            sync_db, changes, peer_id, "Test Peer"
+        )
+
+        # Should create conflict (resurrect the note)
+        assert conflicts == 1
+        assert errors == []
+
+        # Note should be resurrected with remote content
+        note = sync_db.get_note(note_id)
+        assert note is not None
+        assert note["deleted_at"] is None, "Note should not be deleted"
+        assert "Content from remote" in note["content"]
+
+    def test_update_on_deleted_note_resurrects(self, sync_db: Database) -> None:
+        """Update operation on deleted note resurrects it and creates conflict."""
+        # Create and delete a note locally
+        note_id = sync_db.create_note("Original content")
+        sync_db.delete_note(note_id)
+
+        # Verify it's deleted
+        note = sync_db.get_note(note_id)
+        assert note["deleted_at"] is not None
+
+        peer_id = uuid.uuid4().hex
+
+        # Remote sends "update" for the deleted note
+        changes = [
+            SyncChange(
+                entity_type="note",
+                entity_id=note_id,
+                operation="update",
+                data={
+                    "id": note_id,
+                    "created_at": "2025-01-15 10:00:00",
+                    "content": "Updated content from remote",
+                    "modified_at": "2025-01-15 12:00:00",
+                    "deleted_at": None,
+                },
+                timestamp="2025-01-15 12:00:00",
+                device_id=peer_id,
+            )
+        ]
+
+        applied, conflicts, errors = apply_sync_changes(
+            sync_db, changes, peer_id, "Test Peer"
+        )
+
+        # Should create conflict (resurrect the note)
+        assert conflicts == 1
+        assert errors == []
+
+        # Note should be resurrected with remote content
+        note = sync_db.get_note(note_id)
+        assert note is not None
+        assert note["deleted_at"] is None, "Note should not be deleted"
+        assert "Updated content from remote" in note["content"]
+
+    def test_delete_on_edited_note_creates_conflict(self, sync_db: Database) -> None:
+        """Delete operation on locally-edited note creates conflict."""
+        # Create a note locally and edit it
+        note_id = sync_db.create_note("Original content")
+        sync_db.update_note(note_id, "Edited locally - important changes")
+
+        peer_id = uuid.uuid4().hex
+
+        # Remote sends "delete" with the OLD content (before local edit)
+        changes = [
+            SyncChange(
+                entity_type="note",
+                entity_id=note_id,
+                operation="delete",
+                data={
+                    "id": note_id,
+                    "created_at": "2025-01-15 10:00:00",
+                    "content": "Original content",  # Remote has old content
+                    "modified_at": None,
+                    "deleted_at": "2025-01-15 12:00:00",
+                },
+                timestamp="2025-01-15 12:00:00",
+                device_id=peer_id,
+            )
+        ]
+
+        applied, conflicts, errors = apply_sync_changes(
+            sync_db, changes, peer_id, "Test Peer"
+        )
+
+        # Should create conflict (local edited, so don't silently delete)
+        assert conflicts == 1
+        assert errors == []
+
+        # Note should NOT be deleted - local edit preserved
+        note = sync_db.get_note(note_id)
+        assert note is not None
+        assert note["deleted_at"] is None, "Note should not be deleted"
+        assert "Edited locally" in note["content"]
+
+    def test_delete_on_unedited_note_propagates(self, sync_db: Database) -> None:
+        """Delete operation on unedited note propagates the delete."""
+        # Create a note locally (unedited)
+        note_id = sync_db.create_note("Original content")
+
+        peer_id = uuid.uuid4().hex
+
+        # Remote sends "delete" with the same content
+        changes = [
+            SyncChange(
+                entity_type="note",
+                entity_id=note_id,
+                operation="delete",
+                data={
+                    "id": note_id,
+                    "created_at": "2025-01-15 10:00:00",
+                    "content": "Original content",  # Same as local
+                    "modified_at": None,
+                    "deleted_at": "2025-01-15 12:00:00",
+                },
+                timestamp="2025-01-15 12:00:00",
+                device_id=peer_id,
+            )
+        ]
+
+        applied, conflicts, errors = apply_sync_changes(
+            sync_db, changes, peer_id, "Test Peer"
+        )
+
+        # Should propagate delete (no local edit)
+        assert applied == 1
+        assert conflicts == 0
+        assert errors == []
+
+        # Note should be deleted
+        note = sync_db.get_note(note_id)
+        assert note is not None
+        assert note["deleted_at"] is not None, "Note should be deleted"
 
 
 class TestGetFullDataset:

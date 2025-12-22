@@ -519,8 +519,8 @@ class TestStressTests:
         node_a.reload_db()
 
         # A has 8 notes (deleted 1 locally)
-        # B has 9 notes (delete didn't propagate - no silent deletion)
+        # B has 8 notes (delete propagates when B didn't edit that note)
         count_a = get_note_count(node_a)
         count_b = get_note_count(node_b)
         assert count_a == 8  # 9 created - 1 deleted locally
-        assert count_b == 9  # All notes preserved (no silent deletion)
+        assert count_b == 8  # Delete propagates (note 1 wasn't edited on B)

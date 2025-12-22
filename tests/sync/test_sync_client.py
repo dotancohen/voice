@@ -427,10 +427,10 @@ class TestSyncClientDeletes:
         note_ids = [n["id"] for n in notes]
         assert note_id not in note_ids
 
-    def test_delete_after_sync_doesnt_propagate(
+    def test_delete_propagates_when_unedited(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Deleting after sync doesn't propagate - no silent deletion."""
+        """Delete propagates when other node hasn't edited the note."""
         import time
 
         node_a, node_b = two_nodes_with_servers
@@ -450,7 +450,7 @@ class TestSyncClientDeletes:
         # Wait for timestamp precision
         time.sleep(1.1)
 
-        # Delete on A
+        # Delete on A (B has same content - never edited)
         set_local_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
@@ -462,10 +462,8 @@ class TestSyncClientDeletes:
         # Sync again
         sync_nodes(node_a, node_b)
         node_b.reload_db()
-        sync_nodes(node_b, node_a)
-        node_a.reload_db()
 
-        # B still has the note - deletion doesn't propagate (no silent deletion)
-        notes_b = node_b.db.get_all_notes()
-        note_ids_b = [n["id"] for n in notes_b]
-        assert note_id in note_ids_b  # Note preserved on B
+        # B's note is now deleted (delete propagates when unedited)
+        note_b = node_b.db.get_note(note_id)
+        assert note_b is not None  # Note still exists (soft delete)
+        assert note_b.get("deleted_at") is not None  # But is deleted

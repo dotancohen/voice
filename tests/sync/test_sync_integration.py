@@ -165,7 +165,7 @@ class TestTwoNodeSync:
     def test_delete_propagation(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Deletions create conflict when other node has content (no silent deletion)."""
+        """Deletions propagate when other node hasn't edited the note."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note on A
@@ -183,21 +183,20 @@ class TestTwoNodeSync:
         # Wait a full second (timestamps are second-precision)
         time.sleep(1.1)
 
-        # Delete on A
+        # Delete on A (B has same content - never edited)
         set_local_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
-        # Sync again - creates conflict, doesn't silently delete on B
+        # Sync again - delete propagates because B didn't edit
         sync_nodes(node_a, node_b)
 
         # Reload B's db to see changes from server subprocess
         node_b.reload_db()
-        # B still has the note (not silently deleted)
-        # A conflict should be created
-        assert get_note_count(node_b) == 1
-        from core.conflicts import ConflictManager
-        conflict_mgr = ConflictManager(node_b.db)
-        assert len(conflict_mgr.get_note_delete_conflicts()) > 0
+        # B's note is now deleted (propagated from A)
+        assert get_note_count(node_b) == 0  # Note deleted
+        note_b = node_b.db.get_note(note_id)
+        assert note_b is not None  # Soft delete - record exists
+        assert note_b.get("deleted_at") is not None  # But marked deleted
 
     def test_multiple_sync_cycles(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]

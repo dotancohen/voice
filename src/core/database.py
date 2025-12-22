@@ -208,6 +208,7 @@ class Database:
                     surviving_modified_at DATETIME NOT NULL,
                     surviving_device_id BLOB,
                     surviving_device_name TEXT,
+                    deleted_content TEXT,
                     deleted_at DATETIME NOT NULL,
                     deleting_device_id BLOB,
                     deleting_device_name TEXT,
@@ -294,6 +295,15 @@ class Database:
             except Exception:
                 cursor.execute("ALTER TABLE note_tags ADD COLUMN modified_at DATETIME")
                 logger.info("Added modified_at column to note_tags table")
+
+            # Migration: Add deleted_content to conflicts_note_delete (for existing DBs)
+            try:
+                cursor.execute("SELECT deleted_content FROM conflicts_note_delete LIMIT 1")
+            except Exception:
+                cursor.execute(
+                    "ALTER TABLE conflicts_note_delete ADD COLUMN deleted_content TEXT"
+                )
+                logger.info("Added deleted_content column to conflicts_note_delete table")
 
             # Migration: Drop device_id from notes, tags, note_tags (no longer needed)
             # SQLite 3.35+ supports ALTER TABLE DROP COLUMN

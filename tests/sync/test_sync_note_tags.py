@@ -497,10 +497,10 @@ class TestComplexNoteTagScenarios:
         # Note: Actual tag deletion behavior depends on implementation
         # This test documents expected behavior
 
-    def test_tag_note_then_delete_note_creates_conflict(
+    def test_tag_note_then_delete_note_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Deleting a tagged note on one node creates conflict on peer (no silent deletion)."""
+        """Deleting a tagged note propagates when peer hasn't edited."""
         node_a, node_b = two_nodes_with_servers
 
         # Create tag and note
@@ -520,20 +520,20 @@ class TestComplexNoteTagScenarios:
         # Wait for timestamp precision
         time.sleep(1.1)
 
-        # Delete note on A
+        # Delete note on A (B has same content - never edited)
         set_local_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
         # Verify A has no notes
         assert get_note_count(node_a) == 0
 
-        # Sync - deletion doesn't propagate (creates conflict)
+        # Sync - deletion propagates (B didn't edit)
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Note still exists on B (no silent deletion)
-        assert get_note_count(node_b) == 1
-        # Tag should still exist
+        # Note is now deleted on B
+        assert get_note_count(node_b) == 0
+        # Tag should still exist (tags don't get deleted with notes)
         assert node_b.db.get_tag(tag_id) is not None
 
 

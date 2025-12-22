@@ -157,12 +157,10 @@ class TestEditDeleteConflicts:
             # Deleted - check for conflict
             assert len(delete_conflicts) >= 0  # May or may not have conflict
 
-    def test_delete_creates_conflict_not_propagates(
+    def test_delete_propagates_when_no_local_edit(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Delete creates conflict when other node has content (no silent deletion)."""
-        import time
-
+        """Delete propagates when other node hasn't edited the note."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note on A
@@ -172,22 +170,173 @@ class TestEditDeleteConflicts:
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # Wait for timestamp precision
         time.sleep(1.1)
 
-        # Delete on A only
+        # Delete on A only (B has same content, never edited)
         set_local_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
-        # Sync - should create conflict on B, not silently delete
+        # Sync - should propagate delete to B (no edit on B)
         sync_nodes(node_a, node_b)
         node_b.reload_db()
 
-        # B should still have the note (not silently deleted)
-        # A conflict should be created
-        conflict_mgr_b = ConflictManager(node_b.db)
-        delete_conflicts = conflict_mgr_b.get_note_delete_conflicts()
-        assert len(delete_conflicts) > 0
+        # B should have the note deleted
+        note_b = node_b.db.get_note(note_id)
+        assert note_b is not None
+        assert note_b.get("deleted_at") is not None, "Note should be deleted on B"
+
+    def test_delete_creates_conflict_when_local_edited(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """Delete creates conflict when other node has edited the note."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create note on A
+        note_id = create_note_on_node(node_a, "Original content")
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        time.sleep(1.1)
+
+        # B edits the note
+        set_local_device_id(node_b.device_id)
+        node_b.db.update_note(note_id, "Edited by B - important changes")
+
+        # A deletes (doesn't know about B's edit)
+        set_local_device_id(node_a.device_id)
+        node_a.db.delete_note(note_id)
+
+        # Sync: A pulls B's edit (resurrects A's deleted note), A pushes to B
+        sync_nodes(node_a, node_b)
+        node_a.reload_db()
+        node_b.reload_db()
+
+        # B should still have the note (B edited it, never deleted)
+        note_b = node_b.db.get_note(note_id)
+        assert note_b is not None
+        assert note_b.get("deleted_at") is None, "Note should NOT be deleted on B"
+        assert "Edited by B" in note_b["content"]
+
+        # A should have the note resurrected (A deleted, but B's edit came in)
+        note_a = node_a.db.get_note(note_id)
+        assert note_a is not None
+        assert note_a.get("deleted_at") is None, "Note should NOT be deleted on A"
+        assert "Edited by B" in note_a["content"]
+
+        # Conflict should be on A (where delete was resurrected by B's edit)
+        conflict_mgr_a = ConflictManager(node_a.db)
+        delete_conflicts_a = conflict_mgr_a.get_note_delete_conflicts()
+        assert len(delete_conflicts_a) > 0, "Conflict should be on A (deleter)"
+
+
+    def test_local_delete_remote_update_resurrects_note(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """When local deletes but remote updates, note is resurrected with remote content."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create note on A and sync to B
+        note_id = create_note_on_node(node_a, "Original content")
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Delete on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.delete_note(note_id)
+
+        # Update on B
+        set_local_device_id(node_b.device_id)
+        node_b.db.update_note(note_id, "Updated content from B")
+
+        # Sync B's update to A
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Note should be resurrected on A with B's content
+        note_a = node_a.db.get_note(note_id)
+        assert note_a is not None, "Note should exist"
+        assert note_a.get("deleted_at") is None, "Note should not be deleted"
+        assert "Updated content from B" in note_a["content"]
+
+        # Should have a delete conflict record
+        conflict_mgr_a = ConflictManager(node_a.db)
+        delete_conflicts = conflict_mgr_a.get_note_delete_conflicts()
+        assert len(delete_conflicts) > 0, "Should have delete conflict"
+
+    def test_local_delete_remote_create_resurrects_note(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """When local deletes but remote creates new note, note arrives as create op."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create note on B only (A doesn't have it yet)
+        note_id = create_note_on_node(node_b, "Content from B only")
+
+        # Now sync B to A - A receives it as a "create" operation
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Verify A got it
+        note_a = node_a.db.get_note(note_id)
+        assert note_a is not None, "Note should exist on A"
+        assert "Content from B only" in note_a["content"]
+
+        time.sleep(1.1)
+
+        # Now delete on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.delete_note(note_id)
+
+        # B updates the note (so it sends again with "update" operation)
+        set_local_device_id(node_b.device_id)
+        node_b.db.update_note(note_id, "Updated content from B")
+
+        # Sync B to A - sends "update" to A's deleted note
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Note should be resurrected
+        note_a = node_a.db.get_note(note_id)
+        assert note_a is not None, "Note should exist"
+        assert note_a.get("deleted_at") is None, "Note should not be deleted"
+        assert "Updated content from B" in note_a["content"]
+
+    def test_edit_delete_conflict_preserves_edit(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """Edit-delete conflict should always preserve the edit (no data loss)."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create note
+        note_id = create_note_on_node(node_a, "Important data")
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        time.sleep(1.1)
+
+        # B edits with important update
+        set_local_device_id(node_b.device_id)
+        important_content = "CRITICAL: Updated with important information"
+        node_b.db.update_note(note_id, important_content)
+
+        # A deletes (before seeing B's edit)
+        set_local_device_id(node_a.device_id)
+        node_a.db.delete_note(note_id)
+
+        # Sync B to A - A should get the edit, not lose it
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # The important content must be preserved
+        note_a = node_a.db.get_note(note_id)
+        assert note_a is not None, "Note must exist"
+        assert important_content in note_a["content"], "Edit must be preserved"
+        assert note_a.get("deleted_at") is None, "Note should not be deleted"
 
 
 class TestTagRenameConflicts:
