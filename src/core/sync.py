@@ -514,7 +514,9 @@ def apply_sync_changes(
                         cursor, change, peer_device_name, last_sync_at
                     )
                 elif change.entity_type == "tag":
-                    result = apply_tag_change(cursor, change)
+                    result = apply_tag_change(
+                        cursor, change, peer_device_name, last_sync_at
+                    )
                 elif change.entity_type == "note_tag":
                     result = apply_note_tag_change(cursor, change)
                 else:
@@ -696,16 +698,20 @@ def apply_note_change(
         if local_content == remote_content:
             return "skipped"
 
-        # Content differs - check if local is unchanged since last sync
-        # If local_modified < last_sync_at, local hasn't edited → just take remote
-        local_unchanged = (
-            last_sync_at is not None
-            and local_modified is not None
-            and local_modified < last_sync_at
+        # Content differs - determine who changed since last sync
+        # If last_sync_at is None (never synced), treat as "changed" to be safe
+        # Use > (not >=) because timestamps are second-precision
+        local_changed = (
+            last_sync_at is None
+            or (local_modified is not None and local_modified > last_sync_at)
+        )
+        remote_changed = (
+            last_sync_at is None
+            or (remote_modified is not None and remote_modified > last_sync_at)
         )
 
-        if local_unchanged:
-            # Local unchanged, remote edited → update local without conflict
+        if not local_changed and remote_changed:
+            # Only remote changed → update local without conflict
             cursor.execute(
                 """UPDATE notes SET content = ?, modified_at = ?
                    WHERE id = ?""",
@@ -713,7 +719,15 @@ def apply_note_change(
             )
             return "applied"
 
-        # Both edited - merge line-by-line, adding conflict markers
+        if local_changed and not remote_changed:
+            # Only local changed → skip, we'll push our version
+            return "skipped"
+
+        if not local_changed and not remote_changed:
+            # Neither changed but content differs? Shouldn't happen, but skip
+            return "skipped"
+
+        # Both changed - merge line-by-line, adding conflict markers
         # only around lines that actually differ (not the entire content)
         merge_result = merge_content(local_content, remote_content)
         merged_content = merge_result.content
@@ -807,8 +821,19 @@ def apply_note_change(
     return "skipped"
 
 
-def apply_tag_change(cursor: Any, change: SyncChange) -> str:
+def apply_tag_change(
+    cursor: Any,
+    change: SyncChange,
+    peer_device_name: Optional[str] = None,
+    last_sync_at: Optional[str] = None,
+) -> str:
     """Apply a tag change.
+
+    Args:
+        cursor: Database cursor
+        change: The sync change to apply
+        peer_device_name: Human-readable name of the peer device
+        last_sync_at: When we last synced with this peer (for detecting unchanged local)
 
     Returns: "applied", "conflict", or "skipped"
     """
@@ -859,22 +884,58 @@ def apply_tag_change(cursor: Any, change: SyncChange) -> str:
             )
             return "applied"
 
-        # If names are the same, no conflict needed
+        # If names are the same, no rename needed
         if data["name"] == existing["name"]:
             return "skipped"
 
-        # Names differ - always create conflict
-        # Timestamps are NOT used for conflict resolution (no LWW)
+        # Names differ - determine who changed since last sync
         local_modified = existing.get("modified_at") or existing["created_at"]
         remote_modified = data.get("modified_at") or data["created_at"]
+
+        # Check if each side was modified since last sync
+        # If last_sync_at is None (never synced), treat as "changed" to be safe
+        # Use > (not >=) because timestamps are second-precision
+        local_changed = (
+            last_sync_at is None
+            or (local_modified is not None and local_modified > last_sync_at)
+        )
+        remote_changed = (
+            last_sync_at is None
+            or (remote_modified is not None and remote_modified > last_sync_at)
+        )
+
+        if not local_changed and remote_changed:
+            # Only remote changed → apply remote's name
+            cursor.execute(
+                """UPDATE tags SET name = ?, modified_at = ?
+                   WHERE id = ?""",
+                (data["name"], remote_modified, tag_id),
+            )
+            return "applied"
+
+        if local_changed and not remote_changed:
+            # Only local changed → skip, we'll push our version
+            return "skipped"
+
+        if not local_changed and not remote_changed:
+            # Neither changed but names differ? Shouldn't happen, but skip
+            return "skipped"
+
+        # Both changed → combine names and create conflict
+        combined_name = f"{existing['name']} | {data['name']}"
+        cursor.execute(
+            """UPDATE tags SET name = ?, modified_at = datetime('now')
+               WHERE id = ?""",
+            (combined_name, tag_id),
+        )
 
         conflict_id = uuid7().bytes
         remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
         cursor.execute(
             """INSERT INTO conflicts_tag_rename
                (id, tag_id, local_name, local_modified_at, local_device_id,
-                remote_name, remote_modified_at, remote_device_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                remote_name, remote_modified_at, remote_device_id, remote_device_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
             (
                 conflict_id,
                 tag_id,
@@ -884,6 +945,7 @@ def apply_tag_change(cursor: Any, change: SyncChange) -> str:
                 data["name"],
                 remote_modified,
                 remote_device_id_bytes,
+                peer_device_name,
             ),
         )
         return "conflict"

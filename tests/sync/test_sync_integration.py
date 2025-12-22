@@ -129,7 +129,7 @@ class TestTwoNodeSync:
     def test_update_propagation(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Updates create conflict when content differs (no LWW, no base tracking)."""
+        """Updates propagate when only one side changed (using last_sync_at tracking)."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note on A
@@ -151,16 +151,14 @@ class TestTwoNodeSync:
         set_local_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "Updated content")
 
-        # Sync again - creates conflict because B has different content
-        # (Without base tracking, we can't know B didn't edit)
+        # Sync again - update propagates cleanly (B hasn't edited since last sync)
         sync_nodes(node_a, node_b)
 
         # Reload B's db to see changes from server subprocess
         node_b.reload_db()
-        # Both versions should be preserved (no silent overwrite)
+        # Update propagates (only A changed, B unchanged since last sync)
         note_b = node_b.db.get_note(note_id)
-        assert "Updated content" in note_b["content"]
-        assert "Original content" in note_b["content"]
+        assert note_b["content"] == "Updated content"
 
     def test_delete_propagation(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -379,10 +377,10 @@ class TestThreeNodeSync:
 class TestComplexWorkflows:
     """Tests for complex sync workflows."""
 
-    def test_offline_edit_then_sync_creates_conflict(
+    def test_offline_edit_then_sync_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Offline editing then syncing creates conflict (preserves both versions)."""
+        """Offline editing then syncing propagates cleanly (only one side edited)."""
         node_a, node_b = two_nodes_with_servers
 
         # Initial sync
@@ -403,13 +401,9 @@ class TestComplexWorkflows:
 
         # Reload B's db to see changes from server subprocess
         node_b.reload_db()
-        # B receives A's edit as remote, but has "Initial content" locally
-        # Since content differs, conflict markers are created (no silent overwrite)
+        # B hasn't edited since last sync, so A's update propagates cleanly
         note_b = node_b.db.get_note(note_id)
-        assert "<<<<<<< LOCAL" in note_b["content"]
-        assert "Initial content" in note_b["content"]
-        assert "Final edit" in note_b["content"]
-        assert ">>>>>>> REMOTE" in note_b["content"]
+        assert note_b["content"] == "Final edit"
 
     def test_bulk_import_then_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -431,10 +425,10 @@ class TestComplexWorkflows:
         for note_id in note_ids:
             assert node_b.db.get_note(note_id) is not None
 
-    def test_alternating_edits_preserve_data(
+    def test_one_side_edit_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Alternating edits preserve data on each node - no silent data loss."""
+        """When only one side edits, the edit propagates cleanly."""
         node_a, node_b = two_nodes_with_servers
 
         # Create on A
@@ -452,20 +446,46 @@ class TestComplexWorkflows:
         node_b.db.update_note(note_id, "Version 2 from B")
         sync_nodes(node_b, node_a)
 
-        # A had "Version 1", receives "Version 2 from B" - conflict created
+        # A hasn't edited since last sync, so B's update propagates cleanly
         node_a.reload_db()
         note_a = node_a.db.get_note(note_id)
-        # A preserves both versions
-        assert "Version 1" in note_a["content"]
-        assert "Version 2 from B" in note_a["content"]
-        assert "<<<<<<< LOCAL" in note_a["content"]
+        assert note_a["content"] == "Version 2 from B"
 
         # B keeps its own edit
         note_b = node_b.db.get_note(note_id)
-        assert "Version 2 from B" in note_b["content"]
+        assert note_b["content"] == "Version 2 from B"
 
-        # The key property: no data loss on either node
-        # A has both versions, B has at least its own edit
+    def test_concurrent_edits_create_conflict(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """When both sides edit, a conflict is created with both versions."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create on A
+        note_id = create_note_on_node(node_a, "Version 1")
+        sync_nodes(node_a, node_b)
+        sync_nodes(node_b, node_a)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # BOTH sides edit (creating a real conflict scenario)
+        set_local_device_id(node_a.device_id)
+        node_a.db.update_note(note_id, "Edit from A")
+
+        set_local_device_id(node_b.device_id)
+        node_b.db.update_note(note_id, "Edit from B")
+
+        # Sync - both edited since last sync, so conflict is created
+        sync_nodes(node_a, node_b)
+        node_a.reload_db()
+
+        # A should have both versions (conflict markers)
+        note_a = node_a.db.get_note(note_id)
+        assert "Edit from A" in note_a["content"]
+        assert "Edit from B" in note_a["content"]
+        assert "<<<<<<< LOCAL" in note_a["content"]
 
     def test_tag_reorganization_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]

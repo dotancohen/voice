@@ -879,6 +879,40 @@ class Database:
             logger.error(f"Database error creating tag: {e}")
             raise
 
+    def rename_tag(self, tag_id: Union[bytes, str], new_name: str) -> bool:
+        """Rename a tag.
+
+        Args:
+            tag_id: Tag ID (bytes or hex string)
+            new_name: New name for the tag
+
+        Returns:
+            True if tag was renamed, False if tag not found.
+
+        Raises:
+            ValidationError: If tag_id is invalid.
+            sqlite3.DatabaseError: If database update fails.
+        """
+        tag_id_bytes = validate_tag_id(tag_id)
+
+        query = """
+            UPDATE tags SET name = ?, modified_at = datetime('now')
+            WHERE id = ?
+        """
+        try:
+            with self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute(query, (new_name, tag_id_bytes))
+                self.conn.commit()
+                if cursor.rowcount > 0:
+                    tag_id_hex = uuid_to_hex(tag_id_bytes)
+                    logger.info(f"Renamed tag {tag_id_hex} to: {new_name}")
+                    return True
+                return False
+        except sqlite3.DatabaseError as e:
+            logger.error(f"Database error renaming tag: {e}")
+            raise
+
     def add_tag_to_note(self, note_id: Union[bytes, str], tag_id: Union[bytes, str]) -> bool:
         """Add a tag to a note.
 

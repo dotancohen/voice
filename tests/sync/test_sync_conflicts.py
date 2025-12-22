@@ -90,31 +90,35 @@ class TestNoteContentConflicts:
         # Create note on A
         note_id = create_note_on_node(node_a, "Original content")
 
-        # Sync to B
+        # Sync to B and back
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
-        # Edit on A first
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Edit on A
         set_local_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "Edit from A")
 
-        # Wait a full second (timestamps are second-precision)
-        time.sleep(1.1)
-
-        # Edit on B (later)
+        # Edit on B (both editing after last sync = conflict)
         set_local_device_id(node_b.device_id)
-        node_b.db.update_note(note_id, "Edit from B - later")
+        node_b.db.update_note(note_id, "Edit from B")
 
-        # Sync - both versions should be preserved as conflict
+        # Sync both ways - conflicts created because both edited since last sync
         sync_nodes(node_a, node_b)
-        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+        node_b.reload_db()
 
-        # Both edits should be preserved in conflict markers (no LWW)
+        # After A syncs to B, A should have conflict (both sides edited)
         note_a_content = node_a.db.get_note(note_id)["content"]
-        note_b_content = node_b.db.get_note(note_id)["content"]
 
-        # Both versions preserved
-        assert "Edit from A" in note_a_content or "Edit from A" in note_b_content
-        assert "Edit from B - later" in note_a_content or "Edit from B - later" in note_b_content
+        # Both edits should be preserved in merged content
+        assert "Edit from A" in note_a_content
+        assert "Edit from B" in note_a_content
+        assert "<<<<<<< LOCAL" in note_a_content
 
 
 class TestEditDeleteConflicts:
@@ -342,11 +346,10 @@ class TestEditDeleteConflicts:
 class TestTagRenameConflicts:
     """Tests for tag rename conflicts."""
 
-    @pytest.mark.skip(reason="Database.rename_tag not implemented yet")
-    def test_concurrent_rename(
+    def test_concurrent_rename_creates_conflict(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Renaming same tag differently on both nodes."""
+        """Renaming same tag differently on both nodes creates conflict."""
         node_a, node_b = two_nodes_with_servers
 
         # Create tag on A
@@ -354,28 +357,80 @@ class TestTagRenameConflicts:
 
         # Sync to B
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
 
         # Rename on A
         set_local_device_id(node_a.device_id)
         node_a.db.rename_tag(tag_id, "NameFromA")
 
-        # Wait and rename on B differently
-        time.sleep(0.1)
+        # Rename on B differently
         set_local_device_id(node_b.device_id)
         node_b.db.rename_tag(tag_id, "NameFromB")
 
-        # Sync
+        # Sync A to B (A pulls from B, then pushes to B)
         sync_nodes(node_a, node_b)
-        sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
-        # Later rename should win
+        # A should now have combined name (both renamed)
         tag_a = node_a.db.get_tag(tag_id)
-        tag_b = node_b.db.get_tag(tag_id)
+        assert " | " in tag_a["name"]
+        assert "NameFromA" in tag_a["name"]
+        assert "NameFromB" in tag_a["name"]
 
-        # Both should have same name
-        assert tag_a["name"] == tag_b["name"]
-        # Should be the later one
-        assert tag_a["name"] == "NameFromB"
+        # Should have conflict record on A
+        with node_a.db.conn:
+            cursor = node_a.db.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM conflicts_tag_rename WHERE tag_id = ?",
+                (bytes.fromhex(tag_id),)
+            )
+            conflicts = cursor.fetchall()
+            assert len(conflicts) >= 1
+
+    def test_one_side_rename_propagates(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """Renaming tag on one side propagates to the other."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create tag on A
+        tag_id = create_tag_on_node(node_a, "OriginalName")
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Verify B has tag
+        tag_b = node_b.db.get_tag(tag_id)
+        assert tag_b["name"] == "OriginalName"
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Rename only on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.rename_tag(tag_id, "NewName")
+
+        # Sync A to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # B should have new name (no conflict, just propagated)
+        tag_b = node_b.db.get_tag(tag_id)
+        assert tag_b["name"] == "NewName"
+
+        # No conflict record
+        with node_b.db.conn:
+            cursor = node_b.db.conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) as cnt FROM conflicts_tag_rename WHERE tag_id = ?",
+                (bytes.fromhex(tag_id),)
+            )
+            row = cursor.fetchone()
+            assert row["cnt"] == 0
 
 
 class TestConflictResolution:

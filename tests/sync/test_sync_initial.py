@@ -167,10 +167,10 @@ class TestInitialSyncLocalHasData:
         # B should have A's note
         assert node_b.db.get_note(note_a) is not None
 
-    def test_initial_sync_creates_conflict_on_same_id(
+    def test_initial_sync_applies_remote_update(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """When same ID exists with different content, conflict is created (no LWW)."""
+        """When only remote edited since last sync, update is applied without conflict."""
         import time
 
         node_a, node_b = two_nodes_with_servers
@@ -187,17 +187,52 @@ class TestInitialSyncLocalHasData:
         set_local_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "B's newer version")
 
-        # A does initial sync - should create conflict (not LWW)
+        # A does initial sync - only B edited since last sync, so update applies cleanly
         set_local_device_id(node_a.device_id)
         client = SyncClient(node_a.db, node_a.config)
         client.initial_sync(node_b.device_id_hex)
 
-        # A should have conflict markers with both versions preserved
+        # A should have B's version (only B edited, A unchanged since last sync)
+        note_a = node_a.db.get_note(note_id)
+        assert note_a["content"] == "B's newer version"
+
+    def test_initial_sync_creates_conflict_when_both_edited(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """When both sides edited since last sync, conflict is created."""
+        import time
+
+        node_a, node_b = two_nodes_with_servers
+
+        # Create note on A
+        note_id = create_note_on_node(node_a, "Original")
+
+        # Sync to B and back
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Both sides edit (after last sync)
+        set_local_device_id(node_a.device_id)
+        node_a.db.update_note(note_id, "A's edit")
+
+        set_local_device_id(node_b.device_id)
+        node_b.db.update_note(note_id, "B's edit")
+
+        # A does initial sync - both edited, so conflict
+        set_local_device_id(node_a.device_id)
+        client = SyncClient(node_a.db, node_a.config)
+        client.initial_sync(node_b.device_id_hex)
+
+        # A should have conflict markers
         note_a = node_a.db.get_note(note_id)
         assert "<<<<<<< LOCAL" in note_a["content"]
-        assert "A's version" in note_a["content"]
-        assert "B's newer version" in note_a["content"]
-        assert ">>>>>>> REMOTE" in note_a["content"]
+        assert "A's edit" in note_a["content"]
+        assert "B's edit" in note_a["content"]
 
 
 class TestInitialSyncRemoteEmpty:
