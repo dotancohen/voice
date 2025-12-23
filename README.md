@@ -1,25 +1,60 @@
-# Voice Rewrite
+# VOICE: The Very Organized Information Capture Engine
 
-Note-taking application with hierarchical tags, available as GUI, TUI, CLI, and Web API.
+- The Problem: Voice notes are a fast, effective way to _temporarily_ record information on the go, but are near impossible to actually work with in their raw format.
+- The Solution: VOICE provides the tools to transform data stuck in voice notes into plain text that can be used in Actionable Items, Calendars, Data Stores, or just Archived.
 
 ## Features
-- Hierarchical tag system with unlimited nesting
-- **GUI Mode**: Three-pane PySide6 interface with dark/light theme support
-- **TUI Mode**: Three-pane Textual terminal interface with RTL support
-- **CLI Mode**: Command-line interface with JSON/CSV export
-- **Web API Mode**: RESTful HTTP API with JSON responses
-- SQLite database backend
-- Fully typed Python code
-- Clean architecture with complete core/UI separation
-- Search with tag: syntax and free-text
-- Hierarchical tag filtering (parent includes children)
-- AND logic for multiple search terms
-- Comprehensive test suite (unit + GUI + CLI + web tests)
+
+- Note-taking application with hierarchical tags.
+- Sync notes between instances - fully decentralized self-hosted service.
+- GUI, TUI, CLI, and Web API interfaces.
+
+### GUI
+
+- Designed for finding information quickly, via tags and search.
+- Full keyboard control and mouse control.
+- RTL text support.
+- Dark and light themes.
+
+### TUI
+
+- Designed for finding information quickly, via tags and search.
+- Full keyboard control and mouse control.
+- RTL text support.
+
+### CLI
+
+- Fully scriptable with JSON or CSV output.
+
+### Web API
+
+- RESTful HTTP API with JSON responses.
+
+## Roadmap
+
+- Features for working with voice notes specifically - the original inspiration for this project.
+- Add UI for Tag management (create, rename, delete)
+- Add UI for sync conflict management
+- Web UI that uses Web API.
+- Multiple user accounts per server.
+- Text-To-Speech transcription of voice notes, using either local Whisper AI or Google Cloud Speech.
+- Automatic content summary of voice notes, using AI installed locally.
+- Detect file timestamps from filesystem metadata or filenames, import as new notes.
 
 ## Requirements
 - Python 3.10 or higher
 - PySide6 + pyqtdarktheme (for GUI mode)
 - Flask + Flask-CORS (for Web API mode)
+
+## Architecture
+
+- Written in fully typed Python 3.
+- GUI writted in Qt, other modes available if if Qt (PySide) is not installed.
+- TUI writted in Textual, other modes available if if Textual is not installed.
+- REST API writted in Flask, other modes available if if Flask is not installed.
+- The CLI is always available.
+- SQLite database.
+- Comprehensive test suite.
 
 ## Installation
 
@@ -34,52 +69,57 @@ source .venv/bin/activate  # On Linux/Mac
 ### Install Dependencies
 ```bash
 pip install -r requirements.txt
-```
-
-### For Development
-```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt # Only for development
 ```
 
 ## Usage
 
-All interfaces are accessed through a unified entry point: `python -m src.main`
+- For now no packaged executable. All interfaces are accessed through a unified entry point: `python -m src.main`
 
 ### GUI Mode
 
-Launch the graphical interface:
 ```bash
-python -m src.main              # Auto-detect: GUI if available, else TUI
-python -m src.main gui          # Explicit GUI mode with dark theme
-python -m src.main gui --theme light   # Light theme
-python -m src.main gui --theme dark    # Dark theme (explicit)
+python -m src.main                    # Auto-detect: GUI if available, else TUI
+python -m src.main gui                # Explicit GUI mode with dark theme
+python -m src.main gui --theme light  # Light theme
+python -m src.main gui --theme dark   # Dark theme (explicit)
 ```
 
 With custom configuration directory:
 ```bash
-python -m src.main -d /path/to/config gui --theme light
+python -m src.main -d /path/to/config gui
 ```
 
 ### TUI Mode
 
-Launch the terminal user interface (requires Textual):
+Launch the terminal user interface:
 ```bash
 python -m src.main tui
 ```
 
-**Controls:**
-- **Up/Down**: Navigate lists
-- **Left/Right**: Collapse/Expand tag hierarchy
-- **Enter**: Select item
-- **e**: Edit selected note
-- **s**: Save changes
-- **a**: Show all notes
-- **q**: Quit
-- **Ctrl+P**: Open command palette
+With custom configuration directory:
+```bash
+python -m src.main tui -d /path/to/config gui
+```
 
-The TUI provides a three-pane layout (Tags, Notes List, Note Detail) with support for Hebrew/Arabic text display.
+#### TUI Keybaord Controls
+
+- `Up/Down`: Navigate lists
+- `Left/Right`: Collapse/Expand tag hierarchy
+- `Enter`: Select item
+- `e`: Edit selected note
+- `s`: Save changes
+- `a`: Show all notes
+- `q`: Quit
+- `Ctrl+P`: Open command palette
 
 ### CLI Mode
+
+Create notes:
+```bash
+python -m src.main cli new-note "Hello, world!"
+echo "Note from stdin" | python -m src.main cli new-note
+```
 
 List all notes:
 ```bash
@@ -127,75 +167,66 @@ python -m src.main -d /path/to/config cli list-notes
 
 ### Web API Mode
 
-Start the Flask web server:
+- Server runs on `http://127.0.0.1:5000` by default.
+
+Start the web server:
 ```bash
 python -m src.main web
-```
 
-Server runs on `http://127.0.0.1:5000` by default.
-
-Custom host/port:
-```bash
+# Custom host or port
 python -m src.main web --host 0.0.0.0 --port 8080
 ```
 
-Enable debug mode:
+#### Debug mode
+
 ```bash
 python -m src.main web --debug
 ```
 
-**API Endpoints:**
+# Web API Endpoints
 
-List all notes:
+- All endpoints return JSON.
+- CORS is enabled for cross-origin requests.
+
 ```bash
+# List all notes
 curl http://127.0.0.1:5000/api/notes
-```
 
-Get specific note:
-```bash
+# Get specific note
 curl http://127.0.0.1:5000/api/notes/<note-uuid>
-```
 
-List all tags:
-```bash
+# List all tags
 curl http://127.0.0.1:5000/api/tags
-```
 
-Search notes:
-```bash
-# Search by text
+# Search notes by text
 curl "http://127.0.0.1:5000/api/search?text=meeting"
 
-# Search by tag
+# Search notes by tag
 curl "http://127.0.0.1:5000/api/search?tag=Work"
 
-# Search by hierarchical tag
+# Search notes by hierarchical tag
 curl "http://127.0.0.1:5000/api/search?tag=Geography/Europe/France/Paris"
 
-# Multiple tags (AND logic)
+# Search notes by specifying multiple tags (AND logic)
 curl "http://127.0.0.1:5000/api/search?tag=Work&tag=Work/Projects"
 
 # Combined text and tags
 curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work"
-```
 
-Health check:
-```bash
+# Health check
 curl http://127.0.0.1:5000/api/health
 ```
 
-All endpoints return JSON. CORS is enabled for cross-origin requests.
-
 ## Server Deployment
 
-For deploying VoiceRewrite on a server (sync server + TUI for SSH access), use the server requirements file:
+For deploying Voice on a server (sync server + TUI for SSH access), use the server requirements file.
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/voicerewrite.git
-cd voicerewrite
+git clone https://github.com/dotancohen/voice.git
+cd voice
 
 # Create virtual environment
 python3 -m venv .venv
@@ -206,6 +237,9 @@ pip install -r requirements-server.txt
 ```
 
 ### Starting the Sync Server
+
+- The database is created automatically on first start
+- The default config directory is at `~/.config/voice/notes.db`, use the -d flag to set a custom directory.
 
 ```bash
 # Start with defaults (0.0.0.0:8384)
@@ -218,34 +252,32 @@ python -m src.main cli sync serve --host 0.0.0.0 --port 8384
 python -m src.main -d /path/to/config cli sync serve
 ```
 
-The database is created automatically on first start at `~/.config/voicerewrite/notes.db` (or in the custom config directory).
-
 ### Using the TUI via SSH
 
-Users can SSH into the server and use the TUI to manage notes:
+- Users can SSH into the server and use the TUI to manage notes.
+- On servers without GUI dependencies, simply running `python -m src.main` will launch the TUI.
+
 ```bash
 ssh user@server
-cd /opt/voicerewrite
+cd /opt/voice
 source .venv/bin/activate
-python -m src.main tui
+python -m src.main tui # Force TUI even if GUI is available
 ```
-
-On servers without GUI dependencies, simply running `python -m src.main` will launch the TUI.
 
 ### Running as a Service
 
-Create a systemd service file at `/etc/systemd/system/voicerewrite-sync.service`:
+Create a systemd service file at `/etc/systemd/system/voice-sync.service`:
 
 ```ini
 [Unit]
-Description=VoiceRewrite Sync Server
+Description=Voice Sync Server
 After=network.target
 
 [Service]
 Type=simple
-User=voicerewrite
-WorkingDirectory=/opt/voicerewrite
-ExecStart=/opt/voicerewrite/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384
+User=voice
+WorkingDirectory=/opt/voice
+ExecStart=/opt/voice/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384
 Restart=on-failure
 RestartSec=5
 
@@ -255,23 +287,11 @@ WantedBy=multi-user.target
 
 Enable and start:
 ```bash
-sudo systemctl enable voicerewrite-sync
-sudo systemctl start voicerewrite-sync
+sudo systemctl enable voice-sync
+sudo systemctl start voice-sync
 ```
 
-### Sync Endpoints
-
-The sync server exposes these endpoints:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/sync/status` | GET | Get sync server status |
-| `/sync/handshake` | POST | Exchange device info |
-| `/sync/changes` | GET | Request changes since timestamp |
-| `/sync/apply` | POST | Apply changes from peer |
-| `/sync/full` | GET | Get full dataset for initial sync |
-
-### Sync Workflow
+## Syncing between installations
 
 **Step 1: Get device IDs** (on each device):
 ```bash
@@ -333,7 +353,7 @@ Open the sync server port (default 8384) in your firewall.
 
 **UFW (Ubuntu/Debian):**
 ```bash
-sudo ufw allow 8384/tcp comment "VoiceRewrite Sync"
+sudo ufw allow 8384/tcp comment "Voice Sync"
 sudo ufw reload
 sudo ufw status
 ```
@@ -355,7 +375,10 @@ sudo iptables-save | sudo tee /etc/iptables/rules.v4
 
 For production deployments, use a reverse proxy with SSL termination. The sync protocol transmits data in plain text, so HTTPS is strongly recommended.
 
-**Nginx configuration** (`/etc/nginx/sites-available/voicerewrite`):
+#### Nginx configuration
+
+- Place this in the file `/etc/nginx/sites-available/voice`
+
 ```nginx
 server {
     listen 443 ssl http2;
@@ -382,12 +405,12 @@ server {
 
 Enable and test:
 ```bash
-sudo ln -s /etc/nginx/sites-available/voicerewrite /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/voice /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-**Obtain SSL certificate with Let's Encrypt:**
+Obtain SSL certificate with Let's Encrypt:
 ```bash
 sudo apt install certbot python3-certbot-nginx
 sudo certbot --nginx -d sync.example.com
@@ -398,43 +421,7 @@ When using a reverse proxy, use HTTPS in the peer URL:
 python -m src.main cli sync add-peer <server-device-id> "Server" https://sync.example.com
 ```
 
-### Security Considerations
-
-1. **Use HTTPS**: The sync protocol does not encrypt data. Always use a reverse proxy with SSL for production.
-
-2. **Restrict access**: Consider limiting access by IP if your devices have static IPs:
-   ```nginx
-   location / {
-       allow 192.168.1.0/24;
-       allow 203.0.113.50;
-       deny all;
-       proxy_pass http://127.0.0.1:8384;
-   }
-   ```
-
-3. **Firewall defaults**: Block all incoming traffic except SSH and your sync port:
-   ```bash
-   sudo ufw default deny incoming
-   sudo ufw default allow outgoing
-   sudo ufw allow ssh
-   sudo ufw allow 443/tcp
-   sudo ufw enable
-   ```
-
-4. **Bind to localhost**: When using a reverse proxy, bind the sync server to localhost only:
-   ```bash
-   python -m src.main cli sync serve --host 127.0.0.1 --port 8384
-   ```
-
-5. **No CDN needed**: The sync server handles small JSON payloads between trusted devices. CDNs are not applicable.
-
 ## Testing
-
-The test suite is organized by interface type for clean separation:
-- **Unit tests** (`tests/unit/`) - Core functionality, no dependencies
-- **GUI tests** (`tests/gui/`) - GUI components, requires Qt/PySide6
-- **CLI tests** (`tests/cli/`) - Command-line interface
-- **Web tests** (`tests/web/`) - Flask REST API endpoints
 
 ### Run All Tests
 ```bash
@@ -465,7 +452,6 @@ pytest -m web    # Web API tests
 ### Run with Coverage Report
 ```bash
 pytest --cov=src --cov-report=html
-# Open htmlcov/index.html in browser to view coverage
 ```
 
 ### Run Specific Test File
@@ -482,12 +468,12 @@ pytest tests/cli/test_cli_search.py::TestSearchText::test_search_by_text
 
 ### Test Data
 The test suite uses a pre-populated database with:
-- 14 tags in hierarchical structure (Work/Projects/VoiceRewrite, Geography/Europe/France/Paris, etc.)
+- 14 tags in hierarchical structure
 - 6 notes with various tag combinations
 - Hebrew text support testing
 - Multiple notes per tag for comprehensive testing
 
-See `TESTING.md` for detailed test documentation.
+See [TESTING.md](TESTING.md) for detailed test documentation.
 
 ## Development
 
@@ -502,12 +488,12 @@ black src/
 ```
 
 ## Database Location
-- Default: `~/.config/voicerewrite/notes.db`
+- Default: `~/.config/voice/notes.db`
 - Custom: `<config-dir>/notes.db` when using `-d` flag
 
 ## Configuration
 
-Configuration is stored in `<config-dir>/config.json`. The default location is `~/.config/voicerewrite/config.json`.
+Configuration is stored in `<config-dir>/config.json`. The default location is `~/.config/voice/config.json`.
 
 For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -533,23 +519,21 @@ For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ### Config Options
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `database_file` | string | `<config_dir>/notes.db` | Path to SQLite database file |
-| `default_interface` | string\|null | `null` | Default interface (`gui`, `tui`, `cli`, `web`). If null, auto-detects: GUI if available, else TUI |
-| `window_geometry` | object\|null | `null` | Saved window size/position (set automatically) |
-| `implementations` | object | `{}` | Reserved for future component selection |
-| `themes.colours.warnings` | string | `#FFFF00` | Warning highlight color (backward compatible) |
-| `themes.colours.warnings_dark` | string | `#FFFF00` | Warning color for dark theme (yellow) |
-| `themes.colours.warnings_light` | string | `#FF8C00` | Warning color for light theme (dark orange) |
-| `themes.colours.tui_border_focused` | string | `green` | TUI border color for focused pane |
-| `themes.colours.tui_border_unfocused` | string | `blue` | TUI border color for unfocused panes |
+| Key                                 | Type        | Default             | Description                                                          |
+|-------------------------------------|-------------|---------------------|----------------------------------------------------------------------|
+| database_file                       | string      | CONFIG_DIR/notes.db | Path to SQLite database file                                         |
+| default_interface                   | string/null | null                | Default interface. If null, auto-detects: GUI if available, else TUI |
+| window_geometry                     | object/null | null                | Saved window size/position (set automatically)                       |
+| implementations                     | object      | {}                  | Reserved for future component selection                              |
+| themes.colours.warnings             | string      | #FFFF00             | Warning highlight color (backward compatible)                        |
+| themes.colours.warnings_dark        | string      | #FFFF00             | Warning color for dark theme (yellow)                                |
+| themes.colours.warnings_light       | string      | #FF8C00             | Warning color for light theme (dark orange)                          |
+| themes.colours.tui_border_focused   | string      | green               | TUI border color for focused pane                                    |
+| themes.colours.tui_border_unfocused | string      | blue                | TUI border color for unfocused panes                                 |
 
 ### Color Values
 
 Colors are specified as hex strings (e.g., `#FFFF00`). The warning color is used to highlight ambiguous tags in search results.
-
-TUI border colors accept Textual color names (e.g., `green`, `blue`, `red`) or hex colors (e.g., `#00FF00`).
 
 Theme-specific colors take precedence:
 - Dark theme: Uses `warnings_dark`, falls back to `warnings`, then `#FFFF00`
@@ -569,31 +553,25 @@ Theme-specific colors take precedence:
 }
 ```
 
-## Adding Sample Data
-
-Use the CLI to create notes:
-```bash
-python -m src.main cli new-note "This is my first note!"
-echo "Note from stdin" | python -m src.main cli new-note
-```
-
-Or use the TUI/GUI to create and edit notes interactively.
-
 ## Search Syntax
 
 ### Free-text Search
+
+- Searches note content (case-insensitive)
+
 ```
 meeting
 hello world
 ```
-Searches note content (case-insensitive)
 
 ### Tag Search
+
+- Hierarchical paths supported. Parent tag searchess include children.
+
 ```
-tag:Work
+tag:Paris               # Matches both Europe/France/Paris and US/Texas/Paris
 tag:Europe/France/Paris
 ```
-Searches by tag. Hierarchical paths supported. Parent tags include children.
 
 ### Combined Search (AND logic)
 ```
@@ -602,40 +580,65 @@ tag:Personal tag:Family reunion
 ```
 Multiple terms are combined with AND logic:
 - `tag:A tag:B` - notes must have (A or descendants) AND (B or descendants)
-- `tag:A hello` - notes must have (A or descendants) AND contain "hello"
+- `tag:A hello` - notes must have (A or descendants) AND contain the text "hello"
 
-## Current Limitations
-- No audio recording functionality (coming in future iterations)
-- Tag management (create, rename, delete) not yet in UI
+## Recording voice notes
 
-## Project Structure
-- `src/main.py` - Unified entry point (dispatches to GUI, TUI, CLI, or Web)
-- `src/core/` - Business logic and data access (zero Qt dependencies)
-- `src/ui/` - GUI components (PySide6)
-- `src/tui.py` - Terminal UI module (Textual)
-- `src/cli.py` - Command-line interface module
-- `src/web.py` - Flask REST API module
-- `tests/unit/` - Core functionality tests
-- `tests/gui/` - GUI integration tests
-- `tests/cli/` - CLI tests
-- `tests/web/` - Web API tests
-- `docs/` - Documentation including RTL support and configuration
-- All code is fully typed and documented
+- On Android I use and recommend [Axet Audio Recorder](https://f-droid.org/en/packages/com.github.axet.audiorecorder/), which can set filenames as timestamps.
+- Another good Android app is [ASR Voice Recorder - Apps on Google Play](https://play.google.com/store/apps/details?id=com.nll.asr&hl=en)
+- [Wearable device that records your voice for legal defense | Hacker News](https://news.ycombinator.com/item?id=36457266)
 
-## Architecture
+### Tips
 
-### Critical Design Principle
-The application has four modes:
-1. **GUI mode** - PySide6 interface (three-pane layout)
-2. **TUI mode** - Textual terminal interface (three-pane layout)
-3. **CLI mode** - Command-line interface with JSON/CSV/text output
-4. **Web API mode** - Flask REST API with JSON responses
+- Take care to enunciate clearly at first. It will make listening easier, and help with AI transcription.
+- If recording after midnight, mention in the recording that the content relates to the previous day.
 
-Therefore, `src/core/` has **zero Qt dependencies** and can be imported by all interface modes.
+### Concerns
 
-### Test Organization
-Tests are separated by interface type for complete independence:
-- `tests/unit/` - Core functionality (database, config) - 55 tests
-- `tests/gui/` - GUI components (requires Qt) - 49 tests
-- `tests/cli/` - CLI commands (subprocess) - 38 tests
-- `tests/web/` - Web API endpoints (Flask test client) - 38 tests
+- Who is being recorded?
+- Do they know they are being recorded?
+
+- What devices are used to record?
+- Using internal device mics, or higher quality external mics?
+- Does the mic have a wind muff? This reduces wind noise but severely muffles voice quality.
+
+- For what purpose is the recording?
+- Who is going to listen to it? When?
+
+- Transcription?
+- Does the transcription need timestamps?
+- Multiple people speaking simultaneously? Do you need per-speaker seperation?
+- Do you need to identify people by their voice?
+- Identify sounds in the background?
+- Identify yelling?
+- Identify emotions via voice clues?
+
+- Are there multiple languages in the recordings?
+- Are there many proper nouns?
+- Many non-dictionary terms?
+- Is the speech typically confined to a specific subject?
+- Are there nonstandard accents?
+- Unusually fast or slow speech?
+- Wordplay or puns?
+
+- Is there background noise?
+- Consistent background noise or intermittent?
+- Is there wind noise?
+- Is there background music?
+- Are there background voices?
+
+- In what formats are the existing recordings?
+- Are you flexible in choosing a different recording format?
+- What are the consequences of an inaccurate transcription?
+- How fast must the transcription run?
+- Does it need to be local?
+- On what hardware?
+- Are there storage constraints?
+- What is the transcription budget?
+- Does it need to be open source?
+
+## Authorship
+
+- Written by Dotan Cohen
+- Extensive help, especially with writing the test suite, attributed to Anthropic Claude via Claude Code.
+
