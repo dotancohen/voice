@@ -343,7 +343,7 @@ def get_changes_since(
             note_query = """
                 SELECT id, created_at, content, modified_at, deleted_at
                 FROM notes
-                WHERE modified_at > ? OR (modified_at IS NULL AND created_at > ?)
+                WHERE modified_at >= ? OR (modified_at IS NULL AND created_at >= ?)
                 ORDER BY COALESCE(modified_at, created_at)
                 LIMIT ?
             """
@@ -387,7 +387,7 @@ def get_changes_since(
             tag_query = """
                 SELECT id, name, parent_id, created_at, modified_at
                 FROM tags
-                WHERE modified_at > ? OR (modified_at IS NULL AND created_at > ?)
+                WHERE modified_at >= ? OR (modified_at IS NULL AND created_at >= ?)
                 ORDER BY COALESCE(modified_at, created_at)
                 LIMIT ?
             """
@@ -427,7 +427,7 @@ def get_changes_since(
             nt_query = """
                 SELECT note_id, tag_id, created_at, modified_at, deleted_at
                 FROM note_tags
-                WHERE created_at > ? OR deleted_at > ? OR modified_at > ?
+                WHERE created_at >= ? OR deleted_at >= ? OR modified_at >= ?
                 ORDER BY COALESCE(modified_at, deleted_at, created_at)
                 LIMIT ?
             """
