@@ -310,80 +310,8 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_note_tags_modified_at ON note_tags(modified_at)"
             )
 
-            # Migration: Add modified_at to note_tags if it doesn't exist (for existing DBs)
-            try:
-                cursor.execute("SELECT modified_at FROM note_tags LIMIT 1")
-            except Exception:
-                cursor.execute("ALTER TABLE note_tags ADD COLUMN modified_at DATETIME")
-                logger.info("Added modified_at column to note_tags table")
-
-            # Migration: Add deleted_content to conflicts_note_delete (for existing DBs)
-            try:
-                cursor.execute("SELECT deleted_content FROM conflicts_note_delete LIMIT 1")
-            except Exception:
-                cursor.execute(
-                    "ALTER TABLE conflicts_note_delete ADD COLUMN deleted_content TEXT"
-                )
-                logger.info("Added deleted_content column to conflicts_note_delete table")
-
-            # Migration: Drop device_id from notes, tags, note_tags (no longer needed)
-            # SQLite 3.35+ supports ALTER TABLE DROP COLUMN
-            self._migrate_drop_device_id(cursor)
-
             self.conn.commit()
             logger.info("Database schema created successfully")
-
-    def _migrate_drop_device_id(self, cursor: sqlite3.Cursor) -> None:
-        """Drop device_id column from notes, tags, and note_tags tables.
-
-        This migration removes sync-specific device tracking from main data tables.
-        Device info is only needed in conflict tables.
-        """
-        tables_to_migrate = [
-            ("notes", ["id", "created_at", "content", "modified_at", "deleted_at"]),
-            ("tags", ["id", "name", "parent_id", "created_at", "modified_at"]),
-            ("note_tags", ["note_id", "tag_id", "created_at", "modified_at", "deleted_at"]),
-        ]
-
-        for table_name, columns in tables_to_migrate:
-            # Check if device_id column exists
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            table_columns = [row["name"] for row in cursor.fetchall()]
-
-            if "device_id" not in table_columns:
-                continue  # Already migrated
-
-            logger.info(f"Migrating {table_name}: dropping device_id column")
-
-            # Use ALTER TABLE DROP COLUMN (SQLite 3.35+)
-            try:
-                cursor.execute(f"ALTER TABLE {table_name} DROP COLUMN device_id")
-                logger.info(f"Dropped device_id from {table_name}")
-            except sqlite3.OperationalError as e:
-                # Fallback for older SQLite: table rebuild
-                logger.warning(f"ALTER TABLE DROP COLUMN failed for {table_name}, using table rebuild: {e}")
-                columns_str = ", ".join(columns)
-                cursor.execute(f"CREATE TABLE {table_name}_new AS SELECT {columns_str} FROM {table_name}")
-                cursor.execute(f"DROP TABLE {table_name}")
-                cursor.execute(f"ALTER TABLE {table_name}_new RENAME TO {table_name}")
-                # Recreate primary key constraint for note_tags
-                if table_name == "note_tags":
-                    cursor.execute("""
-                        CREATE TABLE note_tags_temp (
-                            note_id BLOB NOT NULL,
-                            tag_id BLOB NOT NULL,
-                            created_at DATETIME NOT NULL,
-                            modified_at DATETIME,
-                            deleted_at DATETIME,
-                            FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE,
-                            FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE,
-                            PRIMARY KEY (note_id, tag_id)
-                        )
-                    """)
-                    cursor.execute("INSERT INTO note_tags_temp SELECT * FROM note_tags")
-                    cursor.execute("DROP TABLE note_tags")
-                    cursor.execute("ALTER TABLE note_tags_temp RENAME TO note_tags")
-                logger.info(f"Rebuilt {table_name} without device_id")
 
     def get_all_notes(self) -> List[Dict[str, Any]]:
         """Get all non-deleted notes with their associated tag names.
