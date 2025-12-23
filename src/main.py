@@ -9,8 +9,8 @@ This module provides a unified entry point for all interfaces:
 
 Usage:
     python -m src.main                     # Auto-detect: GUI if available, else TUI
-    python -m src.main --theme light       # Launch default interface with light theme
-    python -m src.main gui                 # Launch GUI
+    python -m src.main --theme dark        # Launch with dark theme (overrides OS detection)
+    python -m src.main gui                 # Launch GUI (theme detected from OS)
     python -m src.main tui                 # Launch TUI
     python -m src.main cli list-notes      # Use CLI
     python -m src.main web [--port 8080]   # Start web server
@@ -47,8 +47,8 @@ def add_gui_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     gui_parser.add_argument(
         "--theme",
         choices=["dark", "light"],
-        default="dark",
-        help="UI theme (default: dark)"
+        default=None,
+        help="UI theme (default: detect from OS)"
     )
 
 
@@ -102,8 +102,24 @@ def run_gui(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     # Close database on application exit
     app.aboutToQuit.connect(db.close)
 
+    # Detect theme from OS if not specified
+    theme = getattr(args, 'theme', None)
+    if theme is None:
+        from PySide6.QtCore import Qt
+        try:
+            # Qt 6.5+ has colorScheme()
+            color_scheme = app.styleHints().colorScheme()
+            theme = "dark" if color_scheme == Qt.ColorScheme.Dark else "light"
+            logger.info(f"Detected OS theme: {theme}")
+        except AttributeError:
+            # Fallback for older Qt: check palette brightness
+            palette = app.palette()
+            bg_color = palette.window().color()
+            is_dark = bg_color.lightness() < 128
+            theme = "dark" if is_dark else "light"
+            logger.info(f"Detected theme from palette: {theme}")
+
     # Apply theme using qdarktheme
-    theme = getattr(args, 'theme', 'dark')
     theme_stylesheet = qdarktheme.load_stylesheet(theme=theme)
     app.setStyleSheet(theme_stylesheet)
 
@@ -147,8 +163,8 @@ Examples:
     parser.add_argument(
         "--theme",
         choices=["dark", "light"],
-        default="dark",
-        help="UI theme for GUI (default: dark)"
+        default=None,
+        help="UI theme for GUI (default: detect from OS)"
     )
 
     # Create subparsers for each interface
