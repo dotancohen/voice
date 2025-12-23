@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Command-line interface for Voice Rewrite.
+"""Command-line interface for Voice.
 
 This module provides CLI commands for interacting with notes and tags.
 Uses only core/ modules - no Qt/PySide6 dependencies.

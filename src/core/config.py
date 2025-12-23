@@ -1,4 +1,4 @@
-"""Configuration management for Voice Rewrite.
+"""Configuration management for Voice.
 
 This module handles loading and saving application configuration to/from
 a JSON file. The config directory can be customized via CLI argument.
@@ -41,9 +41,9 @@ class Config:
         """Initialize configuration manager.
 
         Args:
-            config_dir: Custom config directory path. If None, uses ~/.config/voicerewrite/
+            config_dir: Custom config directory path. If None, uses ~/.config/voice/
         """
-        self.config_dir = config_dir or (Path.home() / ".config" / "voicerewrite")
+        self.config_dir = config_dir or (Path.home() / ".config" / "voice")
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config_file = self.config_dir / "config.json"
         self.config_data = self.load_config()
@@ -108,9 +108,9 @@ class Config:
         """
         try:
             hostname = socket.gethostname()
-            return f"VoiceRewrite on {hostname}"
+            return f"Voice on {hostname}"
         except Exception:
-            return "VoiceRewrite Device"
+            return "Voice Device"
 
     def save_config(self, config: Dict[str, Any]) -> None:
         """Save configuration to JSON file.

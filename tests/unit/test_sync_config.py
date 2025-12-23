@@ -61,7 +61,7 @@ class TestDeviceName:
         name = sync_config.get_device_name()
         assert name is not None
         assert len(name) > 0
-        assert "VoiceRewrite" in name
+        assert "Voice" in name
 
     def test_set_device_name(self, sync_config: Config) -> None:
         """Device name can be changed."""

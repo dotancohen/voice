@@ -1,4 +1,4 @@
-"""Data models for the Voice Rewrite application.
+"""Data models for the Voice application.
 
 This module defines immutable dataclasses representing the core entities:
 Note and Tag.

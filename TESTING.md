@@ -2,7 +2,7 @@
 
 ## Test Suite Overview
 
-The Voice Rewrite test suite provides comprehensive coverage across four interfaces: GUI, TUI, CLI, and Web API. Tests are organized by interface type to ensure clean separation and allow independent testing.
+The Voice test suite provides comprehensive coverage across four interfaces: GUI, TUI, CLI, and Web API. Tests are organized by interface type to ensure clean separation and allow independent testing.
 
 ## Test Structure
 
@@ -420,7 +420,7 @@ The test suite uses a pre-populated database with realistic test data:
 ```
 Work (1)
 ├── Projects (2)
-│   └── VoiceRewrite (3)
+│   └── Voice (3)
 └── Meetings (4)
 
 Personal (5)
@@ -438,7 +438,7 @@ Geography (8)
 
 ### Notes
 1. "Meeting notes from project kickoff" - Tags: Work, Projects, Meetings
-2. "Remember to update documentation" - Tags: Work, Projects, VoiceRewrite
+2. "Remember to update documentation" - Tags: Work, Projects, Voice
 3. "Doctor appointment next Tuesday" - Tags: Personal, Health
 4. "Family reunion in Paris" - Tags: Personal, Family, France, Paris
 5. "Trip to Israel planning" - Tags: Personal, Asia, Israel

@@ -1,4 +1,4 @@
-"""TLS certificate management for Voice Rewrite sync.
+"""TLS certificate management for Voice sync.
 
 This module handles:
 - Self-signed certificate generation
@@ -29,7 +29,7 @@ CERT_VALIDITY_DAYS = 3650
 def generate_self_signed_cert(
     cert_path: Path,
     key_path: Path,
-    common_name: str = "VoiceRewrite Sync",
+    common_name: str = "Voice Sync",
     device_id: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Generate a self-signed certificate and private key.
@@ -72,7 +72,7 @@ def generate_self_signed_cert(
     # Build certificate subject
     subject_attrs = [
         x509.NameAttribute(NameOID.COMMON_NAME, common_name),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "VoiceRewrite"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Voice"),
     ]
     if device_id:
         subject_attrs.append(

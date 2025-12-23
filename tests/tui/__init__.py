@@ -1,1 +1,1 @@
-"""TUI tests package for Voice Rewrite."""
+"""TUI tests package for Voice."""

@@ -1,4 +1,4 @@
-"""Edge case tests for Voice Rewrite.
+"""Edge case tests for Voice.
 
 Tests boundary conditions, special characters, and unusual inputs.
 """
@@ -231,10 +231,10 @@ class TestDatabaseEdgeCases:
 
     def test_tag_descendants_of_leaf(self, populated_db: Database) -> None:
         """Getting descendants of leaf tag returns just that tag."""
-        # VoiceRewrite is a leaf tag
-        voicerewrite_uuid = get_tag_uuid("VoiceRewrite")
-        descendants = populated_db.get_tag_descendants(voicerewrite_uuid)
-        assert descendants == [voicerewrite_uuid]
+        # Voice is a leaf tag
+        voice_uuid = get_tag_uuid("Voice")
+        descendants = populated_db.get_tag_descendants(voice_uuid)
+        assert descendants == [voice_uuid]
 
     def test_filter_notes_empty_list(self, populated_db: Database) -> None:
         """Filtering with empty tag list returns all notes."""

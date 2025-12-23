@@ -1,1 +1,1 @@
-"""Test suite for Voice Rewrite application."""
+"""Test suite for Voice application."""

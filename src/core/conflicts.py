@@ -1,4 +1,4 @@
-"""Conflict resolution for Voice Rewrite sync.
+"""Conflict resolution for Voice sync.
 
 This module handles:
 - Listing unresolved conflicts

@@ -91,7 +91,7 @@ class TestTwoNodeSync:
         # Create hierarchy on A
         work = create_tag_on_node(node_a, "Work")
         projects = create_tag_on_node(node_a, "Projects", work)
-        voice_rewrite = create_tag_on_node(node_a, "VoiceRewrite", projects)
+        voice = create_tag_on_node(node_a, "Voice", projects)
 
         # Sync to B
         sync_nodes(node_a, node_b)
@@ -101,7 +101,7 @@ class TestTwoNodeSync:
 
         tags_b = node_b.db.get_all_tags()
         tag_names = {t["name"] for t in tags_b}
-        assert tag_names == {"Work", "Projects", "VoiceRewrite"}
+        assert tag_names == {"Work", "Projects", "Voice"}
 
     def test_note_with_tags_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]

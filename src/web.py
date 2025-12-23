@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Web API for Voice Rewrite.
+"""Web API for Voice.
 
 This module provides a RESTful HTTP API for interacting with notes and tags.
 Uses only core/ modules - no Qt/PySide6 dependencies.
@@ -275,7 +275,7 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success)
     """
-    logger.info("Starting Voice Rewrite Web API")
+    logger.info("Starting Voice Web API")
     if config_dir:
         logger.info(f"Using custom config directory: {config_dir}")
 

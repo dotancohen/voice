@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Voice Rewrite application entry point.
+"""Voice application entry point.
 
 This module provides a unified entry point for all interfaces:
 - GUI: Graphical interface with PySide6
@@ -80,7 +80,7 @@ def run_gui(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     from src.core.database import Database
     from src.ui.main_window import MainWindow
 
-    logger.info("Starting Voice Rewrite GUI")
+    logger.info("Starting Voice GUI")
     if config_dir:
         logger.info(f"Using custom config directory: {config_dir}")
 
@@ -97,7 +97,7 @@ def run_gui(config_dir: Optional[Path], args: argparse.Namespace) -> int:
 
     # Create Qt application
     app = QApplication(sys.argv)
-    app.setApplicationName("Voice Rewrite")
+    app.setApplicationName("Voice")
 
     # Close database on application exit
     app.aboutToQuit.connect(db.close)
@@ -140,7 +140,7 @@ def create_parser() -> argparse.ArgumentParser:
         Configured ArgumentParser instance
     """
     parser = argparse.ArgumentParser(
-        description="Voice Rewrite - Note-taking application with hierarchical tags",
+        description="Voice - Note-taking application with hierarchical tags",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -157,7 +157,7 @@ Examples:
         "-d", "--config-dir",
         type=Path,
         default=None,
-        help="Custom configuration directory (default: ~/.config/voicerewrite/)"
+        help="Custom configuration directory (default: ~/.config/voice/)"
     )
 
     parser.add_argument(
@@ -231,7 +231,7 @@ def get_default_interface(config_dir: Optional[Path]) -> str:
 
 
 def main() -> NoReturn:
-    """Main entry point for Voice Rewrite.
+    """Main entry point for Voice.
 
     Parses arguments and dispatches to the appropriate interface.
     """

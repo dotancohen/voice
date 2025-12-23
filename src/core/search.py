@@ -1,4 +1,4 @@
-"""Search functionality for Voice Rewrite.
+"""Search functionality for Voice.
 
 This module provides search parsing and execution logic.
 It is used by both the GUI and CLI interfaces.

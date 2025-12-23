@@ -1,4 +1,4 @@
-"""Pytest fixtures for Voice Rewrite tests.
+"""Pytest fixtures for Voice tests.
 
 This module provides fixtures for test configuration, database, and Qt application setup.
 """
@@ -30,7 +30,7 @@ TEST_DEVICE_ID = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
 TAG_UUIDS = {
     "Work": uuid.UUID("00000000-0000-7000-8000-000000000101").bytes,
     "Projects": uuid.UUID("00000000-0000-7000-8000-000000000102").bytes,
-    "VoiceRewrite": uuid.UUID("00000000-0000-7000-8000-000000000103").bytes,
+    "Voice": uuid.UUID("00000000-0000-7000-8000-000000000103").bytes,
     "Meetings": uuid.UUID("00000000-0000-7000-8000-000000000104").bytes,
     "Personal": uuid.UUID("00000000-0000-7000-8000-000000000105").bytes,
     "Family": uuid.UUID("00000000-0000-7000-8000-000000000106").bytes,
@@ -93,7 +93,7 @@ def test_config_dir(tmp_path: Path) -> Path:
     Returns:
         Path to temporary config directory.
     """
-    config_dir = tmp_path / "voicerewrite_test"
+    config_dir = tmp_path / "voice_test"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
@@ -153,7 +153,7 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
     Tag Hierarchy:
         Work
         ├── Projects
-        │   └── VoiceRewrite
+        │   └── Voice
         └── Meetings
         Personal
         ├── Family
@@ -175,7 +175,7 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
 
     Notes:
         1. "Meeting notes from project kickoff" (Work, Projects, Meetings)
-        2. "Remember to update documentation" (Work, Projects, VoiceRewrite)
+        2. "Remember to update documentation" (Work, Projects, Voice)
         3. "Doctor appointment next Tuesday" (Personal, Health)
         4. "Family reunion in Paris" (Personal, Family, France, Paris)
         5. "Trip to Israel planning" (Personal, Asia, Israel)
@@ -200,7 +200,7 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         # (uuid_key, name, parent_uuid_key or None)
         ("Work", "Work", None),
         ("Projects", "Projects", "Work"),
-        ("VoiceRewrite", "VoiceRewrite", "Projects"),
+        ("Voice", "Voice", "Projects"),
         ("Meetings", "Meetings", "Work"),
         ("Personal", "Personal", None),
         ("Family", "Family", "Personal"),
@@ -237,7 +237,7 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         # Map note number to (content, list of tag uuid keys)
         notes = [
             (1, "Meeting notes from project kickoff", ["Work", "Projects", "Meetings"]),
-            (2, "Remember to update documentation", ["Work", "Projects", "VoiceRewrite"]),
+            (2, "Remember to update documentation", ["Work", "Projects", "Voice"]),
             (3, "Doctor appointment next Tuesday", ["Personal", "Health"]),
             (4, "Family reunion in Paris", ["Personal", "Family", "France", "Paris_France"]),
             (5, "Trip to Israel planning", ["Personal", "Asia", "Israel"]),

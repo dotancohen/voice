@@ -1,4 +1,4 @@
-"""Database operations for Voice Rewrite.
+"""Database operations for Voice.
 
 This module provides all data access functionality using SQLite.
 All methods return JSON-serializable types (dicts, lists, primitives)

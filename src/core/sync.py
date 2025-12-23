@@ -1,4 +1,4 @@
-"""Sync server and client implementation for Voice Rewrite.
+"""Sync server and client implementation for Voice.
 
 This module provides peer-to-peer synchronization using a pull-based model.
 Each device runs a sync server that other devices can connect to for

@@ -104,7 +104,7 @@ class TestMultipleTagsAND:
 
         # Search for Work AND Projects
         # Note 1 has Work, Projects, Meetings
-        # Note 2 has Work, Projects, VoiceRewrite
+        # Note 2 has Work, Projects, Voice
         pane.search_field.setPlainText("tag:Work tag:Work/Projects")
         pane.perform_search()
 
@@ -285,8 +285,8 @@ class TestSearchEdgeCases:
         """Test search with conflicting criteria."""
         pane = NotesListPane(test_config, populated_db)
 
-        # No note has both VoiceRewrite (work child) and Health (personal child)
-        pane.search_field.setPlainText("tag:VoiceRewrite tag:Health")
+        # No note has both Voice (work child) and Health (personal child)
+        pane.search_field.setPlainText("tag:Voice tag:Health")
         pane.perform_search()
 
         assert pane.list_widget.count() == 0

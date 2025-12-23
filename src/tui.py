@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TUI (Text User Interface) for Voice Rewrite using Textual.
+"""TUI (Text User Interface) for Voice using Textual.
 
 This module provides a terminal-based interface for interacting with notes and tags.
 Uses only core/ modules - no Qt/PySide6 dependencies.
@@ -68,7 +68,7 @@ from src.core.note_editor import NoteEditorMixin
 from src.core.search import build_tag_search_term, execute_search
 
 # Re-export for tests
-__all__ = ["VoiceRewriteTUI", "run", "add_tui_subparser", "TagsTree", "NotesList", "NotesListView", "NoteDetail", "SearchInput"]
+__all__ = ["VoiceTUI", "run", "add_tui_subparser", "TagsTree", "NotesList", "NotesListView", "NoteDetail", "SearchInput"]
 
 logger = logging.getLogger(__name__)
 
@@ -469,8 +469,8 @@ class NoteDetail(Container, NoteEditorMixin):
         self.load_note(self.current_note_id)
 
 
-class VoiceRewriteTUI(App):
-    """Voice Rewrite TUI Application."""
+class VoiceTUI(App):
+    """Voice TUI Application."""
 
     # LLM NOTE: RTL display in Textual requires BOTH:
     # 1. Unicode RLI/PDI markers around RTL text
@@ -581,7 +581,7 @@ class VoiceRewriteTUI(App):
 
     """
 
-    TITLE = "Voice Rewrite"
+    TITLE = "Voice"
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -703,7 +703,7 @@ def add_tui_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Launch terminal user interface",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="""
-Terminal User Interface for Voice Rewrite.
+Terminal User Interface for Voice.
 
 Built with Textual, provides a full-featured notes interface in the terminal.
 Supports Hebrew/Arabic display (editing is LTR-only due to Textual limitations).
@@ -750,7 +750,7 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     db = Database(db_path)
 
     # Create and run TUI app
-    app = VoiceRewriteTUI(db, config)
+    app = VoiceTUI(db, config)
 
     try:
         app.run()

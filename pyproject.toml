@@ -1,5 +1,5 @@
 [project]
-name = "voicerewrite"
+name = "voice"
 version = "0.1.0"
 description = "Minimal note-taking application with hierarchical tags"
 requires-python = ">=3.10"

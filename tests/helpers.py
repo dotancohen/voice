@@ -1,4 +1,4 @@
-"""Test helper functions for Voice Rewrite tests.
+"""Test helper functions for Voice tests.
 
 This module provides utility functions for generating test UUIDs and
 accessing pre-defined test UUIDs.
@@ -17,7 +17,7 @@ TEST_DEVICE_ID = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
 TAG_UUIDS = {
     "Work": uuid.UUID("00000000-0000-7000-8000-000000000101").bytes,
     "Projects": uuid.UUID("00000000-0000-7000-8000-000000000102").bytes,
-    "VoiceRewrite": uuid.UUID("00000000-0000-7000-8000-000000000103").bytes,
+    "Voice": uuid.UUID("00000000-0000-7000-8000-000000000103").bytes,
     "Meetings": uuid.UUID("00000000-0000-7000-8000-000000000104").bytes,
     "Personal": uuid.UUID("00000000-0000-7000-8000-000000000105").bytes,
     "Family": uuid.UUID("00000000-0000-7000-8000-000000000106").bytes,

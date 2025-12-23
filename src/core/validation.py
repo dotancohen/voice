@@ -1,4 +1,4 @@
-"""Input validation for Voice Rewrite.
+"""Input validation for Voice.
 
 This module provides validation functions for all user inputs.
 All validators raise ValidationError with descriptive messages.

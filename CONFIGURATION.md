@@ -1,12 +1,12 @@
 # Configuration Reference
 
-Voice Rewrite stores its configuration in a JSON file located at `~/.config/voicerewrite/config.json`. The configuration directory can be customized via the `--config-dir` CLI argument.
+Voice stores its configuration in a JSON file located at `~/.config/voice/config.json`. The configuration directory can be customized via the `--config-dir` CLI argument.
 
 See also: Quick reference in [README.md](../README.md#configuration)
 
 ## Configuration File Location
 
-- **Default**: `~/.config/voicerewrite/config.json`
+- **Default**: `~/.config/voice/config.json`
 - **Custom**: Use `--config-dir /path/to/dir` when launching the application
 
 If the configuration file doesn't exist, it will be created with default values on first run.
@@ -16,13 +16,13 @@ If the configuration file doesn't exist, it will be created with default values 
 ### database_file
 
 **Type**: `string` (file path)
-**Default**: `~/.config/voicerewrite/notes.db`
+**Default**: `~/.config/voice/notes.db`
 
 Path to the SQLite database file that stores notes and tags.
 
 ```json
 {
-  "database_file": "/home/user/.config/voicerewrite/notes.db"
+  "database_file": "/home/user/.config/voice/notes.db"
 }
 ```
 
@@ -125,7 +125,7 @@ Accepts Textual color names or hex colors.
 
 ```json
 {
-  "database_file": "/home/user/.config/voicerewrite/notes.db",
+  "database_file": "/home/user/.config/voice/notes.db",
   "default_interface": null,
   "window_geometry": null,
   "implementations": {},

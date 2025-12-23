@@ -1,4 +1,4 @@
-"""Sync client for Voice Rewrite peer-to-peer synchronization.
+"""Sync client for Voice peer-to-peer synchronization.
 
 This module provides the client side of the sync protocol, allowing
 this device to:

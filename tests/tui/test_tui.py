@@ -1,4 +1,4 @@
-"""TUI tests for Voice Rewrite.
+"""TUI tests for Voice.
 
 Tests the Textual terminal interface using async testing with Pilot.
 """
@@ -9,7 +9,7 @@ import pytest
 from pathlib import Path
 from textual.widgets import Tree, ListView, Static, TextArea, Button
 
-from src.tui import VoiceRewriteTUI, TagsTree, NotesList, NotesListView, NoteDetail, SearchInput
+from src.tui import VoiceTUI, TagsTree, NotesList, NotesListView, NoteDetail, SearchInput
 from src.core.config import Config
 from src.core.database import Database
 
@@ -22,19 +22,19 @@ class TestTUIStartup:
 
     async def test_app_starts(self, populated_db: Database, test_config: Config) -> None:
         """Test that the TUI app starts without errors."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             assert app.is_running
 
     async def test_app_has_title(self, populated_db: Database, test_config: Config) -> None:
         """Test that the app has the correct title."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
-            assert app.title == "Voice Rewrite"
+            assert app.title == "Voice"
 
     async def test_three_panes_exist(self, populated_db: Database, test_config: Config) -> None:
         """Test that all three panes are created."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             tags_tree = app.query_one("#tags-tree", TagsTree)
             notes_list = app.query_one("#notes-list", NotesList)
@@ -50,7 +50,7 @@ class TestTagsTree:
 
     async def test_tags_tree_loads(self, populated_db: Database, test_config: Config) -> None:
         """Test that tags tree populates with tags from database."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             tree = app.query_one("#tags-tree", TagsTree)
             # Root should have children (root-level tags)
@@ -58,7 +58,7 @@ class TestTagsTree:
 
     async def test_tags_tree_has_root_tags(self, populated_db: Database, test_config: Config) -> None:
         """Test that root-level tags are present."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             tree = app.query_one("#tags-tree", TagsTree)
             root_tag_names = [str(node.label) for node in tree.root.children]
@@ -70,7 +70,7 @@ class TestTagsTree:
 
     async def test_expand_tag_with_right_arrow(self, populated_db: Database, test_config: Config) -> None:
         """Test that right arrow expands a tag."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             tree = app.query_one("#tags-tree", TagsTree)
             tree.focus()
@@ -87,7 +87,7 @@ class TestTagsTree:
 
     async def test_left_arrow_collapses_expanded_node(self, populated_db: Database, test_config: Config) -> None:
         """Test that left arrow collapses the current node if expanded."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             tree = app.query_one("#tags-tree", TagsTree)
             tree.focus()
@@ -116,7 +116,7 @@ class TestNotesList:
 
     async def test_notes_list_loads(self, populated_db: Database, test_config: Config) -> None:
         """Test that notes list populates with notes from database."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
             # Should have notes loaded
@@ -124,7 +124,7 @@ class TestNotesList:
 
     async def test_notes_list_count_matches_database(self, populated_db: Database, test_config: Config) -> None:
         """Test that notes list has correct number of notes."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
             db_notes = populated_db.get_all_notes()
@@ -132,7 +132,7 @@ class TestNotesList:
 
     async def test_search_by_tag(self, populated_db: Database, test_config: Config) -> None:
         """Test that selecting a tag populates search and filters notes."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
 
@@ -152,7 +152,7 @@ class TestNoteDetail:
 
     async def test_note_detail_exists(self, populated_db: Database, test_config: Config) -> None:
         """Test that note detail pane exists with expected widgets."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             detail = app.query_one("#note-detail", NoteDetail)
 
@@ -167,7 +167,7 @@ class TestNoteDetail:
 
     async def test_select_note_shows_content(self, populated_db: Database, test_config: Config) -> None:
         """Test that selecting a note displays its content."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             # Focus notes listview (inside notes-list container) and select first note
             listview = app.query_one("#notes-listview", NotesListView)
@@ -188,7 +188,7 @@ class TestNoteDetail:
 
     async def test_edit_button_shows_textarea(self, populated_db: Database, test_config: Config) -> None:
         """Test that edit button reveals the text area."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             # Select a note first via the listview
             listview = app.query_one("#notes-listview", NotesListView)
@@ -222,14 +222,14 @@ class TestKeyboardNavigation:
 
     async def test_quit_with_q(self, populated_db: Database, test_config: Config) -> None:
         """Test that 'q' quits the application."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             await pilot.press("q")
             # App should exit (no assertion needed - test passes if no error)
 
     async def test_show_all_with_a(self, populated_db: Database, test_config: Config) -> None:
         """Test that 'a' shows all notes (clears search)."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
 
@@ -250,7 +250,7 @@ class TestKeyboardNavigation:
 
     async def test_refresh_with_r(self, populated_db: Database, test_config: Config) -> None:
         """Test that 'r' refreshes the notes list."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
             initial_count = len(notes_list.notes)
@@ -266,14 +266,14 @@ class TestSearch:
 
     async def test_search_input_exists(self, populated_db: Database, test_config: Config) -> None:
         """Test that search input field exists."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             search_input = app.query_one("#search-input", SearchInput)
             assert search_input is not None
 
     async def test_search_filters_notes(self, populated_db: Database, test_config: Config) -> None:
         """Test that typing in search field and pressing Enter filters notes."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
 
@@ -293,7 +293,7 @@ class TestSearch:
 
     async def test_clear_search_with_a(self, populated_db: Database, test_config: Config) -> None:
         """Test that pressing 'a' clears search and shows all notes."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
             initial_count = len(notes_list.notes)
@@ -312,7 +312,7 @@ class TestSearch:
 
     async def test_up_arrow_focuses_search(self, populated_db: Database, test_config: Config) -> None:
         """Test that Up Arrow from notes list focuses search input."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             listview = app.query_one("#notes-listview", NotesListView)
             search_input = app.query_one("#search-input", SearchInput)
@@ -330,7 +330,7 @@ class TestSearch:
 
     async def test_down_arrow_focuses_list(self, populated_db: Database, test_config: Config) -> None:
         """Test that Down Arrow from search input focuses notes list."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             listview = app.query_one("#notes-listview", NotesListView)
             search_input = app.query_one("#search-input", SearchInput)
@@ -354,7 +354,7 @@ class TestBorderColors:
 
     async def test_config_colors_loaded(self, populated_db: Database, test_config: Config) -> None:
         """Test that TUI loads border colors from config."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             # Check that border colors were loaded
             assert app._border_focused is not None
@@ -362,7 +362,7 @@ class TestBorderColors:
 
     async def test_default_colors(self, populated_db: Database, test_config: Config) -> None:
         """Test that default colors are green/blue."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             # Default colors from config
             assert app._border_focused == "green"
@@ -374,7 +374,7 @@ class TestHebrewContent:
 
     async def test_hebrew_note_loads(self, populated_db: Database, test_config: Config) -> None:
         """Test that Hebrew notes load without errors."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             notes_list = app.query_one("#notes-list", NotesList)
 
@@ -384,7 +384,7 @@ class TestHebrewContent:
 
     async def test_hebrew_tag_loads(self, populated_db: Database, test_config: Config) -> None:
         """Test that Hebrew text in notes displays correctly."""
-        app = VoiceRewriteTUI(populated_db, test_config)
+        app = VoiceTUI(populated_db, test_config)
         async with app.run_test() as pilot:
             # App should start without errors even with Hebrew content
             assert app.is_running

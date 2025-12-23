@@ -163,21 +163,21 @@ class TestGetTagDescendants:
 
     def test_returns_self_and_descendants(self, populated_db: Database) -> None:
         """Test that tag and all descendants are returned."""
-        # Work has children Projects, VoiceRewrite, Meetings
+        # Work has children Projects, Voice, Meetings
         work_hex = get_tag_uuid_hex("Work")
         descendants = populated_db.get_tag_descendants(work_hex)
         assert TAG_UUIDS["Work"] in descendants  # Work itself
         assert TAG_UUIDS["Projects"] in descendants  # Projects
-        assert TAG_UUIDS["VoiceRewrite"] in descendants  # VoiceRewrite
+        assert TAG_UUIDS["Voice"] in descendants  # Voice
         assert TAG_UUIDS["Meetings"] in descendants  # Meetings
         assert len(descendants) == 4
 
     def test_returns_only_self_for_leaf(self, populated_db: Database) -> None:
         """Test that leaf node returns only itself."""
-        # VoiceRewrite has no children
-        vr_hex = get_tag_uuid_hex("VoiceRewrite")
-        descendants = populated_db.get_tag_descendants(vr_hex)
-        assert descendants == [TAG_UUIDS["VoiceRewrite"]]
+        # Voice has no children
+        voice_hex = get_tag_uuid_hex("Voice")
+        descendants = populated_db.get_tag_descendants(voice_hex)
+        assert descendants == [TAG_UUIDS["Voice"]]
 
     def test_handles_deep_hierarchy(self, populated_db: Database) -> None:
         """Test deep hierarchy navigation."""

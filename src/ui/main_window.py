@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
 
     def setup_ui(self) -> None:
         """Set up the user interface with three-pane layout."""
-        self.setWindowTitle("Voice Rewrite")
+        self.setWindowTitle("Voice")
         self.showMaximized()
 
         # Create menu bar
