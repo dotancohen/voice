@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+from uuid6 import uuid7
 
 from flask import Blueprint, Flask, jsonify, request
 
@@ -303,7 +306,6 @@ def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[str]:
         ISO timestamp of last sync, or None if never synced.
     """
     try:
-        import uuid
         peer_id_bytes = uuid.UUID(hex=peer_device_id).bytes
         query = "SELECT last_sync_at FROM sync_peers WHERE peer_id = ?"
         with db.conn:
@@ -499,8 +501,6 @@ def apply_sync_changes(
     Returns:
         Tuple of (applied count, conflict count, error messages)
     """
-    import uuid
-
     applied = 0
     conflicts = 0
     errors: List[str] = []
@@ -522,7 +522,9 @@ def apply_sync_changes(
                         cursor, change, peer_device_name, last_sync_at
                     )
                 elif change.entity_type == "note_tag":
-                    result = apply_note_tag_change(cursor, change)
+                    result = apply_note_tag_change(
+                        cursor, change, peer_device_name, last_sync_at
+                    )
                 else:
                     errors.append(f"Unknown entity type: {change.entity_type}")
                     continue
@@ -561,9 +563,6 @@ def apply_note_change(
 
     Returns: "applied", "conflict", or "skipped"
     """
-    import uuid
-    from uuid6 import uuid7
-
     note_id = uuid.UUID(hex=change.entity_id).bytes
     data = change.data
 
@@ -841,9 +840,6 @@ def apply_tag_change(
 
     Returns: "applied", "conflict", or "skipped"
     """
-    import uuid
-    from uuid6 import uuid7
-
     tag_id = uuid.UUID(hex=change.entity_id).bytes
     data = change.data
 
@@ -957,15 +953,21 @@ def apply_tag_change(
     return "skipped"
 
 
-def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
+def apply_note_tag_change(
+    cursor: Any,
+    change: SyncChange,
+    peer_device_name: Optional[str] = None,
+    last_sync_at: Optional[str] = None,
+) -> str:
     """Apply a note-tag association change.
 
-    Adds and deletes propagate without conflict detection.
+    Uses last_sync_at to determine if changes are new:
+    - Changes from before last_sync are skipped (already processed)
+    - Changes after last_sync are applied if local hasn't also changed
+    - If both changed, favor preservation (add wins) and record conflict
 
-    Returns: "applied" or "skipped"
+    Returns: "applied", "skipped", or "conflict"
     """
-    import uuid
-
     # Parse entity_id (format: "note_id:tag_id")
     parts = change.entity_id.split(":")
     if len(parts) != 2:
@@ -975,12 +977,54 @@ def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
     tag_id = uuid.UUID(hex=parts[1]).bytes
     data = change.data
 
-    # Check if association exists
+    # Determine the timestamp of this incoming change
+    if change.operation == "delete":
+        incoming_time = data.get("deleted_at") or data.get("modified_at")
+    else:
+        incoming_time = data.get("modified_at") or data.get("created_at")
+
+    # If this change happened before or at last_sync, skip it (already processed)
+    if last_sync_at and incoming_time and incoming_time <= last_sync_at:
+        return "skipped"
+
+    # Check if association exists locally
     cursor.execute(
         "SELECT created_at, modified_at, deleted_at FROM note_tags WHERE note_id = ? AND tag_id = ?",
         (note_id, tag_id),
     )
     existing = cursor.fetchone()
+
+    # Determine if local changed since last_sync
+    local_changed = False
+    if existing:
+        local_time = existing.get("modified_at") or existing.get("deleted_at") or existing.get("created_at")
+        local_changed = last_sync_at is None or (local_time and local_time > last_sync_at)
+
+    # Helper to create conflict record
+    def create_conflict_record():
+        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
+        conflict_id = uuid7().bytes
+        cursor.execute(
+            """INSERT INTO conflicts_note_tag
+               (id, note_id, tag_id,
+                local_created_at, local_modified_at, local_deleted_at,
+                remote_created_at, remote_modified_at, remote_deleted_at, remote_device_id, remote_device_name,
+                created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            (
+                conflict_id,
+                note_id,
+                tag_id,
+                existing.get("created_at") if existing else None,
+                existing.get("modified_at") if existing else None,
+                existing.get("deleted_at") if existing else None,
+                data.get("created_at"),
+                data.get("modified_at"),
+                data.get("deleted_at"),
+                remote_device_id_bytes,
+                peer_device_name,
+            ),
+        )
 
     if change.operation == "create":
         if existing:
@@ -988,7 +1032,17 @@ def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
                 # Already active - nothing to do
                 return "skipped"
             else:
-                # Currently deleted, remote wants active - reactivate (favor keeping data)
+                # Local is deleted, remote wants active
+                if local_changed:
+                    # Both changed - record conflict, favor preservation (add wins)
+                    create_conflict_record()
+                    cursor.execute(
+                        """UPDATE note_tags SET deleted_at = NULL, modified_at = datetime('now')
+                           WHERE note_id = ? AND tag_id = ?""",
+                        (note_id, tag_id),
+                    )
+                    return "conflict"
+                # Only remote changed - reactivate
                 cursor.execute(
                     """UPDATE note_tags SET deleted_at = NULL, modified_at = datetime('now')
                        WHERE note_id = ? AND tag_id = ?""",
@@ -1028,8 +1082,13 @@ def apply_note_tag_change(cursor: Any, change: SyncChange) -> str:
         if existing.get("deleted_at"):
             return "skipped"  # Already deleted
 
-        # Local has active association, remote wants to delete
-        # Apply the delete (soft delete)
+        # Local is active, remote wants to delete
+        if local_changed:
+            # Both changed - record conflict, favor preservation (keep local active)
+            create_conflict_record()
+            return "conflict"
+
+        # Only remote changed - apply the delete
         cursor.execute(
             """UPDATE note_tags SET deleted_at = ?, modified_at = ?
                WHERE note_id = ? AND tag_id = ?""",
@@ -1115,8 +1174,6 @@ def update_peer_last_sync(
         peer_device_id: Peer's device UUID hex string
         peer_device_name: Peer's human-readable name
     """
-    import uuid
-
     peer_id_bytes = uuid.UUID(hex=peer_device_id).bytes
 
     with db.conn:

@@ -237,6 +237,27 @@ class Database:
                 )
             """)
 
+            # Create conflicts_note_tag table for note-tag association conflicts
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS conflicts_note_tag (
+                    id BLOB PRIMARY KEY,
+                    note_id BLOB NOT NULL,
+                    tag_id BLOB NOT NULL,
+                    local_created_at DATETIME,
+                    local_modified_at DATETIME,
+                    local_deleted_at DATETIME,
+                    remote_created_at DATETIME,
+                    remote_modified_at DATETIME,
+                    remote_deleted_at DATETIME,
+                    remote_device_id BLOB,
+                    remote_device_name TEXT,
+                    created_at DATETIME NOT NULL,
+                    resolved_at DATETIME,
+                    FOREIGN KEY (note_id) REFERENCES notes(id),
+                    FOREIGN KEY (tag_id) REFERENCES tags(id)
+                )
+            """)
+
             # Create sync_failures table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS sync_failures (

@@ -88,11 +88,11 @@ class SyncClient:
     def _adjust_timestamp_for_skew(
         self, timestamp: Optional[str], clock_skew_seconds: float
     ) -> Optional[str]:
-        """Adjust a timestamp to account for clock skew between peers.
+        """Adjust a timestamp to account for clock skew and race conditions.
 
-        Goes back in time by 2x the absolute skew value to ensure we don't
-        miss changes that might appear earlier due to clock differences.
-        Only adjusts if skew exceeds 1 second (to avoid sub-second noise).
+        Always goes back at least 2 seconds to handle race conditions during
+        sync. Additionally goes back by 2x the absolute skew if clock skew
+        exceeds 1 second.
 
         Args:
             timestamp: ISO format timestamp string, or None
@@ -104,17 +104,19 @@ class SyncClient:
         if timestamp is None:
             return None
 
-        # Only adjust if skew is significant (> 1 second)
-        # This avoids unnecessary adjustments for same-machine or low-latency scenarios
-        if abs(clock_skew_seconds) <= 1.0:
-            return timestamp
-
         try:
             ts = datetime.fromisoformat(timestamp)
-            # Go back by 2x the absolute skew to be safe
-            adjustment = timedelta(seconds=2 * abs(clock_skew_seconds))
+            # Always go back at least 2 seconds to handle race conditions
+            base_adjustment = 2.0
+            # Add 2x skew if significant (> 1 second)
+            skew_adjustment = (
+                2 * abs(clock_skew_seconds) if abs(clock_skew_seconds) > 1.0 else 0
+            )
+            adjustment = timedelta(seconds=base_adjustment + skew_adjustment)
             adjusted = ts - adjustment
-            return adjusted.isoformat()
+            # Use space separator to match SQLite datetime format
+            # (isoformat uses 'T' which breaks string comparison)
+            return adjusted.strftime("%Y-%m-%d %H:%M:%S")
         except (ValueError, TypeError):
             return timestamp  # If parsing fails, return original
 
