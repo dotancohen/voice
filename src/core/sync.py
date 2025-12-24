@@ -306,14 +306,7 @@ def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[str]:
         ISO timestamp of last sync, or None if never synced.
     """
     try:
-        peer_id_bytes = uuid.UUID(hex=peer_device_id).bytes
-        query = "SELECT last_sync_at FROM sync_peers WHERE peer_id = ?"
-        with db.conn:
-            cursor = db.conn.cursor()
-            cursor.execute(query, (peer_id_bytes,))
-            row = cursor.fetchone()
-            if row and row.get("last_sync_at"):
-                return row["last_sync_at"]
+        return db.get_peer_last_sync(peer_device_id)
     except Exception as e:
         logger.warning(f"Error getting peer last sync: {e}")
     return None
@@ -332,146 +325,20 @@ def get_changes_since(
     Returns:
         Tuple of (list of changes, latest timestamp)
     """
+    result = db.get_changes_since(since, limit)
+    raw_changes = result["changes"]
+    latest_timestamp = result.get("latest_timestamp")
+
     changes: List[SyncChange] = []
-    latest_timestamp: Optional[str] = None
-
-    with db.conn:
-        cursor = db.conn.cursor()
-
-        # Get note changes
-        if since:
-            note_query = """
-                SELECT id, created_at, content, modified_at, deleted_at
-                FROM notes
-                WHERE modified_at >= ? OR (modified_at IS NULL AND created_at >= ?)
-                ORDER BY COALESCE(modified_at, created_at)
-                LIMIT ?
-            """
-            cursor.execute(note_query, (since, since, limit))
-        else:
-            note_query = """
-                SELECT id, created_at, content, modified_at, deleted_at
-                FROM notes
-                ORDER BY COALESCE(modified_at, created_at)
-                LIMIT ?
-            """
-            cursor.execute(note_query, (limit,))
-
-        for row in cursor.fetchall():
-            timestamp = row.get("modified_at") or row["created_at"]
-            if row.get("deleted_at"):
-                operation = "delete"
-            elif row.get("modified_at"):
-                operation = "update"
-            else:
-                operation = "create"
-
-            changes.append(SyncChange(
-                entity_type="note",
-                entity_id=uuid_to_hex(row["id"]),
-                operation=operation,
-                data={
-                    "id": uuid_to_hex(row["id"]),
-                    "created_at": row["created_at"],
-                    "content": row["content"],
-                    "modified_at": row.get("modified_at"),
-                    "deleted_at": row.get("deleted_at"),
-                },
-                timestamp=timestamp,
-                device_id="",  # device_id no longer stored in main tables
-            ))
-            latest_timestamp = timestamp
-
-        # Get tag changes
-        if since:
-            tag_query = """
-                SELECT id, name, parent_id, created_at, modified_at
-                FROM tags
-                WHERE modified_at >= ? OR (modified_at IS NULL AND created_at >= ?)
-                ORDER BY COALESCE(modified_at, created_at)
-                LIMIT ?
-            """
-            cursor.execute(tag_query, (since, since, limit - len(changes)))
-        else:
-            tag_query = """
-                SELECT id, name, parent_id, created_at, modified_at
-                FROM tags
-                ORDER BY COALESCE(modified_at, created_at)
-                LIMIT ?
-            """
-            cursor.execute(tag_query, (limit - len(changes),))
-
-        for row in cursor.fetchall():
-            timestamp = row.get("modified_at") or row["created_at"]
-            operation = "update" if row.get("modified_at") else "create"
-
-            changes.append(SyncChange(
-                entity_type="tag",
-                entity_id=uuid_to_hex(row["id"]),
-                operation=operation,
-                data={
-                    "id": uuid_to_hex(row["id"]),
-                    "name": row["name"],
-                    "parent_id": uuid_to_hex(row["parent_id"]) if row.get("parent_id") else None,
-                    "created_at": row["created_at"],
-                    "modified_at": row.get("modified_at"),
-                },
-                timestamp=timestamp,
-                device_id="",  # device_id no longer stored in main tables
-            ))
-            if timestamp and (not latest_timestamp or timestamp > latest_timestamp):
-                latest_timestamp = timestamp
-
-        # Get note_tag changes (including reactivations via modified_at)
-        if since:
-            nt_query = """
-                SELECT note_id, tag_id, created_at, modified_at, deleted_at
-                FROM note_tags
-                WHERE created_at >= ? OR deleted_at >= ? OR modified_at >= ?
-                ORDER BY COALESCE(modified_at, deleted_at, created_at)
-                LIMIT ?
-            """
-            cursor.execute(nt_query, (since, since, since, limit - len(changes)))
-        else:
-            nt_query = """
-                SELECT note_id, tag_id, created_at, modified_at, deleted_at
-                FROM note_tags
-                ORDER BY COALESCE(modified_at, deleted_at, created_at)
-                LIMIT ?
-            """
-            cursor.execute(nt_query, (limit - len(changes),))
-
-        for row in cursor.fetchall():
-            # Determine timestamp and operation based on state
-            if row.get("deleted_at"):
-                # Deleted - use deleted_at as timestamp
-                timestamp = row["deleted_at"]
-                operation = "delete"
-            elif row.get("modified_at"):
-                # Reactivated (was deleted, now active) - use modified_at
-                timestamp = row["modified_at"]
-                operation = "create"
-            else:
-                # Newly created
-                timestamp = row["created_at"]
-                operation = "create"
-
-            changes.append(SyncChange(
-                entity_type="note_tag",
-                entity_id=f"{uuid_to_hex(row['note_id'])}:{uuid_to_hex(row['tag_id'])}",
-                operation=operation,
-                data={
-                    "note_id": uuid_to_hex(row["note_id"]),
-                    "tag_id": uuid_to_hex(row["tag_id"]),
-                    "created_at": row["created_at"],
-                    "modified_at": row.get("modified_at"),
-                    "deleted_at": row.get("deleted_at"),
-                },
-                timestamp=timestamp,
-                device_id="",  # device_id no longer stored in main tables
-            ))
-            if timestamp and (not latest_timestamp or timestamp > latest_timestamp):
-                latest_timestamp = timestamp
+    for c in raw_changes:
+        changes.append(SyncChange(
+            entity_type=c["entity_type"],
+            entity_id=c["entity_id"],
+            operation=c["operation"],
+            data=c["data"],
+            timestamp=c["timestamp"],
+            device_id="",  # device_id no longer stored in main tables
+        ))
 
     # Sort all changes by timestamp
     changes.sort(key=lambda c: c.timestamp)
@@ -508,38 +375,33 @@ def apply_sync_changes(
     # Get last sync timestamp with this peer (for detecting unchanged local)
     last_sync_at = get_peer_last_sync(db, peer_device_id)
 
-    with db.conn:
-        cursor = db.conn.cursor()
+    for change in changes:
+        try:
+            if change.entity_type == "note":
+                result = apply_note_change(
+                    db, change, peer_device_name, last_sync_at
+                )
+            elif change.entity_type == "tag":
+                result = apply_tag_change(
+                    db, change, peer_device_name, last_sync_at
+                )
+            elif change.entity_type == "note_tag":
+                result = apply_note_tag_change(
+                    db, change, peer_device_name, last_sync_at
+                )
+            else:
+                errors.append(f"Unknown entity type: {change.entity_type}")
+                continue
 
-        for change in changes:
-            try:
-                if change.entity_type == "note":
-                    result = apply_note_change(
-                        cursor, change, peer_device_name, last_sync_at
-                    )
-                elif change.entity_type == "tag":
-                    result = apply_tag_change(
-                        cursor, change, peer_device_name, last_sync_at
-                    )
-                elif change.entity_type == "note_tag":
-                    result = apply_note_tag_change(
-                        cursor, change, peer_device_name, last_sync_at
-                    )
-                else:
-                    errors.append(f"Unknown entity type: {change.entity_type}")
-                    continue
+            if result == "applied":
+                applied += 1
+            elif result == "conflict":
+                conflicts += 1
+            # "skipped" means no action needed (already up to date)
 
-                if result == "applied":
-                    applied += 1
-                elif result == "conflict":
-                    conflicts += 1
-                # "skipped" means no action needed (already up to date)
-
-            except Exception as e:
-                errors.append(f"Error applying {change.entity_type} {change.entity_id}: {e}")
-                logger.error(f"Error applying change: {e}")
-
-        db.conn.commit()
+        except Exception as e:
+            errors.append(f"Error applying {change.entity_type} {change.entity_id}: {e}")
+            logger.error(f"Error applying change: {e}")
 
     # Update peer's last sync timestamp
     update_peer_last_sync(db, peer_device_id, peer_device_name)
@@ -548,7 +410,7 @@ def apply_sync_changes(
 
 
 def apply_note_change(
-    cursor: Any,
+    db: Database,
     change: SyncChange,
     peer_device_name: Optional[str] = None,
     last_sync_at: Optional[str] = None,
@@ -556,19 +418,18 @@ def apply_note_change(
     """Apply a note change.
 
     Args:
-        cursor: Database cursor
+        db: Database instance
         change: The sync change to apply
         peer_device_name: Human-readable name of the peer device
         last_sync_at: When we last synced with this peer (for detecting unchanged local)
 
     Returns: "applied", "conflict", or "skipped"
     """
-    note_id = uuid.UUID(hex=change.entity_id).bytes
+    note_id = change.entity_id
     data = change.data
 
-    # Check if note exists locally
-    cursor.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
-    existing = cursor.fetchone()
+    # Check if note exists locally (including deleted)
+    existing = db.get_note_raw(note_id)
 
     if change.operation == "create":
         if existing:
@@ -588,65 +449,37 @@ def apply_note_change(
             local_deleted = existing["deleted_at"]
             remote_modified = data.get("modified_at") or data["created_at"]
 
-            cursor.execute(
-                """UPDATE notes SET content = ?, modified_at = ?, deleted_at = NULL
-                   WHERE id = ?""",
-                (
-                    remote_content,
-                    data.get("modified_at"),
-                    note_id,
-                ),
+            db.apply_sync_note(
+                note_id, data["created_at"], remote_content,
+                data.get("modified_at"), None  # Clear deleted_at
             )
 
             # Create delete conflict record
-            conflict_id = uuid7().bytes
-            remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-            cursor.execute(
-                """INSERT INTO conflicts_note_delete
-                   (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
-                    deleted_content, deleted_at, deleting_device_id, deleting_device_name, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    remote_content,  # Remote edited content survives
-                    remote_modified,
-                    remote_device_id_bytes,  # Remote device has surviving content
-                    local_deleted_content,  # Local content before deletion
-                    local_deleted,
-                    None,  # Local device deleted (no device_id tracked)
-                    None,  # Local device name unknown
-                ),
+            db.create_note_delete_conflict(
+                note_id,
+                remote_content,  # surviving_content
+                remote_modified,  # surviving_modified_at
+                change.device_id if change.device_id else None,  # surviving_device_id
+                local_deleted_content,  # deleted_content
+                local_deleted,  # deleted_at
+                None,  # deleting_device_id (local)
+                None,  # deleting_device_name
             )
             return "conflict"
         else:
             # Create new note
-            cursor.execute(
-                """INSERT INTO notes (id, created_at, content, modified_at, deleted_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    note_id,
-                    data["created_at"],
-                    data["content"],
-                    data.get("modified_at"),
-                    data.get("deleted_at"),
-                ),
+            db.apply_sync_note(
+                note_id, data["created_at"], data["content"],
+                data.get("modified_at"), data.get("deleted_at")
             )
             return "applied"
 
     elif change.operation == "update":
         if not existing:
             # Note doesn't exist - create it
-            cursor.execute(
-                """INSERT INTO notes (id, created_at, content, modified_at, deleted_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    note_id,
-                    data["created_at"],
-                    data["content"],
-                    data.get("modified_at"),
-                    data.get("deleted_at"),
-                ),
+            db.apply_sync_note(
+                note_id, data["created_at"], data["content"],
+                data.get("modified_at"), data.get("deleted_at")
             )
             return "applied"
 
@@ -664,31 +497,21 @@ def apply_note_change(
             remote_modified = data.get("modified_at") or data["created_at"]
 
             # Resurrect the note with remote content
-            cursor.execute(
-                """UPDATE notes SET content = ?, modified_at = ?, deleted_at = NULL
-                   WHERE id = ?""",
-                (remote_content, remote_modified, note_id),
+            db.apply_sync_note(
+                note_id, existing["created_at"], remote_content,
+                remote_modified, None  # Clear deleted_at
             )
 
             # Create delete conflict record
-            conflict_id = uuid7().bytes
-            remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-            cursor.execute(
-                """INSERT INTO conflicts_note_delete
-                   (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
-                    deleted_content, deleted_at, deleting_device_id, deleting_device_name, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    remote_content,  # Remote edited content survives
-                    remote_modified,
-                    remote_device_id_bytes,
-                    local_deleted_content,  # Local content before deletion
-                    local_deleted,
-                    None,  # local device deleted it
-                    None,
-                ),
+            db.create_note_delete_conflict(
+                note_id,
+                remote_content,  # surviving_content
+                remote_modified,  # surviving_modified_at
+                change.device_id if change.device_id else None,  # surviving_device_id
+                local_deleted_content,  # deleted_content
+                local_deleted,  # deleted_at
+                None,  # deleting_device_id (local)
+                None,  # deleting_device_name
             )
             return "conflict"
 
@@ -715,10 +538,9 @@ def apply_note_change(
 
         if not local_changed and remote_changed:
             # Only remote changed → update local without conflict
-            cursor.execute(
-                """UPDATE notes SET content = ?, modified_at = ?
-                   WHERE id = ?""",
-                (remote_content, remote_modified, note_id),
+            db.apply_sync_note(
+                note_id, existing["created_at"], remote_content,
+                remote_modified, None
             )
             return "applied"
 
@@ -735,47 +557,29 @@ def apply_note_change(
         merge_result = merge_content(local_content, remote_content)
         merged_content = merge_result.content
 
-        cursor.execute(
-            """UPDATE notes SET content = ?, modified_at = datetime('now')
-               WHERE id = ?""",
-            (merged_content, note_id),
+        db.apply_sync_note(
+            note_id, existing["created_at"], merged_content,
+            datetime.now().isoformat(), None
         )
 
         # Create conflict record for tracking
-        conflict_id = uuid7().bytes
-        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-        cursor.execute(
-            """INSERT INTO conflicts_note_content
-               (id, note_id, local_content, local_modified_at, local_device_id,
-                remote_content, remote_modified_at, remote_device_id, remote_device_name, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-            (
-                conflict_id,
-                note_id,
-                local_content,
-                local_modified,
-                None,  # local_device_id no longer tracked
-                remote_content,
-                remote_modified,
-                remote_device_id_bytes,
-                peer_device_name,
-            ),
+        db.create_note_content_conflict(
+            note_id,
+            local_content,
+            local_modified,
+            remote_content,
+            remote_modified,
+            change.device_id if change.device_id else None,
+            peer_device_name,
         )
         return "conflict"
 
     elif change.operation == "delete":
         if not existing:
             # Note doesn't exist locally - create it as deleted
-            cursor.execute(
-                """INSERT INTO notes (id, created_at, content, modified_at, deleted_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    note_id,
-                    data["created_at"],
-                    data["content"],
-                    data.get("modified_at"),
-                    data.get("deleted_at"),
-                ),
+            db.apply_sync_note(
+                note_id, data["created_at"], data["content"],
+                data.get("modified_at"), data.get("deleted_at")
             )
             return "applied"
 
@@ -788,10 +592,9 @@ def apply_note_change(
 
         if local_content == remote_content:
             # Local didn't edit - propagate the delete
-            cursor.execute(
-                """UPDATE notes SET deleted_at = ?, modified_at = ?
-                   WHERE id = ?""",
-                (data.get("deleted_at"), data.get("deleted_at"), note_id),
+            db.apply_sync_note(
+                note_id, existing["created_at"], existing["content"],
+                data.get("deleted_at"), data.get("deleted_at")
             )
             return "applied"
 
@@ -800,24 +603,15 @@ def apply_note_change(
         local_modified = existing.get("modified_at") or existing["created_at"]
         remote_deleted = data.get("deleted_at")
 
-        conflict_id = uuid7().bytes
-        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-        cursor.execute(
-            """INSERT INTO conflicts_note_delete
-               (id, note_id, surviving_content, surviving_modified_at, surviving_device_id,
-                deleted_content, deleted_at, deleting_device_id, deleting_device_name, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-            (
-                conflict_id,
-                note_id,
-                local_content,  # Local edited content survives
-                local_modified,
-                None,  # surviving_device_id no longer tracked
-                remote_content,  # Remote content before deletion
-                remote_deleted,
-                remote_device_id_bytes,
-                peer_device_name,
-            ),
+        db.create_note_delete_conflict(
+            note_id,
+            local_content,  # surviving_content
+            local_modified,  # surviving_modified_at
+            None,  # surviving_device_id (local)
+            remote_content,  # deleted_content
+            remote_deleted,  # deleted_at
+            change.device_id if change.device_id else None,  # deleting_device_id
+            peer_device_name,  # deleting_device_name
         )
         return "conflict"
 
@@ -825,7 +619,7 @@ def apply_note_change(
 
 
 def apply_tag_change(
-    cursor: Any,
+    db: Database,
     change: SyncChange,
     peer_device_name: Optional[str] = None,
     last_sync_at: Optional[str] = None,
@@ -833,54 +627,35 @@ def apply_tag_change(
     """Apply a tag change.
 
     Args:
-        cursor: Database cursor
+        db: Database instance
         change: The sync change to apply
         peer_device_name: Human-readable name of the peer device
         last_sync_at: When we last synced with this peer (for detecting unchanged local)
 
     Returns: "applied", "conflict", or "skipped"
     """
-    tag_id = uuid.UUID(hex=change.entity_id).bytes
+    tag_id = change.entity_id
     data = change.data
 
     # Check if tag exists locally
-    cursor.execute("SELECT * FROM tags WHERE id = ?", (tag_id,))
-    existing = cursor.fetchone()
-
-    parent_id_bytes = None
-    if data.get("parent_id"):
-        parent_id_bytes = uuid.UUID(hex=data["parent_id"]).bytes
+    existing = db.get_tag_raw(tag_id)
 
     if change.operation == "create":
         if existing:
             return "skipped"  # Already have this tag
         else:
-            cursor.execute(
-                """INSERT INTO tags (id, name, parent_id, created_at, modified_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    tag_id,
-                    data["name"],
-                    parent_id_bytes,
-                    data["created_at"],
-                    data.get("modified_at"),
-                ),
+            db.apply_sync_tag(
+                tag_id, data["name"], data.get("parent_id"),
+                data["created_at"], data.get("modified_at")
             )
             return "applied"
 
     elif change.operation == "update":
         if not existing:
             # Tag doesn't exist - create it
-            cursor.execute(
-                """INSERT INTO tags (id, name, parent_id, created_at, modified_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    tag_id,
-                    data["name"],
-                    parent_id_bytes,
-                    data["created_at"],
-                    data.get("modified_at"),
-                ),
+            db.apply_sync_tag(
+                tag_id, data["name"], data.get("parent_id"),
+                data["created_at"], data.get("modified_at")
             )
             return "applied"
 
@@ -893,8 +668,6 @@ def apply_tag_change(
         remote_modified = data.get("modified_at") or data["created_at"]
 
         # Check if each side was modified since last sync
-        # If last_sync_at is None (never synced), treat as "changed" to be safe
-        # Use > (not >=) because timestamps are second-precision
         local_changed = (
             last_sync_at is None
             or (local_modified is not None and local_modified > last_sync_at)
@@ -906,10 +679,9 @@ def apply_tag_change(
 
         if not local_changed and remote_changed:
             # Only remote changed → apply remote's name
-            cursor.execute(
-                """UPDATE tags SET name = ?, modified_at = ?
-                   WHERE id = ?""",
-                (data["name"], remote_modified, tag_id),
+            db.apply_sync_tag(
+                tag_id, data["name"], data.get("parent_id"),
+                existing["created_at"], remote_modified
             )
             return "applied"
 
@@ -923,30 +695,19 @@ def apply_tag_change(
 
         # Both changed → combine names and create conflict
         combined_name = f"{existing['name']} | {data['name']}"
-        cursor.execute(
-            """UPDATE tags SET name = ?, modified_at = datetime('now')
-               WHERE id = ?""",
-            (combined_name, tag_id),
+        db.apply_sync_tag(
+            tag_id, combined_name, existing.get("parent_id"),
+            existing["created_at"], datetime.now().isoformat()
         )
 
-        conflict_id = uuid7().bytes
-        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-        cursor.execute(
-            """INSERT INTO conflicts_tag_rename
-               (id, tag_id, local_name, local_modified_at, local_device_id,
-                remote_name, remote_modified_at, remote_device_id, remote_device_name, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-            (
-                conflict_id,
-                tag_id,
-                existing["name"],
-                local_modified,
-                None,  # local_device_id no longer tracked
-                data["name"],
-                remote_modified,
-                remote_device_id_bytes,
-                peer_device_name,
-            ),
+        db.create_tag_rename_conflict(
+            tag_id,
+            existing["name"],
+            local_modified,
+            data["name"],
+            remote_modified,
+            change.device_id if change.device_id else None,
+            peer_device_name,
         )
         return "conflict"
 
@@ -954,7 +715,7 @@ def apply_tag_change(
 
 
 def apply_note_tag_change(
-    cursor: Any,
+    db: Database,
     change: SyncChange,
     peer_device_name: Optional[str] = None,
     last_sync_at: Optional[str] = None,
@@ -973,8 +734,8 @@ def apply_note_tag_change(
     if len(parts) != 2:
         return "skipped"
 
-    note_id = uuid.UUID(hex=parts[0]).bytes
-    tag_id = uuid.UUID(hex=parts[1]).bytes
+    note_id = parts[0]
+    tag_id = parts[1]
     data = change.data
 
     # Determine the timestamp of this incoming change
@@ -988,11 +749,7 @@ def apply_note_tag_change(
         return "skipped"
 
     # Check if association exists locally
-    cursor.execute(
-        "SELECT created_at, modified_at, deleted_at FROM note_tags WHERE note_id = ? AND tag_id = ?",
-        (note_id, tag_id),
-    )
-    existing = cursor.fetchone()
+    existing = db.get_note_tag_raw(note_id, tag_id)
 
     # Determine if local changed since last_sync
     local_changed = False
@@ -1002,28 +759,17 @@ def apply_note_tag_change(
 
     # Helper to create conflict record
     def create_conflict_record():
-        remote_device_id_bytes = uuid.UUID(hex=change.device_id).bytes if change.device_id else None
-        conflict_id = uuid7().bytes
-        cursor.execute(
-            """INSERT INTO conflicts_note_tag
-               (id, note_id, tag_id,
-                local_created_at, local_modified_at, local_deleted_at,
-                remote_created_at, remote_modified_at, remote_deleted_at, remote_device_id, remote_device_name,
-                created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
-            (
-                conflict_id,
-                note_id,
-                tag_id,
-                existing.get("created_at") if existing else None,
-                existing.get("modified_at") if existing else None,
-                existing.get("deleted_at") if existing else None,
-                data.get("created_at"),
-                data.get("modified_at"),
-                data.get("deleted_at"),
-                remote_device_id_bytes,
-                peer_device_name,
-            ),
+        db.create_note_tag_conflict(
+            note_id,
+            tag_id,
+            existing.get("created_at") if existing else None,
+            existing.get("modified_at") if existing else None,
+            existing.get("deleted_at") if existing else None,
+            data.get("created_at"),
+            data.get("modified_at"),
+            data.get("deleted_at"),
+            change.device_id if change.device_id else None,
+            peer_device_name,
         )
 
     if change.operation == "create":
@@ -1036,46 +782,31 @@ def apply_note_tag_change(
                 if local_changed:
                     # Both changed - record conflict, favor preservation (add wins)
                     create_conflict_record()
-                    cursor.execute(
-                        """UPDATE note_tags SET deleted_at = NULL, modified_at = datetime('now')
-                           WHERE note_id = ? AND tag_id = ?""",
-                        (note_id, tag_id),
+                    db.apply_sync_note_tag(
+                        note_id, tag_id, existing["created_at"],
+                        datetime.now().isoformat(), None  # Clear deleted_at
                     )
                     return "conflict"
                 # Only remote changed - reactivate
-                cursor.execute(
-                    """UPDATE note_tags SET deleted_at = NULL, modified_at = datetime('now')
-                       WHERE note_id = ? AND tag_id = ?""",
-                    (note_id, tag_id),
+                db.apply_sync_note_tag(
+                    note_id, tag_id, existing["created_at"],
+                    datetime.now().isoformat(), None  # Clear deleted_at
                 )
                 return "applied"
         else:
             # New association - insert as active
-            cursor.execute(
-                """INSERT INTO note_tags (note_id, tag_id, created_at, modified_at, deleted_at)
-                   VALUES (?, ?, ?, ?, NULL)""",
-                (
-                    note_id,
-                    tag_id,
-                    data["created_at"],
-                    data.get("modified_at"),
-                ),
+            db.apply_sync_note_tag(
+                note_id, tag_id, data["created_at"],
+                data.get("modified_at"), None
             )
             return "applied"
 
     elif change.operation == "delete":
         if not existing:
             # Doesn't exist - create as deleted (for sync consistency)
-            cursor.execute(
-                """INSERT INTO note_tags (note_id, tag_id, created_at, modified_at, deleted_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    note_id,
-                    tag_id,
-                    data["created_at"],
-                    data.get("modified_at"),
-                    data.get("deleted_at"),
-                ),
+            db.apply_sync_note_tag(
+                note_id, tag_id, data["created_at"],
+                data.get("modified_at"), data.get("deleted_at")
             )
             return "applied"
 
@@ -1089,15 +820,60 @@ def apply_note_tag_change(
             return "conflict"
 
         # Only remote changed - apply the delete
-        cursor.execute(
-            """UPDATE note_tags SET deleted_at = ?, modified_at = ?
-               WHERE note_id = ? AND tag_id = ?""",
-            (
-                data.get("deleted_at"),
-                data.get("modified_at") or data.get("deleted_at"),
-                note_id,
-                tag_id,
-            ),
+        db.apply_sync_note_tag(
+            note_id, tag_id, existing["created_at"],
+            data.get("modified_at") or data.get("deleted_at"), data.get("deleted_at")
+        )
+        return "applied"
+
+    elif change.operation == "update":
+        # Update operation - typically reactivation (deleted_at cleared)
+        if not existing:
+            # Doesn't exist - create with the remote state
+            db.apply_sync_note_tag(
+                note_id, tag_id, data["created_at"],
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "applied"
+
+        # Check if remote is reactivating (deleted_at is None)
+        remote_deleted = data.get("deleted_at")
+        local_deleted = existing.get("deleted_at")
+
+        if remote_deleted is None and local_deleted is not None:
+            # Remote reactivated, local still deleted
+            if local_changed:
+                # Both changed - record conflict, favor preservation (reactivate)
+                create_conflict_record()
+                db.apply_sync_note_tag(
+                    note_id, tag_id, existing["created_at"],
+                    data.get("modified_at"), None  # Clear deleted_at
+                )
+                return "conflict"
+            # Only remote changed - reactivate
+            db.apply_sync_note_tag(
+                note_id, tag_id, existing["created_at"],
+                data.get("modified_at"), None  # Clear deleted_at
+            )
+            return "applied"
+
+        if remote_deleted is not None and local_deleted is None:
+            # Remote wants to delete, local is active
+            if local_changed:
+                # Both changed - record conflict, favor preservation (keep active)
+                create_conflict_record()
+                return "conflict"
+            # Only remote changed - apply the delete
+            db.apply_sync_note_tag(
+                note_id, tag_id, existing["created_at"],
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "applied"
+
+        # Both have same deleted state - just update timestamps if needed
+        db.apply_sync_note_tag(
+            note_id, tag_id, existing["created_at"],
+            data.get("modified_at"), data.get("deleted_at")
         )
         return "applied"
 
@@ -1110,58 +886,7 @@ def get_full_dataset(db: Database) -> Dict[str, List[Dict[str, Any]]]:
     Returns:
         Dictionary with notes, tags, and note_tags lists.
     """
-    result: Dict[str, List[Dict[str, Any]]] = {
-        "notes": [],
-        "tags": [],
-        "note_tags": [],
-    }
-
-    with db.conn:
-        cursor = db.conn.cursor()
-
-        # Get all notes (including deleted for sync purposes)
-        cursor.execute(
-            """SELECT id, created_at, content, modified_at, deleted_at
-               FROM notes ORDER BY created_at"""
-        )
-        for row in cursor.fetchall():
-            result["notes"].append({
-                "id": uuid_to_hex(row["id"]),
-                "created_at": row["created_at"],
-                "content": row["content"],
-                "modified_at": row.get("modified_at"),
-                "deleted_at": row.get("deleted_at"),
-            })
-
-        # Get all tags
-        cursor.execute(
-            """SELECT id, name, parent_id, created_at, modified_at
-               FROM tags ORDER BY created_at"""
-        )
-        for row in cursor.fetchall():
-            result["tags"].append({
-                "id": uuid_to_hex(row["id"]),
-                "name": row["name"],
-                "parent_id": uuid_to_hex(row["parent_id"]) if row.get("parent_id") else None,
-                "created_at": row["created_at"],
-                "modified_at": row.get("modified_at"),
-            })
-
-        # Get all note_tags (including deleted for sync purposes)
-        cursor.execute(
-            """SELECT note_id, tag_id, created_at, modified_at, deleted_at
-               FROM note_tags ORDER BY created_at"""
-        )
-        for row in cursor.fetchall():
-            result["note_tags"].append({
-                "note_id": uuid_to_hex(row["note_id"]),
-                "tag_id": uuid_to_hex(row["tag_id"]),
-                "created_at": row["created_at"],
-                "modified_at": row.get("modified_at"),
-                "deleted_at": row.get("deleted_at"),
-            })
-
-    return result
+    return db.get_full_dataset()
 
 
 def update_peer_last_sync(
@@ -1174,29 +899,7 @@ def update_peer_last_sync(
         peer_device_id: Peer's device UUID hex string
         peer_device_name: Peer's human-readable name
     """
-    peer_id_bytes = uuid.UUID(hex=peer_device_id).bytes
-
-    with db.conn:
-        cursor = db.conn.cursor()
-
-        # Check if peer exists
-        cursor.execute("SELECT peer_id FROM sync_peers WHERE peer_id = ?", (peer_id_bytes,))
-        existing = cursor.fetchone()
-
-        if existing:
-            cursor.execute(
-                """UPDATE sync_peers SET last_sync_at = datetime('now'), peer_name = ?
-                   WHERE peer_id = ?""",
-                (peer_device_name, peer_id_bytes),
-            )
-        else:
-            cursor.execute(
-                """INSERT INTO sync_peers (peer_id, peer_name, peer_url, last_sync_at)
-                   VALUES (?, ?, '', datetime('now'))""",
-                (peer_id_bytes, peer_device_name),
-            )
-
-        db.conn.commit()
+    db.update_peer_sync_time(peer_device_id, peer_device_name)
 
 
 def create_sync_server(

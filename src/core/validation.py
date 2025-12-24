@@ -3,22 +3,34 @@
 This module provides validation functions for all user inputs.
 All validators raise ValidationError with descriptive messages.
 
+This is a wrapper around the Rust voice_core extension.
+
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
 
 from __future__ import annotations
 
-import re
 import uuid
 from typing import List, Optional, Union
 
+# Import from Rust extension
+from voice_core import (
+    ValidationError as _RustValidationError,
+    validate_uuid_hex as _rust_validate_uuid_hex,
+    validate_note_id as _rust_validate_note_id,
+    validate_tag_id as _rust_validate_tag_id,
+    validate_tag_name as _rust_validate_tag_name,
+    validate_note_content as _rust_validate_note_content,
+    validate_search_query as _rust_validate_search_query,
+    uuid_to_hex as _rust_uuid_to_hex,
+)
 
-class ValidationError(Exception):
-    """Raised when input validation fails.
 
-    Attributes:
-        field: Name of the field that failed validation
-        message: Human-readable error message
+class ValidationError(ValueError):
+    """Validation error with field and message attributes.
+
+    This class wraps the Rust ValidationError to provide a Pythonic interface
+    with .field and .message attributes.
     """
 
     def __init__(self, field: str, message: str) -> None:
@@ -26,10 +38,45 @@ class ValidationError(Exception):
         self.message = message
         super().__init__(f"{field}: {message}")
 
+    def __str__(self) -> str:
+        return f"{self.field}: {self.message}"
 
-# Limits
+    def __repr__(self) -> str:
+        return f"ValidationError(field='{self.field}', message='{self.message}')"
+
+    @classmethod
+    def from_rust(cls, rust_err: _RustValidationError) -> "ValidationError":
+        """Create from a Rust ValidationError exception."""
+        # The Rust exception message is formatted as "field:message"
+        msg = str(rust_err)
+        if ":" in msg:
+            field, message = msg.split(":", 1)
+            return cls(field.strip(), message.strip())
+        return cls("unknown", msg)
+
+
+# Re-export ValidationError
+__all__ = [
+    "ValidationError",
+    "validate_uuid",
+    "validate_uuid_hex",
+    "uuid_to_hex",
+    "validate_entity_id",
+    "validate_note_id",
+    "validate_tag_id",
+    "validate_tag_ids",
+    "validate_tag_name",
+    "validate_tag_path",
+    "validate_note_content",
+    "validate_search_query",
+    "validate_parent_tag_id",
+    "validate_tag_id_groups",
+    "validate_device_id",
+]
+
+# Limits (keep for backward compatibility)
 MAX_TAG_NAME_LENGTH = 100
-MAX_NOTE_CONTENT_LENGTH = 100_000  # 100KB of text
+MAX_NOTE_CONTENT_LENGTH = 100_000
 MAX_SEARCH_QUERY_LENGTH = 500
 MAX_TAG_PATH_LENGTH = 500
 MAX_TAG_PATH_DEPTH = 50
@@ -37,15 +84,7 @@ UUID_BYTES_LENGTH = 16
 
 
 def validate_uuid(value: bytes, field_name: str = "id") -> None:
-    """Validate a UUID value (must be 16 bytes).
-
-    Args:
-        value: The UUID bytes to validate
-        field_name: Name of the field for error messages
-
-    Raises:
-        ValidationError: If value is not valid UUID bytes
-    """
+    """Validate a UUID value (must be 16 bytes)."""
     if not isinstance(value, bytes):
         raise ValidationError(
             field_name, f"must be bytes, got {type(value).__name__}"
@@ -57,54 +96,28 @@ def validate_uuid(value: bytes, field_name: str = "id") -> None:
 
 
 def validate_uuid_hex(value: str, field_name: str = "id") -> bytes:
-    """Validate and convert a UUID hex string to bytes.
-
-    Args:
-        value: The UUID hex string (32 chars, no hyphens)
-        field_name: Name of the field for error messages
-
-    Returns:
-        UUID as bytes (16 bytes)
-
-    Raises:
-        ValidationError: If value is not a valid UUID hex string
-    """
+    """Validate and convert a UUID hex string to bytes."""
     if not isinstance(value, str):
         raise ValidationError(
             field_name, f"must be a string, got {type(value).__name__}"
         )
     try:
-        # Accept both hyphenated and non-hyphenated formats
+        # Use Rust validation, then convert to bytes
+        _rust_validate_uuid_hex(value.replace("-", ""), field_name)
         return uuid.UUID(hex=value.replace("-", "")).bytes
+    except _RustValidationError as e:
+        raise ValidationError.from_rust(e) from None
     except ValueError as e:
-        raise ValidationError(field_name, f"invalid UUID format: {e}")
+        raise ValidationError(field_name, f"invalid UUID format: {e}") from None
 
 
 def uuid_to_hex(value: bytes) -> str:
-    """Convert UUID bytes to hex string (32 chars, no hyphens).
-
-    Args:
-        value: UUID as bytes (16 bytes)
-
-    Returns:
-        UUID as hex string
-    """
+    """Convert UUID bytes to hex string (32 chars, no hyphens)."""
     return uuid.UUID(bytes=value).hex
 
 
 def validate_entity_id(entity_id: Union[bytes, str], field_name: str = "id") -> bytes:
-    """Validate a UUID entity ID (note, tag, device, etc.).
-
-    Args:
-        entity_id: The entity ID to validate (bytes or hex string)
-        field_name: Name of the field for error messages
-
-    Returns:
-        entity_id as bytes
-
-    Raises:
-        ValidationError: If entity_id is invalid
-    """
+    """Validate a UUID entity ID (note, tag, device, etc.)."""
     if isinstance(entity_id, str):
         return validate_uuid_hex(entity_id, field_name)
     validate_uuid(entity_id, field_name)
@@ -122,17 +135,7 @@ def validate_tag_id(tag_id: Union[bytes, str]) -> bytes:
 
 
 def validate_tag_ids(tag_ids: List[Union[bytes, str]]) -> List[bytes]:
-    """Validate a list of tag IDs.
-
-    Args:
-        tag_ids: List of tag IDs to validate
-
-    Returns:
-        List of tag_ids as bytes
-
-    Raises:
-        ValidationError: If any tag_id is invalid
-    """
+    """Validate a list of tag IDs."""
     if not isinstance(tag_ids, list):
         raise ValidationError("tag_ids", f"must be a list, got {type(tag_ids).__name__}")
     result = []
@@ -145,48 +148,19 @@ def validate_tag_ids(tag_ids: List[Union[bytes, str]]) -> List[bytes]:
 
 
 def validate_tag_name(name: str) -> None:
-    """Validate a tag name.
-
-    Tag names must be:
-    - Non-empty after stripping whitespace
-    - No longer than MAX_TAG_NAME_LENGTH characters
-    - Not contain path separator (/)
-    - Not be only whitespace
-
-    Args:
-        name: The tag name to validate
-
-    Raises:
-        ValidationError: If name is invalid
-    """
+    """Validate a tag name."""
     if not isinstance(name, str):
-        raise ValidationError("tag_name", f"must be a string, got {type(name).__name__}")
-
-    stripped = name.strip()
-
-    if not stripped:
-        raise ValidationError("tag_name", "cannot be empty or whitespace only")
-
-    if len(stripped) > MAX_TAG_NAME_LENGTH:
         raise ValidationError(
-            "tag_name", f"cannot exceed {MAX_TAG_NAME_LENGTH} characters (got {len(stripped)})"
+            "tag_name", f"must be a string, got {type(name).__name__}"
         )
-
-    if "/" in stripped:
-        raise ValidationError("tag_name", "cannot contain '/' character (reserved for paths)")
+    try:
+        _rust_validate_tag_name(name)
+    except _RustValidationError as e:
+        raise ValidationError.from_rust(e) from None
 
 
 def validate_tag_path(path: str) -> None:
-    """Validate a tag path.
-
-    Tag paths are slash-separated tag names like "Europe/France/Paris".
-
-    Args:
-        path: The tag path to validate
-
-    Raises:
-        ValidationError: If path is invalid
-    """
+    """Validate a tag path."""
     if not isinstance(path, str):
         raise ValidationError("tag_path", f"must be a string, got {type(path).__name__}")
 
@@ -207,7 +181,6 @@ def validate_tag_path(path: str) -> None:
             "tag_path", f"cannot exceed {MAX_TAG_PATH_DEPTH} levels (got {len(parts)})"
         )
 
-    # Validate each part as a tag name (but allow empty parts from leading/trailing slashes)
     non_empty_parts = [p.strip() for p in parts if p.strip()]
 
     if not non_empty_parts:
@@ -222,72 +195,33 @@ def validate_tag_path(path: str) -> None:
 
 
 def validate_note_content(content: str) -> None:
-    """Validate note content.
-
-    Note content must be:
-    - A string
-    - Non-empty after stripping whitespace
-    - No longer than MAX_NOTE_CONTENT_LENGTH characters
-
-    Args:
-        content: The note content to validate
-
-    Raises:
-        ValidationError: If content is invalid
-    """
+    """Validate note content."""
     if not isinstance(content, str):
-        raise ValidationError("content", f"must be a string, got {type(content).__name__}")
-
-    if not content.strip():
-        raise ValidationError("content", "cannot be empty or whitespace only")
-
-    if len(content) > MAX_NOTE_CONTENT_LENGTH:
         raise ValidationError(
-            "content",
-            f"cannot exceed {MAX_NOTE_CONTENT_LENGTH} characters (got {len(content)})",
+            "content", f"must be a string, got {type(content).__name__}"
         )
+    try:
+        _rust_validate_note_content(content)
+    except _RustValidationError as e:
+        raise ValidationError.from_rust(e) from None
 
 
 def validate_search_query(query: Optional[str]) -> None:
-    """Validate a search query.
-
-    Search queries can be None/empty (meaning no text filter).
-    If provided, must not exceed MAX_SEARCH_QUERY_LENGTH.
-
-    Args:
-        query: The search query to validate (can be None)
-
-    Raises:
-        ValidationError: If query is invalid
-    """
-    if query is None:
-        return
-
-    if not isinstance(query, str):
-        raise ValidationError("search_query", f"must be a string, got {type(query).__name__}")
-
-    if len(query) > MAX_SEARCH_QUERY_LENGTH:
+    """Validate a search query."""
+    if query is not None and not isinstance(query, str):
         raise ValidationError(
-            "search_query",
-            f"cannot exceed {MAX_SEARCH_QUERY_LENGTH} characters (got {len(query)})",
+            "search_query", f"must be a string or None, got {type(query).__name__}"
         )
+    try:
+        _rust_validate_search_query(query)
+    except _RustValidationError as e:
+        raise ValidationError.from_rust(e) from None
 
 
 def validate_parent_tag_id(
     parent_id: Optional[Union[bytes, str]], tag_id: Optional[Union[bytes, str]] = None
 ) -> Optional[bytes]:
-    """Validate a parent tag ID for tag creation/update.
-
-    Args:
-        parent_id: The parent tag ID (None for root tags)
-        tag_id: The tag's own ID (for circular reference check during updates)
-
-    Returns:
-        parent_id as bytes, or None
-
-    Raises:
-        ValidationError: If parent_id is invalid
-    """
+    """Validate a parent tag ID for tag creation/update."""
     if parent_id is None:
         return None
 
@@ -304,17 +238,7 @@ def validate_parent_tag_id(
 def validate_tag_id_groups(
     tag_id_groups: Optional[List[List[Union[bytes, str]]]]
 ) -> Optional[List[List[bytes]]]:
-    """Validate tag ID groups for search.
-
-    Args:
-        tag_id_groups: List of lists of tag IDs (can be None)
-
-    Returns:
-        tag_id_groups with all IDs as bytes, or None
-
-    Raises:
-        ValidationError: If any tag ID is invalid
-    """
+    """Validate tag ID groups for search."""
     if tag_id_groups is None:
         return None
 

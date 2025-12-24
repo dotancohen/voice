@@ -144,36 +144,7 @@ class ConflictManager:
         Returns:
             Dict mapping conflict type to count
         """
-        counts = {
-            "note_content": 0,
-            "note_delete": 0,
-            "tag_rename": 0,
-            "total": 0,
-        }
-
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
-
-            cursor.execute(
-                "SELECT COUNT(*) as count FROM conflicts_note_content WHERE resolved_at IS NULL"
-            )
-            counts["note_content"] = cursor.fetchone()["count"]
-
-            cursor.execute(
-                "SELECT COUNT(*) as count FROM conflicts_note_delete WHERE resolved_at IS NULL"
-            )
-            counts["note_delete"] = cursor.fetchone()["count"]
-
-            cursor.execute(
-                "SELECT COUNT(*) as count FROM conflicts_tag_rename WHERE resolved_at IS NULL"
-            )
-            counts["tag_rename"] = cursor.fetchone()["count"]
-
-            counts["total"] = (
-                counts["note_content"] + counts["note_delete"] + counts["tag_rename"]
-            )
-
-        return counts
+        return self.db.get_unresolved_conflict_counts()
 
     def get_note_content_conflicts(
         self, include_resolved: bool = False
@@ -186,38 +157,23 @@ class ConflictManager:
         Returns:
             List of NoteContentConflict objects
         """
-        query = """
-            SELECT id, note_id, local_content, local_modified_at, local_device_id,
-                   local_device_name, remote_content, remote_modified_at,
-                   remote_device_id, remote_device_name, created_at, resolved_at
-            FROM conflicts_note_content
-        """
-        if not include_resolved:
-            query += " WHERE resolved_at IS NULL"
-        query += " ORDER BY created_at DESC"
-
-        uuid_fields = ["id", "note_id", "local_device_id", "remote_device_id"]
+        rows = self.db.get_note_content_conflicts(include_resolved)
         conflicts = []
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
-            cursor.execute(query)
-            for row in cursor.fetchall():
-                converted = _convert_row_uuids(dict(row), uuid_fields)
-                conflicts.append(NoteContentConflict(
-                    id=converted["id"],
-                    note_id=converted["note_id"],
-                    local_content=converted["local_content"],
-                    local_modified_at=converted["local_modified_at"],
-                    local_device_id=converted["local_device_id"],
-                    local_device_name=converted.get("local_device_name"),
-                    remote_content=converted["remote_content"],
-                    remote_modified_at=converted["remote_modified_at"],
-                    remote_device_id=converted["remote_device_id"],
-                    remote_device_name=converted.get("remote_device_name"),
-                    created_at=converted["created_at"],
-                    resolved_at=converted.get("resolved_at"),
-                ))
-
+        for row in rows:
+            conflicts.append(NoteContentConflict(
+                id=row["id"],
+                note_id=row["note_id"],
+                local_content=row["local_content"],
+                local_modified_at=row["local_modified_at"],
+                local_device_id=row["local_device_id"],
+                local_device_name=row.get("local_device_name"),
+                remote_content=row["remote_content"],
+                remote_modified_at=row["remote_modified_at"],
+                remote_device_id=row["remote_device_id"],
+                remote_device_name=row.get("remote_device_name"),
+                created_at=row["created_at"],
+                resolved_at=row.get("resolved_at"),
+            ))
         return conflicts
 
     def get_note_delete_conflicts(
@@ -231,37 +187,22 @@ class ConflictManager:
         Returns:
             List of NoteDeleteConflict objects
         """
-        query = """
-            SELECT id, note_id, surviving_content, surviving_modified_at,
-                   surviving_device_id, surviving_device_name, deleted_at,
-                   deleting_device_id, deleting_device_name, created_at, resolved_at
-            FROM conflicts_note_delete
-        """
-        if not include_resolved:
-            query += " WHERE resolved_at IS NULL"
-        query += " ORDER BY created_at DESC"
-
-        uuid_fields = ["id", "note_id", "surviving_device_id", "deleting_device_id"]
+        rows = self.db.get_note_delete_conflicts(include_resolved)
         conflicts = []
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
-            cursor.execute(query)
-            for row in cursor.fetchall():
-                converted = _convert_row_uuids(dict(row), uuid_fields)
-                conflicts.append(NoteDeleteConflict(
-                    id=converted["id"],
-                    note_id=converted["note_id"],
-                    surviving_content=converted["surviving_content"],
-                    surviving_modified_at=converted["surviving_modified_at"],
-                    surviving_device_id=converted["surviving_device_id"],
-                    surviving_device_name=converted.get("surviving_device_name"),
-                    deleted_at=converted["deleted_at"],
-                    deleting_device_id=converted["deleting_device_id"],
-                    deleting_device_name=converted.get("deleting_device_name"),
-                    created_at=converted["created_at"],
-                    resolved_at=converted.get("resolved_at"),
-                ))
-
+        for row in rows:
+            conflicts.append(NoteDeleteConflict(
+                id=row["id"],
+                note_id=row["note_id"],
+                surviving_content=row["surviving_content"],
+                surviving_modified_at=row["surviving_modified_at"],
+                surviving_device_id=row["surviving_device_id"],
+                surviving_device_name=row.get("surviving_device_name"),
+                deleted_at=row["deleted_at"],
+                deleting_device_id=row["deleting_device_id"],
+                deleting_device_name=row.get("deleting_device_name"),
+                created_at=row["created_at"],
+                resolved_at=row.get("resolved_at"),
+            ))
         return conflicts
 
     def get_tag_rename_conflicts(
@@ -275,38 +216,23 @@ class ConflictManager:
         Returns:
             List of TagRenameConflict objects
         """
-        query = """
-            SELECT id, tag_id, local_name, local_modified_at, local_device_id,
-                   local_device_name, remote_name, remote_modified_at,
-                   remote_device_id, remote_device_name, created_at, resolved_at
-            FROM conflicts_tag_rename
-        """
-        if not include_resolved:
-            query += " WHERE resolved_at IS NULL"
-        query += " ORDER BY created_at DESC"
-
-        uuid_fields = ["id", "tag_id", "local_device_id", "remote_device_id"]
+        rows = self.db.get_tag_rename_conflicts(include_resolved)
         conflicts = []
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
-            cursor.execute(query)
-            for row in cursor.fetchall():
-                converted = _convert_row_uuids(dict(row), uuid_fields)
-                conflicts.append(TagRenameConflict(
-                    id=converted["id"],
-                    tag_id=converted["tag_id"],
-                    local_name=converted["local_name"],
-                    local_modified_at=converted["local_modified_at"],
-                    local_device_id=converted["local_device_id"],
-                    local_device_name=converted.get("local_device_name"),
-                    remote_name=converted["remote_name"],
-                    remote_modified_at=converted["remote_modified_at"],
-                    remote_device_id=converted["remote_device_id"],
-                    remote_device_name=converted.get("remote_device_name"),
-                    created_at=converted["created_at"],
-                    resolved_at=converted.get("resolved_at"),
-                ))
-
+        for row in rows:
+            conflicts.append(TagRenameConflict(
+                id=row["id"],
+                tag_id=row["tag_id"],
+                local_name=row["local_name"],
+                local_modified_at=row["local_modified_at"],
+                local_device_id=row["local_device_id"],
+                local_device_name=row.get("local_device_name"),
+                remote_name=row["remote_name"],
+                remote_modified_at=row["remote_modified_at"],
+                remote_device_id=row["remote_device_id"],
+                remote_device_name=row.get("remote_device_name"),
+                created_at=row["created_at"],
+                resolved_at=row.get("resolved_at"),
+            ))
         return conflicts
 
     def resolve_note_content_conflict(
@@ -325,53 +251,33 @@ class ConflictManager:
         Returns:
             True if resolved successfully
         """
-        conflict_id_bytes = uuid.UUID(hex=conflict_id).bytes
+        # Get the conflict to determine content
+        conflicts = self.db.get_note_content_conflicts(include_resolved=True)
+        conflict = None
+        for c in conflicts:
+            if c["id"] == conflict_id:
+                conflict = c
+                break
 
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
+        if not conflict:
+            return False
 
-            # Get the conflict
-            cursor.execute(
-                """SELECT note_id, local_content, remote_content
-                   FROM conflicts_note_content WHERE id = ?""",
-                (conflict_id_bytes,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return False
+        # Determine new content
+        if choice == ResolutionChoice.KEEP_LOCAL:
+            new_content = conflict["local_content"]
+        elif choice == ResolutionChoice.KEEP_REMOTE:
+            new_content = conflict["remote_content"]
+        elif choice == ResolutionChoice.MERGE:
+            if merged_content is None:
+                raise ValueError("merged_content required for MERGE resolution")
+            new_content = merged_content
+        else:
+            raise ValueError(f"Invalid choice for note content: {choice}")
 
-            note_id = row["note_id"]
-
-            # Determine new content
-            if choice == ResolutionChoice.KEEP_LOCAL:
-                new_content = row["local_content"]
-            elif choice == ResolutionChoice.KEEP_REMOTE:
-                new_content = row["remote_content"]
-            elif choice == ResolutionChoice.MERGE:
-                if merged_content is None:
-                    raise ValueError("merged_content required for MERGE resolution")
-                new_content = merged_content
-            else:
-                raise ValueError(f"Invalid choice for note content: {choice}")
-
-            # Update the note
-            cursor.execute(
-                """UPDATE notes SET content = ?, modified_at = datetime('now')
-                   WHERE id = ?""",
-                (new_content, note_id),
-            )
-
-            # Mark conflict as resolved
-            cursor.execute(
-                """UPDATE conflicts_note_content SET resolved_at = datetime('now')
-                   WHERE id = ?""",
-                (conflict_id_bytes,),
-            )
-
-            self.db.conn.commit()
-
-        logger.info(f"Resolved note content conflict {conflict_id} with {choice.value}")
-        return True
+        result = self.db.resolve_note_content_conflict(conflict_id, new_content)
+        if result:
+            logger.info(f"Resolved note content conflict {conflict_id} with {choice.value}")
+        return result
 
     def resolve_note_delete_conflict(
         self,
@@ -387,48 +293,17 @@ class ConflictManager:
         Returns:
             True if resolved successfully
         """
-        conflict_id_bytes = uuid.UUID(hex=conflict_id).bytes
+        if choice == ResolutionChoice.KEEP_BOTH:
+            restore_note = True
+        elif choice == ResolutionChoice.KEEP_REMOTE:
+            restore_note = False
+        else:
+            raise ValueError(f"Invalid choice for note delete: {choice}")
 
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
-
-            # Get the conflict
-            cursor.execute(
-                """SELECT note_id, surviving_content
-                   FROM conflicts_note_delete WHERE id = ?""",
-                (conflict_id_bytes,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return False
-
-            note_id = row["note_id"]
-
-            if choice == ResolutionChoice.KEEP_BOTH:
-                # Restore the note with surviving content
-                cursor.execute(
-                    """UPDATE notes SET content = ?, deleted_at = NULL,
-                       modified_at = datetime('now')
-                       WHERE id = ?""",
-                    (row["surviving_content"], note_id),
-                )
-            elif choice == ResolutionChoice.KEEP_REMOTE:
-                # Accept the deletion - note stays deleted
-                pass
-            else:
-                raise ValueError(f"Invalid choice for note delete: {choice}")
-
-            # Mark conflict as resolved
-            cursor.execute(
-                """UPDATE conflicts_note_delete SET resolved_at = datetime('now')
-                   WHERE id = ?""",
-                (conflict_id_bytes,),
-            )
-
-            self.db.conn.commit()
-
-        logger.info(f"Resolved note delete conflict {conflict_id} with {choice.value}")
-        return True
+        result = self.db.resolve_note_delete_conflict(conflict_id, restore_note)
+        if result:
+            logger.info(f"Resolved note delete conflict {conflict_id} with {choice.value}")
+        return result
 
     def resolve_tag_rename_conflict(
         self,
@@ -444,49 +319,29 @@ class ConflictManager:
         Returns:
             True if resolved successfully
         """
-        conflict_id_bytes = uuid.UUID(hex=conflict_id).bytes
+        # Get the conflict to determine the name
+        conflicts = self.db.get_tag_rename_conflicts(include_resolved=True)
+        conflict = None
+        for c in conflicts:
+            if c["id"] == conflict_id:
+                conflict = c
+                break
 
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
+        if not conflict:
+            return False
 
-            # Get the conflict
-            cursor.execute(
-                """SELECT tag_id, local_name, remote_name
-                   FROM conflicts_tag_rename WHERE id = ?""",
-                (conflict_id_bytes,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return False
+        # Determine new name
+        if choice == ResolutionChoice.KEEP_LOCAL:
+            new_name = conflict["local_name"]
+        elif choice == ResolutionChoice.KEEP_REMOTE:
+            new_name = conflict["remote_name"]
+        else:
+            raise ValueError(f"Invalid choice for tag rename: {choice}")
 
-            tag_id = row["tag_id"]
-
-            # Determine new name
-            if choice == ResolutionChoice.KEEP_LOCAL:
-                new_name = row["local_name"]
-            elif choice == ResolutionChoice.KEEP_REMOTE:
-                new_name = row["remote_name"]
-            else:
-                raise ValueError(f"Invalid choice for tag rename: {choice}")
-
-            # Update the tag
-            cursor.execute(
-                """UPDATE tags SET name = ?, modified_at = datetime('now')
-                   WHERE id = ?""",
-                (new_name, tag_id),
-            )
-
-            # Mark conflict as resolved
-            cursor.execute(
-                """UPDATE conflicts_tag_rename SET resolved_at = datetime('now')
-                   WHERE id = ?""",
-                (conflict_id_bytes,),
-            )
-
-            self.db.conn.commit()
-
-        logger.info(f"Resolved tag rename conflict {conflict_id} with {choice.value}")
-        return True
+        result = self.db.resolve_tag_rename_conflict(conflict_id, new_name)
+        if result:
+            logger.info(f"Resolved tag rename conflict {conflict_id} with {choice.value}")
+        return result
 
     def find_and_resolve_conflict(
         self,

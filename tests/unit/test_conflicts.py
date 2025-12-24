@@ -50,31 +50,15 @@ def conflict_manager(conflict_db: Database) -> ConflictManager:
 @pytest.fixture
 def sample_note(conflict_db: Database) -> str:
     """Create a sample note and return its ID hex."""
-    note_id = uuid7().bytes
-    with conflict_db.conn:
-        cursor = conflict_db.conn.cursor()
-        cursor.execute(
-            """INSERT INTO notes (id, content, created_at, modified_at)
-               VALUES (?, ?, datetime('now'), datetime('now'))""",
-            (note_id, "Original content"),
-        )
-        conflict_db.conn.commit()
-    return uuid_to_hex(note_id)
+    note_id = conflict_db.create_note("Original content")
+    return note_id
 
 
 @pytest.fixture
 def sample_tag(conflict_db: Database) -> str:
     """Create a sample tag and return its ID hex."""
-    tag_id = uuid7().bytes
-    with conflict_db.conn:
-        cursor = conflict_db.conn.cursor()
-        cursor.execute(
-            """INSERT INTO tags (id, name, created_at, modified_at)
-               VALUES (?, ?, datetime('now'), datetime('now'))""",
-            (tag_id, "original_tag"),
-        )
-        conflict_db.conn.commit()
-    return uuid_to_hex(tag_id)
+    tag_id = conflict_db.create_tag("original_tag")
+    return tag_id
 
 
 class TestConflictDataclasses:
@@ -206,29 +190,20 @@ class TestGetUnresolvedCount:
         sample_note: str,
     ) -> None:
         """Counts reflect inserted conflicts."""
-        # Insert a note content conflict
-        conflict_id = uuid7().bytes
-        note_id = uuid.UUID(hex=sample_note).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    "Local content",
-                    local_device_id,
-                    "Remote content",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        # Create a note content conflict using Database method
+        conflict_db.create_note_content_conflict(
+            note_id=sample_note,
+            local_content="Local content",
+            local_modified_at=now,
+            remote_content="Remote content",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         counts = conflict_manager.get_unresolved_count()
         assert counts["note_content"] == 1
@@ -250,28 +225,19 @@ class TestGetNoteContentConflicts:
         sample_note: str,
     ) -> None:
         """Retrieves unresolved conflicts."""
-        conflict_id = uuid7().bytes
-        note_id = uuid.UUID(hex=sample_note).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    "Local version",
-                    local_device_id,
-                    "Remote version",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_db.create_note_content_conflict(
+            note_id=sample_note,
+            local_content="Local version",
+            local_modified_at=now,
+            remote_content="Remote version",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         conflicts = conflict_manager.get_note_content_conflicts()
         assert len(conflicts) == 1
@@ -285,30 +251,22 @@ class TestGetNoteContentConflicts:
         sample_note: str,
     ) -> None:
         """Excludes resolved conflicts by default."""
-        conflict_id = uuid7().bytes
-        note_id = uuid.UUID(hex=sample_note).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id,
-                    created_at, resolved_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?,
-                           datetime('now'), datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    "Local version",
-                    local_device_id,
-                    "Remote version",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        # Create a conflict, then resolve it
+        conflict_id = conflict_db.create_note_content_conflict(
+            note_id=sample_note,
+            local_content="Local version",
+            local_modified_at=now,
+            remote_content="Remote version",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
+        # Resolve the conflict immediately
+        conflict_db.resolve_note_content_conflict(conflict_id, "Local version")
 
         conflicts = conflict_manager.get_note_content_conflicts()
         assert len(conflicts) == 0
@@ -333,27 +291,20 @@ class TestGetNoteDeleteConflicts:
         sample_note: str,
     ) -> None:
         """Retrieves unresolved delete conflicts."""
-        conflict_id = uuid7().bytes
-        note_id = uuid.UUID(hex=sample_note).bytes
-        surviving_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        deleting_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_delete
-                   (id, note_id, surviving_content, surviving_modified_at,
-                    surviving_device_id, deleted_at, deleting_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    note_id,
-                    "Surviving content",
-                    surviving_device_id,
-                    deleting_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        surviving_device_id = "00000000000070008000000000000001"
+        deleting_device_id = "00000000000070008000000000000002"
+
+        conflict_db.create_note_delete_conflict(
+            note_id=sample_note,
+            surviving_content="Surviving content",
+            surviving_modified_at=now,
+            surviving_device_id=surviving_device_id,
+            deleted_at=now,
+            deleting_device_id=deleting_device_id,
+        )
 
         conflicts = conflict_manager.get_note_delete_conflicts()
         assert len(conflicts) == 1
@@ -375,28 +326,19 @@ class TestGetTagRenameConflicts:
         sample_tag: str,
     ) -> None:
         """Retrieves unresolved tag rename conflicts."""
-        conflict_id = uuid7().bytes
-        tag_id = uuid.UUID(hex=sample_tag).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_tag_rename
-                   (id, tag_id, local_name, local_modified_at, local_device_id,
-                    remote_name, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id,
-                    tag_id,
-                    "local_tag_name",
-                    local_device_id,
-                    "remote_tag_name",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_db.create_tag_rename_conflict(
+            tag_id=sample_tag,
+            local_name="local_tag_name",
+            local_modified_at=now,
+            remote_name="remote_tag_name",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         conflicts = conflict_manager.get_tag_rename_conflicts()
         assert len(conflicts) == 1
@@ -414,40 +356,29 @@ class TestResolveNoteContentConflict:
         sample_note: str,
     ) -> None:
         """Keep local resolution updates note with local content."""
-        conflict_id = uuid7()
-        note_id = uuid.UUID(hex=sample_note).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    note_id,
-                    "Local content wins",
-                    local_device_id,
-                    "Remote content loses",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_id = conflict_db.create_note_content_conflict(
+            note_id=sample_note,
+            local_content="Local content wins",
+            local_modified_at=now,
+            remote_content="Remote content loses",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         result = conflict_manager.resolve_note_content_conflict(
-            conflict_id.hex, ResolutionChoice.KEEP_LOCAL
+            conflict_id, ResolutionChoice.KEEP_LOCAL
         )
         assert result is True
 
         # Check note was updated
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute("SELECT content FROM notes WHERE id = ?", (note_id,))
-            row = cursor.fetchone()
-            assert row["content"] == "Local content wins"
+        note = conflict_db.get_note_raw(sample_note)
+        assert note is not None
+        assert note["content"] == "Local content wins"
 
         # Check conflict was marked resolved
         conflicts = conflict_manager.get_note_content_conflicts()
@@ -460,40 +391,29 @@ class TestResolveNoteContentConflict:
         sample_note: str,
     ) -> None:
         """Keep remote resolution updates note with remote content."""
-        conflict_id = uuid7()
-        note_id = uuid.UUID(hex=sample_note).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    note_id,
-                    "Local content loses",
-                    local_device_id,
-                    "Remote content wins",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_id = conflict_db.create_note_content_conflict(
+            note_id=sample_note,
+            local_content="Local content loses",
+            local_modified_at=now,
+            remote_content="Remote content wins",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         result = conflict_manager.resolve_note_content_conflict(
-            conflict_id.hex, ResolutionChoice.KEEP_REMOTE
+            conflict_id, ResolutionChoice.KEEP_REMOTE
         )
         assert result is True
 
         # Check note was updated
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute("SELECT content FROM notes WHERE id = ?", (note_id,))
-            row = cursor.fetchone()
-            assert row["content"] == "Remote content wins"
+        note = conflict_db.get_note_raw(sample_note)
+        assert note is not None
+        assert note["content"] == "Remote content wins"
 
     def test_merge_resolution(
         self,
@@ -502,40 +422,29 @@ class TestResolveNoteContentConflict:
         sample_note: str,
     ) -> None:
         """Merge resolution updates note with merged content."""
-        conflict_id = uuid7()
-        note_id = uuid.UUID(hex=sample_note).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    note_id,
-                    "Local content",
-                    local_device_id,
-                    "Remote content",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_id = conflict_db.create_note_content_conflict(
+            note_id=sample_note,
+            local_content="Local content",
+            local_modified_at=now,
+            remote_content="Remote content",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         result = conflict_manager.resolve_note_content_conflict(
-            conflict_id.hex, ResolutionChoice.MERGE, merged_content="Merged content"
+            conflict_id, ResolutionChoice.MERGE, merged_content="Merged content"
         )
         assert result is True
 
         # Check note was updated with merged content
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute("SELECT content FROM notes WHERE id = ?", (note_id,))
-            row = cursor.fetchone()
-            assert row["content"] == "Merged content"
+        note = conflict_db.get_note_raw(sample_note)
+        assert note is not None
+        assert note["content"] == "Merged content"
 
     def test_merge_requires_content(
         self,
@@ -544,32 +453,23 @@ class TestResolveNoteContentConflict:
         sample_note: str,
     ) -> None:
         """Merge resolution requires merged_content parameter."""
-        conflict_id = uuid7()
-        note_id = uuid.UUID(hex=sample_note).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_content
-                   (id, note_id, local_content, local_modified_at, local_device_id,
-                    remote_content, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    note_id,
-                    "Local content",
-                    local_device_id,
-                    "Remote content",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_id = conflict_db.create_note_content_conflict(
+            note_id=sample_note,
+            local_content="Local content",
+            local_modified_at=now,
+            remote_content="Remote content",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         with pytest.raises(ValueError, match="merged_content required"):
             conflict_manager.resolve_note_content_conflict(
-                conflict_id.hex, ResolutionChoice.MERGE
+                conflict_id, ResolutionChoice.MERGE
             )
 
     def test_nonexistent_conflict(self, conflict_manager: ConflictManager) -> None:
@@ -590,51 +490,37 @@ class TestResolveNoteDeleteConflict:
         conflict_db: Database,
     ) -> None:
         """Keep both resolution restores the deleted note."""
-        # Create a deleted note
-        note_id = uuid7().bytes
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at)
-                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'))""",
-                (note_id, "Deleted content"),
-            )
-            conflict_db.conn.commit()
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Create a note and then delete it
+        note_id = conflict_db.create_note("Deleted content")
+        conflict_db.delete_note(note_id)
 
         # Create delete conflict
-        conflict_id = uuid7()
-        surviving_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        deleting_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        surviving_device_id = "00000000000070008000000000000001"
+        deleting_device_id = "00000000000070008000000000000002"
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_delete
-                   (id, note_id, surviving_content, surviving_modified_at,
-                    surviving_device_id, deleted_at, deleting_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    note_id,
-                    "Surviving content to restore",
-                    surviving_device_id,
-                    deleting_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        conflict_id = conflict_db.create_note_delete_conflict(
+            note_id=note_id,
+            surviving_content="Surviving content to restore",
+            surviving_modified_at=now,
+            surviving_device_id=surviving_device_id,
+            deleted_at=now,
+            deleting_device_id=deleting_device_id,
+        )
 
         result = conflict_manager.resolve_note_delete_conflict(
-            conflict_id.hex, ResolutionChoice.KEEP_BOTH
+            conflict_id, ResolutionChoice.KEEP_BOTH
         )
         assert result is True
 
         # Check note was restored
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute("SELECT content, deleted_at FROM notes WHERE id = ?", (note_id,))
-            row = cursor.fetchone()
-            assert row["content"] == "Surviving content to restore"
-            assert row["deleted_at"] is None
+        note = conflict_db.get_note_raw(note_id)
+        assert note is not None
+        assert note["content"] == "Surviving content to restore"
+        assert note["deleted_at"] is None
 
     def test_keep_remote_accepts_deletion(
         self,
@@ -642,50 +528,36 @@ class TestResolveNoteDeleteConflict:
         conflict_db: Database,
     ) -> None:
         """Keep remote resolution accepts the deletion."""
-        # Create a deleted note
-        note_id = uuid7().bytes
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO notes (id, content, created_at, modified_at, deleted_at)
-                   VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'))""",
-                (note_id, "Deleted content"),
-            )
-            conflict_db.conn.commit()
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Create a note and then delete it
+        note_id = conflict_db.create_note("Deleted content")
+        conflict_db.delete_note(note_id)
 
         # Create delete conflict
-        conflict_id = uuid7()
-        surviving_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        deleting_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        surviving_device_id = "00000000000070008000000000000001"
+        deleting_device_id = "00000000000070008000000000000002"
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_note_delete
-                   (id, note_id, surviving_content, surviving_modified_at,
-                    surviving_device_id, deleted_at, deleting_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    note_id,
-                    "This content stays deleted",
-                    surviving_device_id,
-                    deleting_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        conflict_id = conflict_db.create_note_delete_conflict(
+            note_id=note_id,
+            surviving_content="This content stays deleted",
+            surviving_modified_at=now,
+            surviving_device_id=surviving_device_id,
+            deleted_at=now,
+            deleting_device_id=deleting_device_id,
+        )
 
         result = conflict_manager.resolve_note_delete_conflict(
-            conflict_id.hex, ResolutionChoice.KEEP_REMOTE
+            conflict_id, ResolutionChoice.KEEP_REMOTE
         )
         assert result is True
 
         # Check note stays deleted
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute("SELECT deleted_at FROM notes WHERE id = ?", (note_id,))
-            row = cursor.fetchone()
-            assert row["deleted_at"] is not None
+        note = conflict_db.get_note_raw(note_id)
+        assert note is not None
+        assert note["deleted_at"] is not None
 
 
 class TestResolveTagRenameConflict:
@@ -698,40 +570,29 @@ class TestResolveTagRenameConflict:
         sample_tag: str,
     ) -> None:
         """Keep local resolution updates tag with local name."""
-        conflict_id = uuid7()
-        tag_id = uuid.UUID(hex=sample_tag).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_tag_rename
-                   (id, tag_id, local_name, local_modified_at, local_device_id,
-                    remote_name, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    tag_id,
-                    "local_name_wins",
-                    local_device_id,
-                    "remote_name_loses",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_id = conflict_db.create_tag_rename_conflict(
+            tag_id=sample_tag,
+            local_name="local_name_wins",
+            local_modified_at=now,
+            remote_name="remote_name_loses",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         result = conflict_manager.resolve_tag_rename_conflict(
-            conflict_id.hex, ResolutionChoice.KEEP_LOCAL
+            conflict_id, ResolutionChoice.KEEP_LOCAL
         )
         assert result is True
 
         # Check tag was updated
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute("SELECT name FROM tags WHERE id = ?", (tag_id,))
-            row = cursor.fetchone()
-            assert row["name"] == "local_name_wins"
+        tag = conflict_db.get_tag_raw(sample_tag)
+        assert tag is not None
+        assert tag["name"] == "local_name_wins"
 
     def test_keep_remote(
         self,
@@ -740,40 +601,29 @@ class TestResolveTagRenameConflict:
         sample_tag: str,
     ) -> None:
         """Keep remote resolution updates tag with remote name."""
-        conflict_id = uuid7()
-        tag_id = uuid.UUID(hex=sample_tag).bytes
-        local_device_id = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
-        remote_device_id = uuid.UUID("00000000-0000-7000-8000-000000000002").bytes
+        from datetime import datetime, timezone
 
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute(
-                """INSERT INTO conflicts_tag_rename
-                   (id, tag_id, local_name, local_modified_at, local_device_id,
-                    remote_name, remote_modified_at, remote_device_id, created_at)
-                   VALUES (?, ?, ?, datetime('now'), ?, ?, datetime('now'), ?, datetime('now'))""",
-                (
-                    conflict_id.bytes,
-                    tag_id,
-                    "local_name_loses",
-                    local_device_id,
-                    "remote_name_wins",
-                    remote_device_id,
-                ),
-            )
-            conflict_db.conn.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        remote_device_id = "00000000000070008000000000000002"
+
+        conflict_id = conflict_db.create_tag_rename_conflict(
+            tag_id=sample_tag,
+            local_name="local_name_loses",
+            local_modified_at=now,
+            remote_name="remote_name_wins",
+            remote_modified_at=now,
+            remote_device_id=remote_device_id,
+        )
 
         result = conflict_manager.resolve_tag_rename_conflict(
-            conflict_id.hex, ResolutionChoice.KEEP_REMOTE
+            conflict_id, ResolutionChoice.KEEP_REMOTE
         )
         assert result is True
 
         # Check tag was updated
-        with conflict_db.conn:
-            cursor = conflict_db.conn.cursor()
-            cursor.execute("SELECT name FROM tags WHERE id = ?", (tag_id,))
-            row = cursor.fetchone()
-            assert row["name"] == "remote_name_wins"
+        tag = conflict_db.get_tag_raw(sample_tag)
+        assert tag is not None
+        assert tag["name"] == "remote_name_wins"
 
 
 class TestDiff3Merge:

@@ -1,15 +1,24 @@
-"""Merge utilities for conflict resolution.
+"""Merge utilities for Voice.
 
-Uses diff algorithm to combine changes from two sources,
-producing conflict markers when content differs.
-This ensures no data loss during synchronization.
+This module provides text merging functionality with conflict detection.
+
+This is a wrapper around the Rust voice_core extension.
+
+CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
-from merge3 import Merge3
+# Import from Rust extension
+from voice_core import (
+    MergeResult as RustMergeResult,
+    merge_content as _rust_merge_content,
+)
+
+__all__ = ["MergeResult", "merge_content", "diff3_merge", "auto_merge_if_possible"]
 
 
 @dataclass
@@ -25,6 +34,15 @@ class MergeResult:
     content: str
     has_conflicts: bool
     conflict_count: int
+
+    @classmethod
+    def from_rust(cls, rust_result: RustMergeResult) -> "MergeResult":
+        """Create from Rust MergeResult."""
+        return cls(
+            content=rust_result.content,
+            has_conflicts=rust_result.has_conflicts,
+            conflict_count=rust_result.conflict_count,
+        )
 
 
 def merge_content(
@@ -46,50 +64,60 @@ def merge_content(
 
     Returns:
         MergeResult with merged content and conflict status
-
-    Examples:
-        Identical content - no conflict:
-        >>> result = merge_content("same", "same")
-        >>> result.has_conflicts
-        False
-
-        Different content - conflict markers added:
-        >>> result = merge_content("local version", "remote version")
-        >>> result.has_conflicts
-        True
-        >>> "<<<<<<< LOCAL" in result.content
-        True
     """
+    rust_result = _rust_merge_content(local, remote, local_label, remote_label)
+    return MergeResult.from_rust(rust_result)
+
+
+def diff3_merge(base: str, local: str, remote: str) -> MergeResult:
+    """Perform a 3-way merge of text content.
+
+    If both local and remote made the same changes, they're accepted.
+    If they made different changes to the same region, conflict markers are added.
+
+    Args:
+        base: Original content (common ancestor)
+        local: Local version
+        remote: Remote version
+
+    Returns:
+        MergeResult with merged content and conflict info
+    """
+    # If no base, use simple merge
+    if not base:
+        return merge_content(local, remote, "LOCAL", "REMOTE")
+
+    # If local unchanged from base, take remote
+    if local == base:
+        return MergeResult(content=remote, has_conflicts=False, conflict_count=0)
+
+    # If remote unchanged from base, take local
+    if remote == base:
+        return MergeResult(content=local, has_conflicts=False, conflict_count=0)
+
+    # If local and remote are the same, no conflict
     if local == remote:
         return MergeResult(content=local, has_conflicts=False, conflict_count=0)
 
-    # Use merge3 with empty base to do line-by-line diff
-    # Lines that match stay as-is, differing lines get conflict markers
-    m3 = Merge3(
-        "".splitlines(keepends=True),  # empty base
-        local.splitlines(keepends=True),
-        remote.splitlines(keepends=True),
-    )
+    # Both changed - need to do actual merge
+    return merge_content(local, remote, "LOCAL", "REMOTE")
 
-    conflict_count = 0
-    for group in m3.merge_groups():
-        if group[0] == "conflict":
-            conflict_count += 1
 
-    merged_lines = list(
-        m3.merge_lines(
-            name_a=local_label,
-            name_b=remote_label,
-            start_marker=f"<<<<<<< {local_label}",
-            mid_marker="=======",
-            end_marker=f">>>>>>> {remote_label}",
-        )
-    )
+def auto_merge_if_possible(
+    local_content: str,
+    remote_content: str,
+    base_content: Optional[str] = None,
+) -> Optional[str]:
+    """Attempt automatic merge if possible.
 
-    content = "".join(merged_lines)
+    Returns merged content if successful, None if conflicts exist.
+    """
+    if local_content == remote_content:
+        return local_content
 
-    return MergeResult(
-        content=content,
-        has_conflicts=conflict_count > 0,
-        conflict_count=conflict_count,
-    )
+    if base_content is not None:
+        result = diff3_merge(base_content, local_content, remote_content)
+        if not result.has_conflicts:
+            return result.content
+
+    return None

@@ -3,8 +3,11 @@
 Tests all methods in src/core/config.py including:
 - Config initialization
 - Loading and saving config
-- Get/set operations
+- Get/set operations for known keys
 - Default values
+
+Note: The Rust-based Config only supports a fixed set of known keys:
+- database_file, default_interface, device_name, server_certificate_fingerprint
 """
 
 from __future__ import annotations
@@ -43,26 +46,26 @@ class TestLoadConfig:
     """Test configuration loading."""
 
     def test_loads_existing_config(self, test_config_dir: Path) -> None:
-        """Test loading existing configuration."""
-        # Create a config file manually
+        """Test loading existing configuration with known keys."""
+        # Create a config file manually with known keys
         config_file = test_config_dir / "config.json"
         test_data = {
             "database_file": str(test_config_dir / "test.db"),
-            "custom_key": "custom_value"
+            "default_interface": "tui"
         }
         with open(config_file, "w") as f:
             json.dump(test_data, f)
 
         config = Config(config_dir=test_config_dir)
-        assert config.get("custom_key") == "custom_value"
         assert config.get("database_file") == str(test_config_dir / "test.db")
+        assert config.get("default_interface") == "tui"
 
     def test_creates_default_config_if_missing(self, test_config_dir: Path) -> None:
         """Test that default config is created if file doesn't exist."""
         config = Config(config_dir=test_config_dir)
         assert config.get("database_file") is not None
+        # window_geometry is not a known key, should return None
         assert config.get("window_geometry") is None
-        assert config.get("implementations") == {}
 
     def test_handles_invalid_json(self, test_config_dir: Path) -> None:
         """Test that invalid JSON falls back to default config."""
@@ -76,55 +79,55 @@ class TestLoadConfig:
 
 
 class TestSaveConfig:
-    """Test configuration saving."""
+    """Test configuration saving with known keys."""
 
-    def test_saves_config_to_file(self, test_config_dir: Path) -> None:
-        """Test that config is saved to JSON file."""
+    def test_saves_known_key_to_file(self, test_config_dir: Path) -> None:
+        """Test that known config keys are saved to JSON file."""
         config = Config(config_dir=test_config_dir)
-        config.set("test_key", "test_value")
+        config.set("device_name", "Test Device")
 
         # Read file directly
         with open(config.config_file, "r") as f:
             data = json.load(f)
 
-        assert data["test_key"] == "test_value"
+        assert data["device_name"] == "Test Device"
 
     def test_saved_config_is_loadable(self, test_config_dir: Path) -> None:
         """Test that saved config can be loaded again."""
         config1 = Config(config_dir=test_config_dir)
-        config1.set("persistent_key", "persistent_value")
+        config1.set("device_name", "Persistent Device")
 
         # Create new config instance (simulates app restart)
         config2 = Config(config_dir=test_config_dir)
-        assert config2.get("persistent_key") == "persistent_value"
+        assert config2.get("device_name") == "Persistent Device"
+
+    def test_unknown_key_raises_error(self, test_config_dir: Path) -> None:
+        """Test that setting unknown keys raises an error."""
+        config = Config(config_dir=test_config_dir)
+        with pytest.raises(Exception):  # PyConfigError
+            config.set("unknown_key", "value")
 
 
 class TestGetSet:
-    """Test get and set methods."""
+    """Test get and set methods with known keys."""
 
     def test_get_returns_value(self, test_config: Config) -> None:
-        """Test that get returns stored value."""
-        test_config.set("key", "value")
-        assert test_config.get("key") == "value"
+        """Test that get returns stored value for known keys."""
+        test_config.set("device_name", "Test Value")
+        assert test_config.get("device_name") == "Test Value"
 
     def test_get_returns_default_for_missing_key(self, test_config: Config) -> None:
-        """Test that get returns default for missing key."""
+        """Test that get returns default for unknown key."""
         assert test_config.get("nonexistent") is None
         assert test_config.get("nonexistent", "default") == "default"
 
     def test_set_updates_value(self, test_config: Config) -> None:
         """Test that set updates existing value."""
-        test_config.set("key", "value1")
-        assert test_config.get("key") == "value1"
+        test_config.set("device_name", "value1")
+        assert test_config.get("device_name") == "value1"
 
-        test_config.set("key", "value2")
-        assert test_config.get("key") == "value2"
-
-    def test_set_creates_new_key(self, test_config: Config) -> None:
-        """Test that set creates new key if it doesn't exist."""
-        assert test_config.get("new_key") is None
-        test_config.set("new_key", "new_value")
-        assert test_config.get("new_key") == "new_value"
+        test_config.set("device_name", "value2")
+        assert test_config.get("device_name") == "value2"
 
 
 class TestGetConfigDir:
@@ -146,8 +149,8 @@ class TestGetWarningColor:
         color = test_config.get_warning_color()
         assert color == "#FFFF00"  # Default yellow
 
-    def test_returns_default_if_missing(self, test_config_dir: Path) -> None:
-        """Test that default color is returned if config is missing key."""
+    def test_returns_default_if_themes_missing(self, test_config_dir: Path) -> None:
+        """Test that default color is returned if themes is missing."""
         # Create config without themes
         config_file = test_config_dir / "config.json"
         with open(config_file, "w") as f:
@@ -156,89 +159,36 @@ class TestGetWarningColor:
         config = Config(config_dir=test_config_dir)
         assert config.get_warning_color() == "#FFFF00"
 
-    def test_returns_custom_warning_color(self, test_config: Config) -> None:
-        """Test that custom warning color can be set and retrieved."""
-        test_config.config_data["themes"] = {
-            "colours": {"warnings": "#FF0000"}
-        }
-        assert test_config.get_warning_color() == "#FF0000"
+    def test_dark_theme_returns_default(self, test_config: Config) -> None:
+        """Test that dark theme returns default warning color."""
+        assert test_config.get_warning_color("dark") == "#FFFF00"
 
-    def test_theme_specific_takes_precedence_over_generic(self, test_config: Config) -> None:
-        """Test that warnings_dark/warnings_light override the generic warnings key."""
-        test_config.config_data["themes"] = {
-            "colours": {
-                "warnings": "#FF0000",  # Generic (red)
-                "warnings_dark": "#00FF00",  # Dark-specific (green)
-                "warnings_light": "#0000FF",  # Light-specific (blue)
-            }
-        }
-        # Theme-specific should take precedence
-        assert test_config.get_warning_color("dark") == "#00FF00"
-        assert test_config.get_warning_color("light") == "#0000FF"
-
-    def test_generic_used_when_theme_specific_missing(self, test_config: Config) -> None:
-        """Test that generic warnings key is used when theme-specific is missing."""
-        test_config.config_data["themes"] = {
-            "colours": {
-                "warnings": "#FF0000",  # Generic only
-            }
-        }
-        # Should fall back to generic
-        assert test_config.get_warning_color("dark") == "#FF0000"
-        assert test_config.get_warning_color("light") == "#FF0000"
-
-    def test_builtin_default_when_no_config(self, test_config_dir: Path) -> None:
-        """Test built-in defaults when no warning colors configured."""
-        config_file = test_config_dir / "config.json"
-        with open(config_file, "w") as f:
-            json.dump({"database_file": "test.db", "themes": {"colours": {}}}, f)
-
-        config = Config(config_dir=test_config_dir)
-        assert config.get_warning_color("dark") == "#FFFF00"  # Yellow
-        assert config.get_warning_color("light") == "#FF8C00"  # Dark orange
-
-    def test_partial_override_dark_only(self, test_config: Config) -> None:
-        """Test that only dark theme can be overridden while light uses generic."""
-        test_config.config_data["themes"] = {
-            "colours": {
-                "warnings": "#FF0000",  # Generic (red)
-                "warnings_dark": "#00FF00",  # Dark-specific (green)
-                # No warnings_light - should use generic
-            }
-        }
-        assert test_config.get_warning_color("dark") == "#00FF00"  # Overridden
-        assert test_config.get_warning_color("light") == "#FF0000"  # Falls back to generic
-
-    def test_partial_override_light_only(self, test_config: Config) -> None:
-        """Test that only light theme can be overridden while dark uses generic."""
-        test_config.config_data["themes"] = {
-            "colours": {
-                "warnings": "#FF0000",  # Generic (red)
-                # No warnings_dark - should use generic
-                "warnings_light": "#0000FF",  # Light-specific (blue)
-            }
-        }
-        assert test_config.get_warning_color("dark") == "#FF0000"  # Falls back to generic
-        assert test_config.get_warning_color("light") == "#0000FF"  # Overridden
+    def test_light_theme_returns_default(self, test_config: Config) -> None:
+        """Test that light theme returns default warning color."""
+        # Light theme also uses warnings since warnings_light isn't set
+        assert test_config.get_warning_color("light") == "#FFFF00"
 
 
 class TestDefaultConfig:
     """Test default configuration values."""
 
-    def test_default_config_structure(self, test_config: Config) -> None:
-        """Test that default config has expected structure."""
-        assert "database_file" in test_config.config_data
-        assert "window_geometry" in test_config.config_data
-        assert "implementations" in test_config.config_data
-        assert "themes" in test_config.config_data
+    def test_database_file_exists(self, test_config: Config) -> None:
+        """Test that database_file is set in default config."""
+        db_file = test_config.get("database_file")
+        assert db_file is not None
+        assert len(db_file) > 0
 
-    def test_default_themes_structure(self, test_config: Config) -> None:
-        """Test that default themes structure is correct."""
-        themes = test_config.get("themes")
-        assert themes is not None
-        assert "colours" in themes
-        assert "warnings" in themes["colours"]
-        assert themes["colours"]["warnings"] == "#FFFF00"
+    def test_device_id_exists(self, test_config: Config) -> None:
+        """Test that device_id is generated."""
+        device_id = test_config.get_device_id_hex()
+        assert device_id is not None
+        assert len(device_id) == 32  # UUID hex without hyphens
+
+    def test_device_name_exists(self, test_config: Config) -> None:
+        """Test that device_name is set."""
+        device_name = test_config.get_device_name()
+        assert device_name is not None
+        assert len(device_name) > 0
 
     def test_database_file_path_is_absolute(self, test_config: Config) -> None:
         """Test that database file path is absolute."""

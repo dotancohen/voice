@@ -643,27 +643,9 @@ class SyncClient:
         Args:
             peer_id: Peer's device ID
         """
-        import uuid
-        peer_id_bytes = uuid.UUID(hex=peer_id).bytes
-
-        with self.db.conn:
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                """UPDATE sync_peers SET last_sync_at = datetime('now')
-                   WHERE peer_id = ?""",
-                (peer_id_bytes,),
-            )
-            if cursor.rowcount == 0:
-                # Peer doesn't exist in sync_peers, add it
-                peer = self.config.get_peer(peer_id)
-                peer_name = peer.get("peer_name") if peer else None
-                peer_url = peer.get("peer_url") if peer else ""
-                cursor.execute(
-                    """INSERT INTO sync_peers (peer_id, peer_name, peer_url, last_sync_at)
-                       VALUES (?, ?, ?, datetime('now'))""",
-                    (peer_id_bytes, peer_name, peer_url),
-                )
-            self.db.conn.commit()
+        peer = self.config.get_peer(peer_id)
+        peer_name = peer.get("peer_name") if peer else None
+        self.db.update_peer_sync_time(peer_id, peer_name)
 
     def _make_request(
         self,

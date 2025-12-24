@@ -111,7 +111,7 @@ class TestResolveTagTerm:
         tag_ids, is_ambiguous, not_found = resolve_tag_term(populated_db, "Work")
         assert not not_found
         assert not is_ambiguous
-        assert get_tag_uuid("Work") in tag_ids
+        assert get_tag_uuid_hex("Work") in tag_ids
 
     def test_hierarchical_path(self, populated_db: Database) -> None:
         """Hierarchical path is resolved."""
@@ -120,16 +120,16 @@ class TestResolveTagTerm:
         )
         assert not not_found
         assert not is_ambiguous
-        assert get_tag_uuid("France") in tag_ids
-        assert get_tag_uuid("Paris_France") in tag_ids  # Paris (descendant)
+        assert get_tag_uuid_hex("France") in tag_ids
+        assert get_tag_uuid_hex("Paris_France") in tag_ids  # Paris (descendant)
 
     def test_ambiguous_tag(self, populated_db: Database) -> None:
         """Ambiguous tag name returns all matches."""
         tag_ids, is_ambiguous, not_found = resolve_tag_term(populated_db, "Paris")
         assert not not_found
         assert is_ambiguous  # Paris exists under both France and Texas
-        assert get_tag_uuid("Paris_France") in tag_ids
-        assert get_tag_uuid("Paris_Texas") in tag_ids
+        assert get_tag_uuid_hex("Paris_France") in tag_ids
+        assert get_tag_uuid_hex("Paris_Texas") in tag_ids
 
     def test_not_found_tag(self, populated_db: Database) -> None:
         """Nonexistent tag returns not found."""

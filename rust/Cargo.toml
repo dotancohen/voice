@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = ["voice-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Dotan Cohen"]
+license = "MIT"
+repository = "https://github.com/dotancohen/voice"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled", "blob"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# UUID
+uuid = { version = "1.11", features = ["v7", "serde"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# HTTP server
+axum = { version = "0.7", features = ["json"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+
+# TLS
+rustls = "0.23"
+rustls-pemfile = "2.0"
+sha2 = "0.10"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Python bindings
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
+
+# Text merging
+diffy = "0.4"
+similar = "2.6"
+
+# Hostname
+hostname = "0.4"
+
+# Directory paths
+dirs = "5.0"
+
+# Base64
+base64 = "0.22"
+
+# URL encoding
+urlencoding = "2.1"

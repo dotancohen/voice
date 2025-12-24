@@ -5,15 +5,15 @@ This module provides fixtures for test configuration, database, and Qt applicati
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Generator, Dict, List
+from typing import Generator, Dict, List, Any
 
 import pytest
 from PySide6.QtWidgets import QApplication
-from uuid6 import uuid7
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -22,47 +22,17 @@ from core.config import Config
 from core.database import Database, set_local_device_id
 
 
-# Pre-generated UUIDs for consistent test data
-# Using deterministic UUIDs for predictable testing
-TEST_DEVICE_ID = uuid.UUID("00000000-0000-7000-8000-000000000001").bytes
+# Test device ID (hex string - 32 chars)
+TEST_DEVICE_ID = "00000000000070008000000000000001"
 
-# Tag UUIDs (using a pattern for easy identification)
-TAG_UUIDS = {
-    "Work": uuid.UUID("00000000-0000-7000-8000-000000000101").bytes,
-    "Projects": uuid.UUID("00000000-0000-7000-8000-000000000102").bytes,
-    "Voice": uuid.UUID("00000000-0000-7000-8000-000000000103").bytes,
-    "Meetings": uuid.UUID("00000000-0000-7000-8000-000000000104").bytes,
-    "Personal": uuid.UUID("00000000-0000-7000-8000-000000000105").bytes,
-    "Family": uuid.UUID("00000000-0000-7000-8000-000000000106").bytes,
-    "Health": uuid.UUID("00000000-0000-7000-8000-000000000107").bytes,
-    "Geography": uuid.UUID("00000000-0000-7000-8000-000000000108").bytes,
-    "Europe": uuid.UUID("00000000-0000-7000-8000-000000000109").bytes,
-    "France": uuid.UUID("00000000-0000-7000-8000-000000000110").bytes,
-    "Paris_France": uuid.UUID("00000000-0000-7000-8000-000000000111").bytes,
-    "Germany": uuid.UUID("00000000-0000-7000-8000-000000000112").bytes,
-    "Asia": uuid.UUID("00000000-0000-7000-8000-000000000113").bytes,
-    "Israel": uuid.UUID("00000000-0000-7000-8000-000000000114").bytes,
-    "Foo": uuid.UUID("00000000-0000-7000-8000-000000000115").bytes,
-    "bar_Foo": uuid.UUID("00000000-0000-7000-8000-000000000116").bytes,
-    "Boom": uuid.UUID("00000000-0000-7000-8000-000000000117").bytes,
-    "bar_Boom": uuid.UUID("00000000-0000-7000-8000-000000000118").bytes,
-    "US": uuid.UUID("00000000-0000-7000-8000-000000000119").bytes,
-    "Texas": uuid.UUID("00000000-0000-7000-8000-000000000120").bytes,
-    "Paris_Texas": uuid.UUID("00000000-0000-7000-8000-000000000121").bytes,
-}
+# These will be populated by the populated_db fixture
+TAG_IDS: Dict[str, str] = {}
+NOTE_IDS: Dict[int, str] = {}
 
-# Note UUIDs
-NOTE_UUIDS = {
-    1: uuid.UUID("00000000-0000-7000-8000-000000000201").bytes,
-    2: uuid.UUID("00000000-0000-7000-8000-000000000202").bytes,
-    3: uuid.UUID("00000000-0000-7000-8000-000000000203").bytes,
-    4: uuid.UUID("00000000-0000-7000-8000-000000000204").bytes,
-    5: uuid.UUID("00000000-0000-7000-8000-000000000205").bytes,
-    6: uuid.UUID("00000000-0000-7000-8000-000000000206").bytes,
-    7: uuid.UUID("00000000-0000-7000-8000-000000000207").bytes,
-    8: uuid.UUID("00000000-0000-7000-8000-000000000208").bytes,
-    9: uuid.UUID("00000000-0000-7000-8000-000000000209").bytes,
-}
+# Backward compatibility - these are now dynamic, not pre-determined
+# Tests should use get_tag_uuid_hex() and get_note_uuid_hex() instead
+TAG_UUIDS: Dict[str, bytes] = {}  # Will be populated after fixture runs
+NOTE_UUIDS: Dict[int, bytes] = {}  # Will be populated after fixture runs
 
 
 def uuid_to_hex(value: bytes) -> str:
@@ -190,14 +160,20 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
     Yields:
         Populated Database instance.
     """
+    global TAG_IDS, NOTE_IDS, TAG_UUIDS, NOTE_UUIDS
+    TAG_IDS.clear()
+    NOTE_IDS.clear()
+    TAG_UUIDS.clear()
+    NOTE_UUIDS.clear()
+
     # Set test device ID
     set_local_device_id(TEST_DEVICE_ID)
 
     db = Database(test_db_path)
 
-    # Create tag hierarchy
+    # Create tag hierarchy using Database API
+    # (key, name, parent_key or None)
     tags = [
-        # (uuid_key, name, parent_uuid_key or None)
         ("Work", "Work", None),
         ("Projects", "Projects", "Work"),
         ("Voice", "Voice", "Projects"),
@@ -221,53 +197,36 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
         ("Paris_Texas", "Paris", "Texas"),
     ]
 
-    with db.conn:
-        cursor = db.conn.cursor()
-        base_time = datetime(2025, 1, 1, 10, 0, 0)
+    for key, name, parent_key in tags:
+        parent_id = TAG_IDS.get(parent_key) if parent_key else None
+        tag_id = db.create_tag(name, parent_id)
+        TAG_IDS[key] = tag_id
+        TAG_UUIDS[key] = uuid.UUID(hex=tag_id).bytes
 
-        for uuid_key, name, parent_key in tags:
-            tag_id = TAG_UUIDS[uuid_key]
-            parent_id = TAG_UUIDS[parent_key] if parent_key else None
-            cursor.execute(
-                "INSERT INTO tags (id, name, parent_id, created_at) VALUES (?, ?, ?, ?)",
-                (tag_id, name, parent_id, base_time.strftime("%Y-%m-%d %H:%M:%S"))
-            )
+    # Create notes
+    # (note_num, content, list of tag keys)
+    notes = [
+        (1, "Meeting notes from project kickoff", ["Work", "Projects", "Meetings"]),
+        (2, "Remember to update documentation", ["Work", "Projects", "Voice"]),
+        (3, "Doctor appointment next Tuesday", ["Personal", "Health"]),
+        (4, "Family reunion in Paris", ["Personal", "Family", "France", "Paris_France"]),
+        (5, "Trip to Israel planning", ["Personal", "Asia", "Israel"]),
+        (6, "שלום עולם - Hebrew text test", ["Personal"]),
+        (7, "Testing ambiguous tag with Foo/bar", ["Foo", "bar_Foo"]),
+        (8, "Another note with Boom/bar", ["Boom", "bar_Boom"]),
+        (9, "Cowboys in Paris, Texas", ["US", "Texas", "Paris_Texas"]),
+    ]
 
-        # Create notes
-        # Map note number to (content, list of tag uuid keys)
-        notes = [
-            (1, "Meeting notes from project kickoff", ["Work", "Projects", "Meetings"]),
-            (2, "Remember to update documentation", ["Work", "Projects", "Voice"]),
-            (3, "Doctor appointment next Tuesday", ["Personal", "Health"]),
-            (4, "Family reunion in Paris", ["Personal", "Family", "France", "Paris_France"]),
-            (5, "Trip to Israel planning", ["Personal", "Asia", "Israel"]),
-            (6, "שלום עולם - Hebrew text test", ["Personal"]),
-            (7, "Testing ambiguous tag with Foo/bar", ["Foo", "bar_Foo"]),
-            (8, "Another note with Boom/bar", ["Boom", "bar_Boom"]),
-            (9, "Cowboys in Paris, Texas", ["US", "Texas", "Paris_Texas"]),
-        ]
+    for note_num, content, tag_keys in notes:
+        note_id = db.create_note(content)
+        NOTE_IDS[note_num] = note_id
+        NOTE_UUIDS[note_num] = uuid.UUID(hex=note_id).bytes
 
-        for i, (note_num, content, tag_keys) in enumerate(notes):
-            note_id = NOTE_UUIDS[note_num]
-            # Stagger creation times
-            created_at = base_time.replace(hour=10 + i)
-            cursor.execute(
-                "INSERT INTO notes (id, created_at, content) VALUES (?, ?, ?)",
-                (note_id, created_at.strftime("%Y-%m-%d %H:%M:%S"), content)
-            )
-
-            # Associate tags
-            for tag_key in tag_keys:
-                tag_id = TAG_UUIDS[tag_key]
-                cursor.execute(
-                    "INSERT INTO note_tags (note_id, tag_id, created_at) VALUES (?, ?, ?)",
-                    (note_id, tag_id, created_at.strftime("%Y-%m-%d %H:%M:%S"))
-                )
-
-        db.conn.commit()
+        # Associate tags
+        for tag_key in tag_keys:
+            db.add_tag_to_note(note_id, TAG_IDS[tag_key])
 
     # Create config.json for CLI tests
-    import json
     config_file = test_db_path.parent / "config.json"
     config_data = {
         "database_file": str(test_db_path),
@@ -292,19 +251,31 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
 # Helper functions for tests to get UUIDs
 def get_tag_uuid(key: str) -> bytes:
     """Get tag UUID bytes by key name."""
-    return TAG_UUIDS[key]
+    hex_id = TAG_IDS.get(key)
+    if hex_id:
+        return uuid.UUID(hex=hex_id).bytes
+    raise KeyError(f"Tag key '{key}' not found. Make sure populated_db fixture is used.")
 
 
 def get_tag_uuid_hex(key: str) -> str:
     """Get tag UUID hex string by key name."""
-    return uuid_to_hex(TAG_UUIDS[key])
+    hex_id = TAG_IDS.get(key)
+    if hex_id:
+        return hex_id
+    raise KeyError(f"Tag key '{key}' not found. Make sure populated_db fixture is used.")
 
 
 def get_note_uuid(num: int) -> bytes:
     """Get note UUID bytes by number."""
-    return NOTE_UUIDS[num]
+    hex_id = NOTE_IDS.get(num)
+    if hex_id:
+        return uuid.UUID(hex=hex_id).bytes
+    raise KeyError(f"Note number {num} not found. Make sure populated_db fixture is used.")
 
 
 def get_note_uuid_hex(num: int) -> str:
     """Get note UUID hex string by number."""
-    return uuid_to_hex(NOTE_UUIDS[num])
+    hex_id = NOTE_IDS.get(num)
+    if hex_id:
+        return hex_id
+    raise KeyError(f"Note number {num} not found. Make sure populated_db fixture is used.")

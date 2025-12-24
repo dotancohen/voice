@@ -5,6 +5,12 @@ __pycache__/
 *.so
 .Python
 
+# Rust
+rust/debug/
+rust/target/
+rust/**/*.rs.bk
+rust/**/mutants.out*/
+
 # Virtual environments
 .venv/
 venv/

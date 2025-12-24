@@ -77,17 +77,8 @@ class TestNoteDisplay:
     ) -> None:
         """Test that long content is truncated with ellipsis."""
         # Add a note with very long content
-        from datetime import datetime
-        import uuid
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         long_content = "A" * 200  # Much longer than 100 char limit
-        note_id = uuid.UUID("00000000-0000-7000-8000-000000000999").bytes
-        with populated_db.conn:
-            cursor = populated_db.conn.cursor()
-            cursor.execute(
-                "INSERT INTO notes (id, created_at, content) VALUES (?, ?, ?)",
-                (note_id, now, long_content)
-            )
+        populated_db.create_note(long_content)
 
         pane = NotesListPane(test_config, populated_db)
 

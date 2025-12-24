@@ -3,6 +3,8 @@
 This module provides search parsing and execution logic.
 It is used by both the GUI and CLI interfaces.
 
+This is a wrapper around the Rust voice_core extension.
+
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
 
@@ -12,9 +14,26 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+# Import from Rust extension
+from voice_core import (
+    ParsedSearch as RustParsedSearch,
+    parse_search_input as _rust_parse_search_input,
+)
+
 from .database import Database
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "SearchResult",
+    "ParsedSearch",
+    "parse_search_input",
+    "get_tag_full_path",
+    "resolve_tag_term",
+    "find_ambiguous_tags",
+    "execute_search",
+    "build_tag_search_term",
+]
 
 
 @dataclass
@@ -48,61 +67,36 @@ class ParsedSearch:
 def parse_search_input(search_input: str) -> ParsedSearch:
     """Parse search input to extract tag: keywords and free text.
 
-    Supports:
-    - tag:tagname for simple tag searches
-    - tag:Parent/Child/Grandchild for hierarchical paths
-    - Free text for content search
-    - Multiple tags combined with AND logic
+    Uses the Rust implementation for parsing.
 
     Args:
         search_input: Raw search input string
 
     Returns:
         ParsedSearch with extracted tag terms and free text.
-
-    Examples:
-        >>> parse_search_input("hello tag:Work world")
-        ParsedSearch(tag_terms=['Work'], free_text='hello world')
-
-        >>> parse_search_input("tag:Europe/France meeting")
-        ParsedSearch(tag_terms=['Europe/France'], free_text='meeting')
     """
     if not search_input or not search_input.strip():
         return ParsedSearch(tag_terms=[], free_text="")
 
-    words = search_input.split()
-    tag_terms: List[str] = []
-    text_words: List[str] = []
-
-    for word in words:
-        if word.lower().startswith("tag:"):
-            # Extract tag name/path (everything after "tag:")
-            tag_name = word[4:]  # Remove "tag:" prefix
-            if tag_name:
-                tag_terms.append(tag_name)
-        else:
-            text_words.append(word)
-
-    free_text = " ".join(text_words).strip()
-
-    return ParsedSearch(tag_terms=tag_terms, free_text=free_text)
+    rust_result = _rust_parse_search_input(search_input)
+    return ParsedSearch(
+        tag_terms=list(rust_result.tag_terms),
+        free_text=rust_result.free_text,
+    )
 
 
-def get_tag_full_path(db: Database, tag_id: int) -> str:
+def get_tag_full_path(db: Database, tag_id: str) -> str:
     """Get the full hierarchical path for a tag.
-
-    Traverses up the tag hierarchy to build the complete path.
 
     Args:
         db: Database connection
-        tag_id: Tag ID to get path for
+        tag_id: Tag ID (hex string) to get path for
 
     Returns:
         Full path like "Europe/France/Paris" or just "Work" for root tags.
-        Returns empty string if tag not found.
     """
     path_parts: List[str] = []
-    current_id: Optional[int] = tag_id
+    current_id: Optional[str] = tag_id
 
     while current_id is not None:
         tag = db.get_tag(current_id)
@@ -116,11 +110,8 @@ def get_tag_full_path(db: Database, tag_id: int) -> str:
 
 def resolve_tag_term(
     db: Database, tag_term: str
-) -> Tuple[List[int], bool, bool]:
+) -> Tuple[List[str], bool, bool]:
     """Resolve a tag search term to tag IDs.
-
-    Handles both simple tag names and hierarchical paths.
-    For ambiguous tags (same name in different locations), returns all matches.
 
     Args:
         db: Database connection
@@ -128,7 +119,7 @@ def resolve_tag_term(
 
     Returns:
         Tuple of:
-        - List of tag IDs (including descendants) matching the term
+        - List of tag IDs (hex strings, including descendants) matching the term
         - Boolean indicating if the term was ambiguous (matched multiple tags)
         - Boolean indicating if the term was not found
     """
@@ -139,10 +130,16 @@ def resolve_tag_term(
         return ([], False, True)  # Not found
 
     # Collect all descendants from all matching tags
-    all_descendants: List[int] = []
+    all_descendants: List[str] = []
     for tag in matching_tags:
         descendants = db.get_tag_descendants(tag["id"])
-        all_descendants.extend(descendants)
+        # Convert bytes to hex strings
+        for d in descendants:
+            if isinstance(d, bytes):
+                import uuid
+                all_descendants.append(uuid.UUID(bytes=d).hex)
+            else:
+                all_descendants.append(d)
 
     # Remove duplicates while preserving some order
     all_descendants = list(dict.fromkeys(all_descendants))
@@ -187,7 +184,7 @@ def execute_search(db: Database, search_input: str) -> SearchResult:
     parsed = parse_search_input(search_input)
 
     # Resolve tag terms to ID groups
-    tag_id_groups: List[List[int]] = []
+    tag_id_groups: List[List[str]] = []
     ambiguous_tags: List[str] = []
     not_found_tags: List[str] = []
 
@@ -238,12 +235,12 @@ def execute_search(db: Database, search_input: str) -> SearchResult:
     )
 
 
-def build_tag_search_term(db: Database, tag_id: int, use_full_path: bool = False) -> str:
+def build_tag_search_term(db: Database, tag_id: str, use_full_path: bool = False) -> str:
     """Build a search term for a tag.
 
     Args:
         db: Database connection
-        tag_id: Tag ID to build term for
+        tag_id: Tag ID (hex string) to build term for
         use_full_path: If True, always use full path. If False, use simple name
                        unless the tag name is ambiguous.
 

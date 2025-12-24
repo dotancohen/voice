@@ -1,0 +1,69 @@
+[package]
+name = "voice-core"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "voice_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Async
+tokio = { workspace = true }
+
+# Database
+rusqlite = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# HTTP
+reqwest = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# TLS
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+sha2 = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Python bindings
+pyo3 = { workspace = true }
+
+# Text merging
+diffy = { workspace = true }
+similar = { workspace = true }
+
+# Hostname
+hostname = { workspace = true }
+
+# Directory paths
+dirs = { workspace = true }
+
+# Base64
+base64 = { workspace = true }
+
+# URL encoding
+urlencoding = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.14"

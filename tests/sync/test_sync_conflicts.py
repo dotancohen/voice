@@ -381,14 +381,9 @@ class TestTagRenameConflicts:
         assert "NameFromB" in tag_a["name"]
 
         # Should have conflict record on A
-        with node_a.db.conn:
-            cursor = node_a.db.conn.cursor()
-            cursor.execute(
-                "SELECT * FROM conflicts_tag_rename WHERE tag_id = ?",
-                (bytes.fromhex(tag_id),)
-            )
-            conflicts = cursor.fetchall()
-            assert len(conflicts) >= 1
+        conflicts = node_a.db.get_tag_rename_conflicts(include_resolved=True)
+        tag_conflicts = [c for c in conflicts if c.get("tag_id") == tag_id]
+        assert len(tag_conflicts) >= 1
 
     def test_one_side_rename_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -423,14 +418,9 @@ class TestTagRenameConflicts:
         assert tag_b["name"] == "NewName"
 
         # No conflict record
-        with node_b.db.conn:
-            cursor = node_b.db.conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) as cnt FROM conflicts_tag_rename WHERE tag_id = ?",
-                (bytes.fromhex(tag_id),)
-            )
-            row = cursor.fetchone()
-            assert row["cnt"] == 0
+        conflicts = node_b.db.get_tag_rename_conflicts(include_resolved=True)
+        tag_conflicts = [c for c in conflicts if c.get("tag_id") == tag_id]
+        assert len(tag_conflicts) == 0
 
 
 class TestConflictResolution:
