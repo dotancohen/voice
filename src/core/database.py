@@ -373,6 +373,42 @@ class Database:
             remote_device_id, remote_device_name,
         )
 
+    def create_tag_parent_conflict(
+        self,
+        tag_id: str,
+        local_parent_id: Optional[str],
+        local_modified_at: str,
+        remote_parent_id: Optional[str],
+        remote_modified_at: str,
+        remote_device_id: Optional[str] = None,
+        remote_device_name: Optional[str] = None,
+    ) -> str:
+        """Create a tag parent_id conflict record."""
+        return self._rust_db.create_tag_parent_conflict(
+            tag_id, local_parent_id, local_modified_at,
+            remote_parent_id, remote_modified_at,
+            remote_device_id, remote_device_name,
+        )
+
+    def create_tag_delete_conflict(
+        self,
+        tag_id: str,
+        surviving_name: str,
+        surviving_parent_id: Optional[str],
+        surviving_modified_at: str,
+        surviving_device_id: Optional[str] = None,
+        surviving_device_name: Optional[str] = None,
+        deleted_at: str = "",
+        deleting_device_id: Optional[str] = None,
+        deleting_device_name: Optional[str] = None,
+    ) -> str:
+        """Create a tag delete conflict record (rename vs delete)."""
+        return self._rust_db.create_tag_delete_conflict(
+            tag_id, surviving_name, surviving_parent_id, surviving_modified_at,
+            surviving_device_id, surviving_device_name,
+            deleted_at, deleting_device_id, deleting_device_name,
+        )
+
     # ============================================================================
     # Conflict query and resolution methods
     # ============================================================================
@@ -398,6 +434,18 @@ class Database:
     ) -> List[Dict[str, Any]]:
         """Get tag rename conflicts."""
         return self._rust_db.get_tag_rename_conflicts(include_resolved)
+
+    def get_tag_parent_conflicts(
+        self, include_resolved: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Get tag parent_id conflicts."""
+        return self._rust_db.get_tag_parent_conflicts(include_resolved)
+
+    def get_tag_delete_conflicts(
+        self, include_resolved: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Get tag delete conflicts (rename vs delete)."""
+        return self._rust_db.get_tag_delete_conflicts(include_resolved)
 
     def resolve_note_content_conflict(
         self, conflict_id: str, new_content: str

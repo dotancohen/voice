@@ -200,6 +200,40 @@ impl Database {
                 FOREIGN KEY (tag_id) REFERENCES tags(id)
             );
 
+            -- Create conflicts_tag_parent table for parent_id conflicts
+            CREATE TABLE IF NOT EXISTS conflicts_tag_parent (
+                id BLOB PRIMARY KEY,
+                tag_id BLOB NOT NULL,
+                local_parent_id BLOB,
+                local_modified_at DATETIME NOT NULL,
+                local_device_id BLOB,
+                local_device_name TEXT,
+                remote_parent_id BLOB,
+                remote_modified_at DATETIME NOT NULL,
+                remote_device_id BLOB,
+                remote_device_name TEXT,
+                created_at DATETIME NOT NULL,
+                resolved_at DATETIME,
+                FOREIGN KEY (tag_id) REFERENCES tags(id)
+            );
+
+            -- Create conflicts_tag_delete table for rename vs delete conflicts
+            CREATE TABLE IF NOT EXISTS conflicts_tag_delete (
+                id BLOB PRIMARY KEY,
+                tag_id BLOB NOT NULL,
+                surviving_name TEXT NOT NULL,
+                surviving_parent_id BLOB,
+                surviving_modified_at DATETIME NOT NULL,
+                surviving_device_id BLOB,
+                surviving_device_name TEXT,
+                deleted_at DATETIME NOT NULL,
+                deleting_device_id BLOB,
+                deleting_device_name TEXT,
+                created_at DATETIME NOT NULL,
+                resolved_at DATETIME,
+                FOREIGN KEY (tag_id) REFERENCES tags(id)
+            );
+
             -- Create conflicts_note_tag table
             CREATE TABLE IF NOT EXISTS conflicts_note_tag (
                 id BLOB PRIMARY KEY,
@@ -359,6 +393,20 @@ impl Database {
             SET deleted_at = datetime('now'), modified_at = datetime('now')
             WHERE id = ? AND deleted_at IS NULL
             "#,
+            params![uuid_bytes],
+        )?;
+
+        Ok(deleted > 0)
+    }
+
+    /// Delete a tag (hard delete - cascades to note_tags)
+    pub fn delete_tag(&self, tag_id: &str) -> VoiceResult<bool> {
+        let uuid = Uuid::parse_str(tag_id)
+            .map_err(|e| VoiceError::validation("tag_id", e.to_string()))?;
+        let uuid_bytes = uuid.as_bytes().to_vec();
+
+        let deleted = self.conn.execute(
+            "DELETE FROM tags WHERE id = ?",
             params![uuid_bytes],
         )?;
 
@@ -1582,6 +1630,115 @@ impl Database {
         Ok(conflict_id.simple().to_string())
     }
 
+    /// Create a conflict record for tag parent_id conflict
+    pub fn create_tag_parent_conflict(
+        &self,
+        tag_id: &str,
+        local_parent_id: Option<&str>,
+        local_modified_at: &str,
+        remote_parent_id: Option<&str>,
+        remote_modified_at: &str,
+        remote_device_id: Option<&str>,
+        remote_device_name: Option<&str>,
+    ) -> VoiceResult<String> {
+        let conflict_id = Uuid::now_v7();
+        let conflict_bytes = conflict_id.as_bytes().to_vec();
+
+        let tag_uuid = Uuid::parse_str(tag_id)
+            .map_err(|e| VoiceError::validation("tag_id", e.to_string()))?;
+        let tag_bytes = tag_uuid.as_bytes().to_vec();
+
+        let local_parent_bytes = local_parent_id.and_then(|id| {
+            Uuid::parse_str(id).ok().map(|u| u.as_bytes().to_vec())
+        });
+
+        let remote_parent_bytes = remote_parent_id.and_then(|id| {
+            Uuid::parse_str(id).ok().map(|u| u.as_bytes().to_vec())
+        });
+
+        let remote_device_bytes = remote_device_id.and_then(|id| {
+            Uuid::parse_str(id).ok().map(|u| u.as_bytes().to_vec())
+        });
+
+        self.conn.execute(
+            r#"
+            INSERT INTO conflicts_tag_parent
+            (id, tag_id, local_parent_id, local_modified_at, local_device_id,
+             remote_parent_id, remote_modified_at, remote_device_id, remote_device_name, created_at)
+            VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, datetime('now'))
+            "#,
+            params![
+                conflict_bytes,
+                tag_bytes,
+                local_parent_bytes,
+                local_modified_at,
+                remote_parent_bytes,
+                remote_modified_at,
+                remote_device_bytes,
+                remote_device_name,
+            ],
+        )?;
+
+        Ok(conflict_id.simple().to_string())
+    }
+
+    /// Create a conflict record for tag delete conflict (rename vs delete)
+    pub fn create_tag_delete_conflict(
+        &self,
+        tag_id: &str,
+        surviving_name: &str,
+        surviving_parent_id: Option<&str>,
+        surviving_modified_at: &str,
+        surviving_device_id: Option<&str>,
+        surviving_device_name: Option<&str>,
+        deleted_at: &str,
+        deleting_device_id: Option<&str>,
+        deleting_device_name: Option<&str>,
+    ) -> VoiceResult<String> {
+        let conflict_id = Uuid::now_v7();
+        let conflict_bytes = conflict_id.as_bytes().to_vec();
+
+        let tag_uuid = Uuid::parse_str(tag_id)
+            .map_err(|e| VoiceError::validation("tag_id", e.to_string()))?;
+        let tag_bytes = tag_uuid.as_bytes().to_vec();
+
+        let surviving_parent_bytes = surviving_parent_id.and_then(|id| {
+            Uuid::parse_str(id).ok().map(|u| u.as_bytes().to_vec())
+        });
+
+        let surviving_device_bytes = surviving_device_id.and_then(|id| {
+            Uuid::parse_str(id).ok().map(|u| u.as_bytes().to_vec())
+        });
+
+        let deleting_device_bytes = deleting_device_id.and_then(|id| {
+            Uuid::parse_str(id).ok().map(|u| u.as_bytes().to_vec())
+        });
+
+        self.conn.execute(
+            r#"
+            INSERT INTO conflicts_tag_delete
+            (id, tag_id, surviving_name, surviving_parent_id, surviving_modified_at,
+             surviving_device_id, surviving_device_name,
+             deleted_at, deleting_device_id, deleting_device_name, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            "#,
+            params![
+                conflict_bytes,
+                tag_bytes,
+                surviving_name,
+                surviving_parent_bytes,
+                surviving_modified_at,
+                surviving_device_bytes,
+                surviving_device_name,
+                deleted_at,
+                deleting_device_bytes,
+                deleting_device_name,
+            ],
+        )?;
+
+        Ok(conflict_id.simple().to_string())
+    }
+
     // ============================================================================
     // Conflict query and resolution methods
     // ============================================================================
@@ -1783,6 +1940,126 @@ impl Database {
             conflict.insert("remote_modified_at".to_string(), serde_json::Value::String(remote_modified_at));
             conflict.insert("remote_device_id".to_string(), remote_device_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
             conflict.insert("remote_device_name".to_string(), remote_device_name.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("created_at".to_string(), serde_json::Value::String(created_at));
+            conflict.insert("resolved_at".to_string(), resolved_at.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflicts.push(conflict);
+        }
+
+        Ok(conflicts)
+    }
+
+    /// Get tag parent conflicts
+    pub fn get_tag_parent_conflicts(&self, include_resolved: bool) -> VoiceResult<Vec<HashMap<String, serde_json::Value>>> {
+        let query = if include_resolved {
+            r#"SELECT id, tag_id, local_parent_id, local_modified_at, local_device_id,
+                      local_device_name, remote_parent_id, remote_modified_at,
+                      remote_device_id, remote_device_name, created_at, resolved_at
+               FROM conflicts_tag_parent ORDER BY created_at DESC"#
+        } else {
+            r#"SELECT id, tag_id, local_parent_id, local_modified_at, local_device_id,
+                      local_device_name, remote_parent_id, remote_modified_at,
+                      remote_device_id, remote_device_name, created_at, resolved_at
+               FROM conflicts_tag_parent WHERE resolved_at IS NULL ORDER BY created_at DESC"#
+        };
+
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt.query_map([], |row| {
+            let id: Vec<u8> = row.get(0)?;
+            let tag_id: Vec<u8> = row.get(1)?;
+            let local_parent_id: Option<Vec<u8>> = row.get(2)?;
+            let local_modified_at: String = row.get(3)?;
+            let local_device_id: Option<Vec<u8>> = row.get(4)?;
+            let local_device_name: Option<String> = row.get(5)?;
+            let remote_parent_id: Option<Vec<u8>> = row.get(6)?;
+            let remote_modified_at: String = row.get(7)?;
+            let remote_device_id: Option<Vec<u8>> = row.get(8)?;
+            let remote_device_name: Option<String> = row.get(9)?;
+            let created_at: String = row.get(10)?;
+            let resolved_at: Option<String> = row.get(11)?;
+
+            Ok((id, tag_id, local_parent_id, local_modified_at, local_device_id,
+                local_device_name, remote_parent_id, remote_modified_at,
+                remote_device_id, remote_device_name, created_at, resolved_at))
+        })?;
+
+        let mut conflicts = Vec::new();
+        for row in rows {
+            let (id, tag_id, local_parent_id, local_modified_at, local_device_id,
+                 local_device_name, remote_parent_id, remote_modified_at,
+                 remote_device_id, remote_device_name, created_at, resolved_at) = row?;
+
+            let mut conflict = HashMap::new();
+            conflict.insert("id".to_string(), serde_json::Value::String(uuid_bytes_to_hex(&id).unwrap_or_default()));
+            conflict.insert("tag_id".to_string(), serde_json::Value::String(uuid_bytes_to_hex(&tag_id).unwrap_or_default()));
+            conflict.insert("local_parent_id".to_string(), local_parent_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("local_modified_at".to_string(), serde_json::Value::String(local_modified_at));
+            conflict.insert("local_device_id".to_string(), local_device_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("local_device_name".to_string(), local_device_name.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("remote_parent_id".to_string(), remote_parent_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("remote_modified_at".to_string(), serde_json::Value::String(remote_modified_at));
+            conflict.insert("remote_device_id".to_string(), remote_device_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("remote_device_name".to_string(), remote_device_name.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("created_at".to_string(), serde_json::Value::String(created_at));
+            conflict.insert("resolved_at".to_string(), resolved_at.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflicts.push(conflict);
+        }
+
+        Ok(conflicts)
+    }
+
+    /// Get tag delete conflicts (rename vs delete)
+    pub fn get_tag_delete_conflicts(&self, include_resolved: bool) -> VoiceResult<Vec<HashMap<String, serde_json::Value>>> {
+        let query = if include_resolved {
+            r#"SELECT id, tag_id, surviving_name, surviving_parent_id, surviving_modified_at,
+                      surviving_device_id, surviving_device_name,
+                      deleted_at, deleting_device_id, deleting_device_name,
+                      created_at, resolved_at
+               FROM conflicts_tag_delete ORDER BY created_at DESC"#
+        } else {
+            r#"SELECT id, tag_id, surviving_name, surviving_parent_id, surviving_modified_at,
+                      surviving_device_id, surviving_device_name,
+                      deleted_at, deleting_device_id, deleting_device_name,
+                      created_at, resolved_at
+               FROM conflicts_tag_delete WHERE resolved_at IS NULL ORDER BY created_at DESC"#
+        };
+
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt.query_map([], |row| {
+            let id: Vec<u8> = row.get(0)?;
+            let tag_id: Vec<u8> = row.get(1)?;
+            let surviving_name: String = row.get(2)?;
+            let surviving_parent_id: Option<Vec<u8>> = row.get(3)?;
+            let surviving_modified_at: String = row.get(4)?;
+            let surviving_device_id: Option<Vec<u8>> = row.get(5)?;
+            let surviving_device_name: Option<String> = row.get(6)?;
+            let deleted_at: String = row.get(7)?;
+            let deleting_device_id: Option<Vec<u8>> = row.get(8)?;
+            let deleting_device_name: Option<String> = row.get(9)?;
+            let created_at: String = row.get(10)?;
+            let resolved_at: Option<String> = row.get(11)?;
+
+            Ok((id, tag_id, surviving_name, surviving_parent_id, surviving_modified_at,
+                surviving_device_id, surviving_device_name,
+                deleted_at, deleting_device_id, deleting_device_name, created_at, resolved_at))
+        })?;
+
+        let mut conflicts = Vec::new();
+        for row in rows {
+            let (id, tag_id, surviving_name, surviving_parent_id, surviving_modified_at,
+                 surviving_device_id, surviving_device_name,
+                 deleted_at, deleting_device_id, deleting_device_name, created_at, resolved_at) = row?;
+
+            let mut conflict = HashMap::new();
+            conflict.insert("id".to_string(), serde_json::Value::String(uuid_bytes_to_hex(&id).unwrap_or_default()));
+            conflict.insert("tag_id".to_string(), serde_json::Value::String(uuid_bytes_to_hex(&tag_id).unwrap_or_default()));
+            conflict.insert("surviving_name".to_string(), serde_json::Value::String(surviving_name));
+            conflict.insert("surviving_parent_id".to_string(), surviving_parent_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("surviving_modified_at".to_string(), serde_json::Value::String(surviving_modified_at));
+            conflict.insert("surviving_device_id".to_string(), surviving_device_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("surviving_device_name".to_string(), surviving_device_name.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("deleted_at".to_string(), serde_json::Value::String(deleted_at));
+            conflict.insert("deleting_device_id".to_string(), deleting_device_id.and_then(|b| uuid_bytes_to_hex(&b)).map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
+            conflict.insert("deleting_device_name".to_string(), deleting_device_name.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
             conflict.insert("created_at".to_string(), serde_json::Value::String(created_at));
             conflict.insert("resolved_at".to_string(), resolved_at.map_or(serde_json::Value::Null, |s| serde_json::Value::String(s)));
             conflicts.push(conflict);
@@ -2361,6 +2638,58 @@ impl PyDatabase {
         )?)
     }
 
+    /// Create a tag parent_id conflict record
+    #[pyo3(signature = (tag_id, local_parent_id, local_modified_at, remote_parent_id, remote_modified_at, remote_device_id=None, remote_device_name=None))]
+    fn create_tag_parent_conflict(
+        &self,
+        tag_id: &str,
+        local_parent_id: Option<&str>,
+        local_modified_at: &str,
+        remote_parent_id: Option<&str>,
+        remote_modified_at: &str,
+        remote_device_id: Option<&str>,
+        remote_device_name: Option<&str>,
+    ) -> PyResult<String> {
+        let db = self.inner.lock().unwrap();
+        Ok(db.create_tag_parent_conflict(
+            tag_id,
+            local_parent_id,
+            local_modified_at,
+            remote_parent_id,
+            remote_modified_at,
+            remote_device_id,
+            remote_device_name,
+        )?)
+    }
+
+    /// Create a tag delete conflict record
+    #[pyo3(signature = (tag_id, surviving_name, surviving_parent_id, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_at="", deleting_device_id=None, deleting_device_name=None))]
+    fn create_tag_delete_conflict(
+        &self,
+        tag_id: &str,
+        surviving_name: &str,
+        surviving_parent_id: Option<&str>,
+        surviving_modified_at: &str,
+        surviving_device_id: Option<&str>,
+        surviving_device_name: Option<&str>,
+        deleted_at: &str,
+        deleting_device_id: Option<&str>,
+        deleting_device_name: Option<&str>,
+    ) -> PyResult<String> {
+        let db = self.inner.lock().unwrap();
+        Ok(db.create_tag_delete_conflict(
+            tag_id,
+            surviving_name,
+            surviving_parent_id,
+            surviving_modified_at,
+            surviving_device_id,
+            surviving_device_name,
+            deleted_at,
+            deleting_device_id,
+            deleting_device_name,
+        )?)
+    }
+
     // ============================================================================
     // Conflict query and resolution methods (Python bindings)
     // ============================================================================
@@ -2416,6 +2745,38 @@ impl PyDatabase {
     fn get_tag_rename_conflicts(&self, py: Python<'_>, include_resolved: bool) -> PyResult<PyObject> {
         let db = self.inner.lock().unwrap();
         let conflicts = db.get_tag_rename_conflicts(include_resolved)?;
+
+        let result = PyList::empty(py);
+        for conflict in conflicts {
+            let dict = PyDict::new(py);
+            for (key, value) in conflict {
+                dict.set_item(&key, json_value_to_py(py, value)?)?;
+            }
+            result.append(dict)?;
+        }
+        Ok(result.into())
+    }
+
+    /// Get tag parent conflicts
+    fn get_tag_parent_conflicts(&self, py: Python<'_>, include_resolved: bool) -> PyResult<PyObject> {
+        let db = self.inner.lock().unwrap();
+        let conflicts = db.get_tag_parent_conflicts(include_resolved)?;
+
+        let result = PyList::empty(py);
+        for conflict in conflicts {
+            let dict = PyDict::new(py);
+            for (key, value) in conflict {
+                dict.set_item(&key, json_value_to_py(py, value)?)?;
+            }
+            result.append(dict)?;
+        }
+        Ok(result.into())
+    }
+
+    /// Get tag delete conflicts
+    fn get_tag_delete_conflicts(&self, py: Python<'_>, include_resolved: bool) -> PyResult<PyObject> {
+        let db = self.inner.lock().unwrap();
+        let conflicts = db.get_tag_delete_conflicts(include_resolved)?;
 
         let result = PyList::empty(py);
         for conflict in conflicts {

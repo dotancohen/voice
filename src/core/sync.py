@@ -659,15 +659,14 @@ def apply_tag_change(
             )
             return "applied"
 
-        # If names are the same, no rename needed
-        if data["name"] == existing["name"]:
-            return "skipped"
-
-        # Names differ - determine who changed since last sync
+        local_name = existing["name"]
+        remote_name = data["name"]
+        local_parent_id = existing.get("parent_id")
+        remote_parent_id = data.get("parent_id")
         local_modified = existing.get("modified_at") or existing["created_at"]
         remote_modified = data.get("modified_at") or data["created_at"]
 
-        # Check if each side was modified since last sync
+        # Check if local changed since last sync
         local_changed = (
             last_sync_at is None
             or (local_modified is not None and local_modified > last_sync_at)
@@ -678,9 +677,9 @@ def apply_tag_change(
         )
 
         if not local_changed and remote_changed:
-            # Only remote changed → apply remote's name
+            # Only remote changed → apply remote's changes
             db.apply_sync_tag(
-                tag_id, data["name"], data.get("parent_id"),
+                tag_id, remote_name, remote_parent_id,
                 existing["created_at"], remote_modified
             )
             return "applied"
@@ -690,26 +689,48 @@ def apply_tag_change(
             return "skipped"
 
         if not local_changed and not remote_changed:
-            # Neither changed but names differ? Shouldn't happen, but skip
+            # Neither changed - skip
             return "skipped"
 
-        # Both changed → combine names and create conflict
-        combined_name = f"{existing['name']} | {data['name']}"
-        db.apply_sync_tag(
-            tag_id, combined_name, existing.get("parent_id"),
-            existing["created_at"], datetime.now().isoformat()
-        )
+        # Both changed - check for conflicts
+        has_conflict = False
 
-        db.create_tag_rename_conflict(
-            tag_id,
-            existing["name"],
-            local_modified,
-            data["name"],
-            remote_modified,
-            change.device_id if change.device_id else None,
-            peer_device_name,
+        # Check for name conflict
+        if local_name != remote_name:
+            db.create_tag_rename_conflict(
+                tag_id,
+                local_name,
+                local_modified,
+                remote_name,
+                remote_modified,
+                change.device_id if change.device_id else None,
+                peer_device_name,
+            )
+            has_conflict = True
+
+        # Check for parent_id conflict
+        if local_parent_id != remote_parent_id:
+            db.create_tag_parent_conflict(
+                tag_id,
+                local_parent_id,
+                local_modified,
+                remote_parent_id,
+                remote_modified,
+                change.device_id if change.device_id else None,
+                peer_device_name,
+            )
+            has_conflict = True
+
+        if has_conflict:
+            # Don't apply remote change - keep local state
+            return "conflict"
+
+        # No conflicts - apply (same name and parent)
+        db.apply_sync_tag(
+            tag_id, remote_name, remote_parent_id,
+            existing["created_at"], remote_modified
         )
-        return "conflict"
+        return "applied"
 
     return "skipped"
 
