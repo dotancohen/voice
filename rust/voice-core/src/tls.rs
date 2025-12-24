@@ -126,20 +126,67 @@ impl<'a> TOFUVerifier<'a> {
 
 /// Generate a self-signed certificate
 ///
-/// This is a placeholder - actual certificate generation would require
-/// the `rcgen` or `openssl` crate. For now, we assume certificates
-/// are generated externally or by the Python code during transition.
+/// Returns (cert_pem, key_pem) as strings
 pub fn generate_self_signed_cert(
-    _cert_path: &Path,
-    _key_path: &Path,
-    _common_name: &str,
-    _device_id: Option<&str>,
+    cert_path: &Path,
+    key_path: &Path,
+    common_name: &str,
+    device_id: Option<&str>,
 ) -> VoiceResult<(String, String)> {
-    Err(VoiceError::Tls(
-        "Certificate generation not yet implemented in Rust. \
-         Please generate certificates using the Python version or openssl."
-            .to_string(),
-    ))
+    use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType, IsCa, BasicConstraints};
+
+    // Create certificate parameters
+    let mut params = CertificateParams::default();
+
+    // Set distinguished name
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, common_name);
+    if let Some(id) = device_id {
+        dn.push(DnType::OrganizationalUnitName, id);
+    }
+    params.distinguished_name = dn;
+
+    // Set validity period (10 years)
+    params.not_before = rcgen::date_time_ymd(2024, 1, 1);
+    params.not_after = rcgen::date_time_ymd(2034, 1, 1);
+
+    // Add Subject Alternative Names
+    params.subject_alt_names = vec![
+        SanType::DnsName(common_name.try_into().map_err(|e| {
+            VoiceError::Tls(format!("Invalid common name: {}", e))
+        })?),
+        SanType::DnsName("localhost".try_into().unwrap()),
+    ];
+
+    // Not a CA - this is an end-entity certificate
+    params.is_ca = IsCa::NoCa;
+
+    // Generate key pair
+    let key_pair = KeyPair::generate()
+        .map_err(|e| VoiceError::Tls(format!("Failed to generate key pair: {}", e)))?;
+
+    // Generate certificate
+    let cert = params.self_signed(&key_pair)
+        .map_err(|e| VoiceError::Tls(format!("Failed to generate certificate: {}", e)))?;
+
+    let cert_pem = cert.pem();
+    let key_pem = key_pair.serialize_pem();
+
+    // Write to files
+    fs::create_dir_all(cert_path.parent().unwrap_or(Path::new(".")))?;
+    fs::write(cert_path, &cert_pem)?;
+    fs::write(key_path, &key_pem)?;
+
+    // Set restrictive permissions on key file (Unix only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(key_path)?.permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(key_path, perms)?;
+    }
+
+    Ok((cert_pem, key_pem))
 }
 
 /// Ensure server certificate exists
@@ -154,18 +201,13 @@ pub fn ensure_server_certificate(
     let key_path = certs_dir.join("server.key");
 
     if force_regenerate || !cert_path.exists() || !key_path.exists() {
-        // For now, return an error - certificate generation will be added later
-        return Err(VoiceError::Tls(format!(
-            "Server certificate not found at {}. \
-             Please generate certificates using: \
-             openssl req -x509 -newkey rsa:2048 -keyout {} -out {} -days 3650 -nodes",
-            cert_path.display(),
-            key_path.display(),
-            cert_path.display()
-        )));
+        // Generate new certificate
+        let device_name = config.device_name();
+        let device_id = config.device_id_hex();
+        generate_self_signed_cert(&cert_path, &key_path, &device_name, Some(&device_id))?;
     }
 
-    // Compute fingerprint of existing certificate
+    // Compute fingerprint of certificate
     let fingerprint = compute_fingerprint(&cert_path)?;
 
     Ok((cert_path, key_path, fingerprint))

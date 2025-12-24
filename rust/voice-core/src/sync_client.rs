@@ -467,16 +467,119 @@ impl SyncClient {
         Ok((result.applied, result.conflicts))
     }
 
-    fn apply_changes(&self, _changes: &[SyncChange]) -> VoiceResult<(i64, i64)> {
-        // TODO: Implement change application logic
-        // This requires access to the sync module's apply_sync_changes function
-        Ok((0, 0))
+    fn apply_changes(&self, changes: &[SyncChange]) -> VoiceResult<(i64, i64)> {
+        let db = self.db.lock().unwrap();
+        let mut applied = 0i64;
+        let mut conflicts = 0i64;
+
+        // Get last sync timestamp with this peer (use device_id as peer_id for self-tracking)
+        let last_sync_at: Option<String> = None; // For pull, we don't use last_sync filtering here
+
+        for change in changes {
+            let result = match change.entity_type.as_str() {
+                "note" => self.apply_note_change(&db, change, last_sync_at.as_deref()),
+                "tag" => self.apply_tag_change(&db, change, last_sync_at.as_deref()),
+                "note_tag" => self.apply_note_tag_change(&db, change, last_sync_at.as_deref()),
+                _ => continue,
+            };
+
+            match result {
+                Ok(true) => applied += 1,
+                Ok(false) => {} // Skipped
+                Err(_) => conflicts += 1,
+            }
+        }
+
+        Ok((applied, conflicts))
     }
 
-    fn get_changes_since(&self, _since: Option<&str>) -> VoiceResult<Vec<SyncChange>> {
-        // TODO: Implement getting local changes
-        // This requires access to the sync module's get_changes_since function
-        Ok(vec![])
+    fn apply_note_change(
+        &self,
+        db: &Database,
+        change: &SyncChange,
+        _last_sync_at: Option<&str>,
+    ) -> VoiceResult<bool> {
+        let note_id = &change.entity_id;
+        let data = &change.data;
+
+        let created_at = data["created_at"].as_str().unwrap_or("");
+        let content = data["content"].as_str().unwrap_or("");
+        let modified_at = data["modified_at"].as_str();
+        let deleted_at = data["deleted_at"].as_str();
+
+        db.apply_sync_note(note_id, created_at, content, modified_at, deleted_at)?;
+        Ok(true)
+    }
+
+    fn apply_tag_change(
+        &self,
+        db: &Database,
+        change: &SyncChange,
+        _last_sync_at: Option<&str>,
+    ) -> VoiceResult<bool> {
+        let tag_id = &change.entity_id;
+        let data = &change.data;
+
+        let name = data["name"].as_str().unwrap_or("");
+        let parent_id = data["parent_id"].as_str();
+        let created_at = data["created_at"].as_str().unwrap_or("");
+        let modified_at = data["modified_at"].as_str();
+
+        db.apply_sync_tag(tag_id, name, parent_id, created_at, modified_at)?;
+        Ok(true)
+    }
+
+    fn apply_note_tag_change(
+        &self,
+        db: &Database,
+        change: &SyncChange,
+        _last_sync_at: Option<&str>,
+    ) -> VoiceResult<bool> {
+        // Parse entity_id (format: "note_id:tag_id")
+        let parts: Vec<&str> = change.entity_id.split(':').collect();
+        if parts.len() != 2 {
+            return Ok(false);
+        }
+
+        let note_id = parts[0];
+        let tag_id = parts[1];
+        let data = &change.data;
+
+        let created_at = data["created_at"].as_str().unwrap_or("");
+        let modified_at = data["modified_at"].as_str();
+        let deleted_at = data["deleted_at"].as_str();
+
+        db.apply_sync_note_tag(note_id, tag_id, created_at, modified_at, deleted_at)?;
+        Ok(true)
+    }
+
+    fn get_changes_since(&self, since: Option<&str>) -> VoiceResult<Vec<SyncChange>> {
+        let db = self.db.lock().unwrap();
+        let (changes, _) = db.get_changes_since(since, 10000)?;
+
+        // Convert HashMap changes to SyncChange structs
+        let sync_changes: Vec<SyncChange> = changes
+            .into_iter()
+            .filter_map(|c| {
+                let entity_type = c.get("entity_type")?.as_str()?.to_string();
+                let entity_id = c.get("entity_id")?.as_str()?.to_string();
+                let operation = c.get("operation")?.as_str()?.to_string();
+                let timestamp = c.get("timestamp")?.as_str()?.to_string();
+                let data = c.get("data")?.clone();
+
+                Some(SyncChange {
+                    entity_type,
+                    entity_id,
+                    operation,
+                    data,
+                    timestamp,
+                    device_id: self.device_id.clone(),
+                    device_name: Some(self.device_name.clone()),
+                })
+            })
+            .collect();
+
+        Ok(sync_changes)
     }
 
     fn calculate_clock_skew(&self, server_timestamp: Option<&str>) -> f64 {

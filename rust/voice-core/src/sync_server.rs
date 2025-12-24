@@ -335,21 +335,431 @@ fn get_changes_since(
         });
     }
 
-    // Similar queries for tags and note_tags would go here
-    // Keeping this simplified for now
+    // Get tag changes
+    let remaining = limit - changes.len() as i64;
+    if remaining > 0 {
+        let tags_query = if since.is_some() {
+            "SELECT id, name, parent_id, created_at, modified_at FROM tags \
+             WHERE modified_at > ? OR (modified_at IS NULL AND created_at > ?) \
+             ORDER BY COALESCE(modified_at, created_at) LIMIT ?"
+        } else {
+            "SELECT id, name, parent_id, created_at, modified_at FROM tags \
+             ORDER BY COALESCE(modified_at, created_at) LIMIT ?"
+        };
+
+        let mut stmt = conn.prepare(tags_query)?;
+        let tag_rows: Vec<_> = if let Some(ts) = since {
+            stmt.query_map(rusqlite::params![ts, ts, remaining], |row| {
+                let id_bytes: Vec<u8> = row.get(0)?;
+                let name: String = row.get(1)?;
+                let parent_id_bytes: Option<Vec<u8>> = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                let modified_at: Option<String> = row.get(4)?;
+                Ok((id_bytes, name, parent_id_bytes, created_at, modified_at))
+            })?
+            .collect()
+        } else {
+            stmt.query_map(rusqlite::params![remaining], |row| {
+                let id_bytes: Vec<u8> = row.get(0)?;
+                let name: String = row.get(1)?;
+                let parent_id_bytes: Option<Vec<u8>> = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                let modified_at: Option<String> = row.get(4)?;
+                Ok((id_bytes, name, parent_id_bytes, created_at, modified_at))
+            })?
+            .collect()
+        };
+
+        for row in tag_rows {
+            let (id_bytes, name, parent_id_bytes, created_at, modified_at) = row?;
+            let id_hex = crate::validation::uuid_bytes_to_hex(&id_bytes)?;
+            let parent_id_hex = parent_id_bytes
+                .map(|b| crate::validation::uuid_bytes_to_hex(&b))
+                .transpose()?;
+
+            let operation = if modified_at.is_some() { "update" } else { "create" };
+            let timestamp = modified_at.clone().unwrap_or_else(|| created_at.clone());
+
+            if latest_timestamp.is_none() || latest_timestamp.as_ref() < Some(&timestamp) {
+                latest_timestamp = Some(timestamp.clone());
+            }
+
+            changes.push(SyncChange {
+                entity_type: "tag".to_string(),
+                entity_id: id_hex.clone(),
+                operation: operation.to_string(),
+                data: serde_json::json!({
+                    "id": id_hex,
+                    "name": name,
+                    "parent_id": parent_id_hex,
+                    "created_at": created_at,
+                    "modified_at": modified_at,
+                }),
+                timestamp,
+                device_id: String::new(),
+                device_name: None,
+            });
+        }
+    }
+
+    // Get note_tag changes
+    let remaining = limit - changes.len() as i64;
+    if remaining > 0 {
+        let note_tags_query = if since.is_some() {
+            "SELECT note_id, tag_id, created_at, modified_at, deleted_at FROM note_tags \
+             WHERE created_at > ? OR deleted_at > ? OR modified_at > ? \
+             ORDER BY COALESCE(modified_at, deleted_at, created_at) LIMIT ?"
+        } else {
+            "SELECT note_id, tag_id, created_at, modified_at, deleted_at FROM note_tags \
+             ORDER BY COALESCE(modified_at, deleted_at, created_at) LIMIT ?"
+        };
+
+        let mut stmt = conn.prepare(note_tags_query)?;
+        let note_tag_rows: Vec<_> = if let Some(ts) = since {
+            stmt.query_map(rusqlite::params![ts, ts, ts, remaining], |row| {
+                let note_id_bytes: Vec<u8> = row.get(0)?;
+                let tag_id_bytes: Vec<u8> = row.get(1)?;
+                let created_at: String = row.get(2)?;
+                let modified_at: Option<String> = row.get(3)?;
+                let deleted_at: Option<String> = row.get(4)?;
+                Ok((note_id_bytes, tag_id_bytes, created_at, modified_at, deleted_at))
+            })?
+            .collect()
+        } else {
+            stmt.query_map(rusqlite::params![remaining], |row| {
+                let note_id_bytes: Vec<u8> = row.get(0)?;
+                let tag_id_bytes: Vec<u8> = row.get(1)?;
+                let created_at: String = row.get(2)?;
+                let modified_at: Option<String> = row.get(3)?;
+                let deleted_at: Option<String> = row.get(4)?;
+                Ok((note_id_bytes, tag_id_bytes, created_at, modified_at, deleted_at))
+            })?
+            .collect()
+        };
+
+        for row in note_tag_rows {
+            let (note_id_bytes, tag_id_bytes, created_at, modified_at, deleted_at) = row?;
+            let note_id_hex = crate::validation::uuid_bytes_to_hex(&note_id_bytes)?;
+            let tag_id_hex = crate::validation::uuid_bytes_to_hex(&tag_id_bytes)?;
+            let entity_id = format!("{}:{}", note_id_hex, tag_id_hex);
+
+            let operation = if deleted_at.is_some() {
+                "delete"
+            } else if modified_at.is_some() {
+                "update"
+            } else {
+                "create"
+            };
+
+            let timestamp = modified_at
+                .clone()
+                .or_else(|| deleted_at.clone())
+                .unwrap_or_else(|| created_at.clone());
+
+            if latest_timestamp.is_none() || latest_timestamp.as_ref() < Some(&timestamp) {
+                latest_timestamp = Some(timestamp.clone());
+            }
+
+            changes.push(SyncChange {
+                entity_type: "note_tag".to_string(),
+                entity_id,
+                operation: operation.to_string(),
+                data: serde_json::json!({
+                    "note_id": note_id_hex,
+                    "tag_id": tag_id_hex,
+                    "created_at": created_at,
+                    "modified_at": modified_at,
+                    "deleted_at": deleted_at,
+                }),
+                timestamp,
+                device_id: String::new(),
+                device_name: None,
+            });
+        }
+    }
 
     Ok((changes, latest_timestamp))
 }
 
 fn apply_sync_changes(
-    _db: &Arc<Mutex<Database>>,
-    _changes: &[SyncChange],
-    _peer_device_id: &str,
-    _peer_device_name: Option<&str>,
+    db: &Arc<Mutex<Database>>,
+    changes: &[SyncChange],
+    peer_device_id: &str,
+    peer_device_name: Option<&str>,
 ) -> VoiceResult<(i64, i64, Vec<String>)> {
-    // TODO: Implement full change application with conflict detection
-    // This is a complex operation that needs careful implementation
-    Ok((0, 0, vec![]))
+    let db = db.lock().unwrap();
+    let mut applied = 0i64;
+    let mut conflicts = 0i64;
+    let mut errors = Vec::new();
+
+    // Get last sync timestamp with this peer
+    let last_sync_at = db.get_peer_last_sync(peer_device_id)?;
+
+    for change in changes {
+        let result = match change.entity_type.as_str() {
+            "note" => apply_note_change(&db, change, last_sync_at.as_deref()),
+            "tag" => apply_tag_change(&db, change, last_sync_at.as_deref()),
+            "note_tag" => apply_note_tag_change(&db, change, last_sync_at.as_deref()),
+            _ => {
+                errors.push(format!("Unknown entity type: {}", change.entity_type));
+                continue;
+            }
+        };
+
+        match result {
+            Ok(ApplyResult::Applied) => applied += 1,
+            Ok(ApplyResult::Conflict) => conflicts += 1,
+            Ok(ApplyResult::Skipped) => {}
+            Err(e) => errors.push(format!(
+                "Error applying {} {}: {}",
+                change.entity_type, change.entity_id, e
+            )),
+        }
+    }
+
+    // Update peer's last sync timestamp
+    db.update_peer_sync_time(peer_device_id, peer_device_name)?;
+
+    Ok((applied, conflicts, errors))
+}
+
+enum ApplyResult {
+    Applied,
+    Conflict,
+    Skipped,
+}
+
+fn apply_note_change(
+    db: &Database,
+    change: &SyncChange,
+    last_sync_at: Option<&str>,
+) -> VoiceResult<ApplyResult> {
+    let note_id = &change.entity_id;
+    let data = &change.data;
+
+    let existing = db.get_note_raw(note_id)?;
+
+    match change.operation.as_str() {
+        "create" => {
+            if existing.is_some() {
+                return Ok(ApplyResult::Skipped);
+            }
+            db.apply_sync_note(
+                note_id,
+                data["created_at"].as_str().unwrap_or(""),
+                data["content"].as_str().unwrap_or(""),
+                data["modified_at"].as_str(),
+                data["deleted_at"].as_str(),
+            )?;
+            Ok(ApplyResult::Applied)
+        }
+        "update" | "delete" => {
+            let created_at = data["created_at"].as_str().unwrap_or("");
+            let content = data["content"].as_str().unwrap_or("");
+            let modified_at = data["modified_at"].as_str();
+            let deleted_at = data["deleted_at"].as_str();
+
+            if existing.is_none() {
+                db.apply_sync_note(note_id, created_at, content, modified_at, deleted_at)?;
+                return Ok(ApplyResult::Applied);
+            }
+
+            let existing = existing.unwrap();
+
+            // Check if local changed since last sync
+            let local_time = existing.get("modified_at")
+                .and_then(|v| v.as_str())
+                .or_else(|| existing.get("deleted_at").and_then(|v| v.as_str()));
+            let local_changed = last_sync_at.is_none()
+                || local_time.map_or(false, |lt| lt > last_sync_at.unwrap_or(""));
+
+            // Determine timestamp of incoming change
+            let incoming_time = modified_at.or(deleted_at);
+
+            // If incoming change is before or at last_sync, skip
+            if let (Some(last), Some(incoming)) = (last_sync_at, incoming_time) {
+                if incoming <= last {
+                    return Ok(ApplyResult::Skipped);
+                }
+            }
+
+            if local_changed {
+                // Both sides changed - for now, remote wins (could create conflict)
+                // TODO: Implement proper conflict detection
+            }
+
+            db.apply_sync_note(note_id, created_at, content, modified_at, deleted_at)?;
+            Ok(ApplyResult::Applied)
+        }
+        _ => Ok(ApplyResult::Skipped),
+    }
+}
+
+fn apply_tag_change(
+    db: &Database,
+    change: &SyncChange,
+    last_sync_at: Option<&str>,
+) -> VoiceResult<ApplyResult> {
+    let tag_id = &change.entity_id;
+    let data = &change.data;
+
+    let existing = db.get_tag_raw(tag_id)?;
+
+    match change.operation.as_str() {
+        "create" => {
+            if existing.is_some() {
+                return Ok(ApplyResult::Skipped);
+            }
+            db.apply_sync_tag(
+                tag_id,
+                data["name"].as_str().unwrap_or(""),
+                data["parent_id"].as_str(),
+                data["created_at"].as_str().unwrap_or(""),
+                data["modified_at"].as_str(),
+            )?;
+            Ok(ApplyResult::Applied)
+        }
+        "update" => {
+            let name = data["name"].as_str().unwrap_or("");
+            let parent_id = data["parent_id"].as_str();
+            let created_at = data["created_at"].as_str().unwrap_or("");
+            let modified_at = data["modified_at"].as_str();
+
+            if existing.is_none() {
+                db.apply_sync_tag(tag_id, name, parent_id, created_at, modified_at)?;
+                return Ok(ApplyResult::Applied);
+            }
+
+            // Check timestamp
+            let incoming_time = modified_at;
+            if let (Some(last), Some(incoming)) = (last_sync_at, incoming_time) {
+                if incoming <= last {
+                    return Ok(ApplyResult::Skipped);
+                }
+            }
+
+            db.apply_sync_tag(tag_id, name, parent_id, created_at, modified_at)?;
+            Ok(ApplyResult::Applied)
+        }
+        _ => Ok(ApplyResult::Skipped),
+    }
+}
+
+fn apply_note_tag_change(
+    db: &Database,
+    change: &SyncChange,
+    last_sync_at: Option<&str>,
+) -> VoiceResult<ApplyResult> {
+    // Parse entity_id (format: "note_id:tag_id")
+    let parts: Vec<&str> = change.entity_id.split(':').collect();
+    if parts.len() != 2 {
+        return Ok(ApplyResult::Skipped);
+    }
+
+    let note_id = parts[0];
+    let tag_id = parts[1];
+    let data = &change.data;
+
+    // Determine the timestamp of this incoming change
+    let incoming_time = if change.operation == "delete" {
+        data["deleted_at"].as_str().or_else(|| data["modified_at"].as_str())
+    } else {
+        data["modified_at"].as_str().or_else(|| data["created_at"].as_str())
+    };
+
+    // If this change happened before or at last_sync, skip it
+    if let (Some(last), Some(incoming)) = (last_sync_at, incoming_time) {
+        if incoming <= last {
+            return Ok(ApplyResult::Skipped);
+        }
+    }
+
+    let existing = db.get_note_tag_raw(note_id, tag_id)?;
+
+    // Determine if local changed since last_sync
+    let local_changed = if let Some(ref ex) = existing {
+        let local_time = ex.get("modified_at")
+            .and_then(|v| v.as_str())
+            .or_else(|| ex.get("deleted_at").and_then(|v| v.as_str()))
+            .or_else(|| ex.get("created_at").and_then(|v| v.as_str()));
+        last_sync_at.is_none() || local_time.map_or(false, |lt| lt > last_sync_at.unwrap_or(""))
+    } else {
+        false
+    };
+
+    let created_at = data["created_at"].as_str().unwrap_or("");
+    let modified_at = data["modified_at"].as_str();
+    let deleted_at = data["deleted_at"].as_str();
+
+    match change.operation.as_str() {
+        "create" => {
+            if let Some(ref ex) = existing {
+                if ex.get("deleted_at").and_then(|v| v.as_str()).is_none() {
+                    // Already active
+                    return Ok(ApplyResult::Skipped);
+                }
+                // Local is deleted, remote wants active - reactivate
+                let ex_created_at = ex.get("created_at").and_then(|v| v.as_str()).unwrap_or(created_at);
+                db.apply_sync_note_tag(note_id, tag_id, ex_created_at, modified_at, None)?;
+                return Ok(if local_changed { ApplyResult::Conflict } else { ApplyResult::Applied });
+            }
+            // New association
+            db.apply_sync_note_tag(note_id, tag_id, created_at, modified_at, None)?;
+            Ok(ApplyResult::Applied)
+        }
+        "delete" => {
+            if existing.is_none() {
+                // Create as deleted for sync consistency
+                db.apply_sync_note_tag(note_id, tag_id, created_at, modified_at, deleted_at)?;
+                return Ok(ApplyResult::Applied);
+            }
+            let ex = existing.unwrap();
+            if ex.get("deleted_at").and_then(|v| v.as_str()).is_some() {
+                return Ok(ApplyResult::Skipped); // Already deleted
+            }
+            // Local is active, remote wants to delete
+            if local_changed {
+                // Both changed - favor preservation (keep active)
+                return Ok(ApplyResult::Conflict);
+            }
+            // Apply the delete
+            let ex_created_at = ex.get("created_at").and_then(|v| v.as_str()).unwrap_or(created_at);
+            db.apply_sync_note_tag(note_id, tag_id, ex_created_at, modified_at, deleted_at)?;
+            Ok(ApplyResult::Applied)
+        }
+        "update" => {
+            // Update operation - typically reactivation (deleted_at cleared)
+            if existing.is_none() {
+                db.apply_sync_note_tag(note_id, tag_id, created_at, modified_at, deleted_at)?;
+                return Ok(ApplyResult::Applied);
+            }
+
+            let ex = existing.unwrap();
+            let remote_deleted = deleted_at.is_some();
+            let local_deleted = ex.get("deleted_at").and_then(|v| v.as_str()).is_some();
+            let ex_created_at = ex.get("created_at").and_then(|v| v.as_str()).unwrap_or(created_at);
+
+            if !remote_deleted && local_deleted {
+                // Remote reactivated, local still deleted - reactivate
+                db.apply_sync_note_tag(note_id, tag_id, ex_created_at, modified_at, None)?;
+                return Ok(if local_changed { ApplyResult::Conflict } else { ApplyResult::Applied });
+            }
+
+            if remote_deleted && !local_deleted {
+                // Remote wants to delete, local is active
+                if local_changed {
+                    return Ok(ApplyResult::Conflict); // Keep active
+                }
+                db.apply_sync_note_tag(note_id, tag_id, ex_created_at, modified_at, deleted_at)?;
+                return Ok(ApplyResult::Applied);
+            }
+
+            // Both have same deleted state - update timestamps
+            db.apply_sync_note_tag(note_id, tag_id, ex_created_at, modified_at, deleted_at)?;
+            Ok(ApplyResult::Applied)
+        }
+        _ => Ok(ApplyResult::Skipped),
+    }
 }
 
 fn get_full_dataset(db: &Arc<Mutex<Database>>) -> VoiceResult<serde_json::Value> {
