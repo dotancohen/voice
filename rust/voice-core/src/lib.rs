@@ -79,6 +79,7 @@ fn voice_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validation::py_validate_tag_name, m)?)?;
     m.add_function(wrap_pyfunction!(validation::py_validate_note_content, m)?)?;
     m.add_function(wrap_pyfunction!(validation::py_validate_search_query, m)?)?;
+    m.add_function(wrap_pyfunction!(validation::py_validate_datetime, m)?)?;
 
     // Register sync server functions
     m.add_function(wrap_pyfunction!(sync_server::py_start_sync_server, m)?)?;

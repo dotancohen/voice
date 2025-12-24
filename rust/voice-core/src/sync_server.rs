@@ -27,6 +27,7 @@ use crate::config::Config;
 use crate::database::Database;
 use crate::error::VoiceResult;
 use crate::sync_client::SyncChange;
+use crate::validation::validate_datetime_optional;
 
 /// Server shutdown handle
 static SHUTDOWN_TX: OnceLock<Mutex<Option<oneshot::Sender<()>>>> = OnceLock::new();
@@ -540,6 +541,12 @@ fn apply_note_change(
     let remote_device_id = &change.device_id;
     let remote_device_name = change.device_name.as_deref();
 
+    // Validate datetime format for all incoming timestamps
+    // This prevents malformed dates like "2025-1-1" which break string comparisons
+    validate_datetime_optional(data["created_at"].as_str(), "note.created_at")?;
+    validate_datetime_optional(data["modified_at"].as_str(), "note.modified_at")?;
+    validate_datetime_optional(data["deleted_at"].as_str(), "note.deleted_at")?;
+
     let existing = db.get_note_raw(note_id)?;
 
     match change.operation.as_str() {
@@ -662,6 +669,12 @@ fn apply_tag_change(
     let data = &change.data;
     let remote_device_id = &change.device_id;
     let remote_device_name = change.device_name.as_deref();
+
+    // Validate datetime format for all incoming timestamps
+    // This prevents malformed dates like "2025-1-1" which break string comparisons
+    validate_datetime_optional(data["created_at"].as_str(), "tag.created_at")?;
+    validate_datetime_optional(data["modified_at"].as_str(), "tag.modified_at")?;
+    validate_datetime_optional(data["deleted_at"].as_str(), "tag.deleted_at")?;
 
     let existing = db.get_tag_raw(tag_id)?;
 
@@ -814,6 +827,12 @@ fn apply_note_tag_change(
     let note_id = parts[0];
     let tag_id = parts[1];
     let data = &change.data;
+
+    // Validate datetime format for all incoming timestamps
+    // This prevents malformed dates like "2025-1-1" which break string comparisons
+    validate_datetime_optional(data["created_at"].as_str(), "note_tag.created_at")?;
+    validate_datetime_optional(data["modified_at"].as_str(), "note_tag.modified_at")?;
+    validate_datetime_optional(data["deleted_at"].as_str(), "note_tag.deleted_at")?;
 
     // Determine the timestamp of this incoming change
     let incoming_time = if change.operation == "delete" {
@@ -2004,5 +2023,64 @@ mod tests {
         assert_eq!(applied, 0);
         assert_eq!(conflicts, 0);
         assert_eq!(errors.len(), 3, "Each failure should be reported");
+    }
+
+    #[test]
+    fn test_malformed_datetime_is_rejected() {
+        // Malformed datetimes like "2025-1-1" (non-zero-padded) must be rejected
+        // because string comparisons would break (e.g., "2025-1-1" < "2025-12-01" is wrong)
+        let (db, _temp) = create_test_db();
+
+        // Create a change with malformed datetime (missing zero-padding)
+        // Note: We construct SyncChange manually with the malformed timestamp
+        let malformed_change = SyncChange {
+            entity_type: "note".to_string(),
+            entity_id: "00000000000000000000000000000001".to_string(),
+            operation: "create".to_string(),
+            data: serde_json::json!({
+                "content": "Test note",
+                "created_at": "2025-1-1 0:0:0",  // WRONG: should be "2025-01-01 00:00:00"
+            }),
+            timestamp: "2025-1-1 0:0:0".to_string(),
+            device_id: "device123".to_string(),
+            device_name: Some("Test Device".to_string()),
+        };
+
+        // Apply should reject the malformed datetime
+        let result = apply_note_change(&db, &malformed_change, None);
+
+        assert!(result.is_err(), "Malformed datetime should cause an error");
+        let err = result.unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("datetime") || err_str.contains("19 characters"),
+            "Error should mention datetime format issue: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_valid_datetime_is_accepted() {
+        // Properly formatted datetimes should be accepted
+        let (db, _temp) = create_test_db();
+
+        // Create a change with properly formatted datetime
+        let valid_change = make_sync_change(
+            "note",
+            "00000000000000000000000000000001",
+            "create",
+            serde_json::json!({
+                "content": "Test note",
+                "created_at": "2025-01-01 00:00:00",  // CORRECT: zero-padded
+                "modified_at": "2025-12-31 23:59:59",
+            }),
+            "device123",
+        );
+
+        // Apply should succeed
+        let result = apply_note_change(&db, &valid_change, None);
+
+        assert!(result.is_ok(), "Valid datetime should be accepted: {:?}", result);
+        assert_eq!(result.unwrap(), ApplyResult::Applied, "Valid datetime should be applied");
     }
 }

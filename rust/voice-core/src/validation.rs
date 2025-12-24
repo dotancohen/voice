@@ -16,6 +16,137 @@ pub const MAX_TAG_PATH_LENGTH: usize = 500;
 pub const MAX_TAG_PATH_DEPTH: usize = 50;
 pub const UUID_BYTES_LENGTH: usize = 16;
 
+/// Expected datetime format: "YYYY-MM-DD HH:MM:SS"
+/// CRITICAL: Must always use zero-padded format for string comparison to work correctly.
+/// "2025-01-01" is correct, "2025-1-1" is WRONG and will break timestamp comparisons.
+pub const DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+/// Validate a datetime string format.
+///
+/// Datetime strings must be in the format "YYYY-MM-DD HH:MM:SS" with zero-padded values.
+/// This is critical because timestamps are compared as strings, so "2025-1-1" would
+/// sort incorrectly compared to "2025-12-31".
+///
+/// Valid: "2025-01-01 00:00:00", "2025-12-31 23:59:59"
+/// Invalid: "2025-1-1 0:0:0", "2025-1-01", "01-01-2025"
+pub fn validate_datetime(value: &str, field_name: &str) -> VoiceResult<()> {
+    // Check overall length first (should be exactly 19 chars: YYYY-MM-DD HH:MM:SS)
+    if value.len() != 19 {
+        return Err(VoiceError::validation(
+            field_name,
+            format!(
+                "datetime must be exactly 19 characters in format 'YYYY-MM-DD HH:MM:SS', got {} characters",
+                value.len()
+            ),
+        ));
+    }
+
+    // Check format character by character
+    let chars: Vec<char> = value.chars().collect();
+
+    // Check positions: YYYY-MM-DD HH:MM:SS
+    //                  0123456789...
+    // Digits at: 0,1,2,3 (year), 5,6 (month), 8,9 (day), 11,12 (hour), 14,15 (min), 17,18 (sec)
+    // Dashes at: 4, 7
+    // Space at: 10
+    // Colons at: 13, 16
+
+    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+    for pos in digit_positions {
+        if !chars[pos].is_ascii_digit() {
+            return Err(VoiceError::validation(
+                field_name,
+                format!(
+                    "datetime must be in format 'YYYY-MM-DD HH:MM:SS', invalid character at position {}",
+                    pos
+                ),
+            ));
+        }
+    }
+
+    // Check separators
+    if chars[4] != '-' || chars[7] != '-' {
+        return Err(VoiceError::validation(
+            field_name,
+            "datetime must use '-' separators between date parts (YYYY-MM-DD)",
+        ));
+    }
+
+    if chars[10] != ' ' {
+        return Err(VoiceError::validation(
+            field_name,
+            "datetime must have a space between date and time parts",
+        ));
+    }
+
+    if chars[13] != ':' || chars[16] != ':' {
+        return Err(VoiceError::validation(
+            field_name,
+            "datetime must use ':' separators between time parts (HH:MM:SS)",
+        ));
+    }
+
+    // Validate ranges
+    let year: u32 = value[0..4].parse().unwrap();
+    let month: u32 = value[5..7].parse().unwrap();
+    let day: u32 = value[8..10].parse().unwrap();
+    let hour: u32 = value[11..13].parse().unwrap();
+    let minute: u32 = value[14..16].parse().unwrap();
+    let second: u32 = value[17..19].parse().unwrap();
+
+    if year < 1970 || year > 9999 {
+        return Err(VoiceError::validation(
+            field_name,
+            format!("year must be between 1970 and 9999, got {}", year),
+        ));
+    }
+
+    if month < 1 || month > 12 {
+        return Err(VoiceError::validation(
+            field_name,
+            format!("month must be between 01 and 12, got {:02}", month),
+        ));
+    }
+
+    if day < 1 || day > 31 {
+        return Err(VoiceError::validation(
+            field_name,
+            format!("day must be between 01 and 31, got {:02}", day),
+        ));
+    }
+
+    if hour > 23 {
+        return Err(VoiceError::validation(
+            field_name,
+            format!("hour must be between 00 and 23, got {:02}", hour),
+        ));
+    }
+
+    if minute > 59 {
+        return Err(VoiceError::validation(
+            field_name,
+            format!("minute must be between 00 and 59, got {:02}", minute),
+        ));
+    }
+
+    if second > 59 {
+        return Err(VoiceError::validation(
+            field_name,
+            format!("second must be between 00 and 59, got {:02}", second),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate an optional datetime string (None is valid).
+pub fn validate_datetime_optional(value: Option<&str>, field_name: &str) -> VoiceResult<()> {
+    if let Some(dt) = value {
+        validate_datetime(dt, field_name)?;
+    }
+    Ok(())
+}
+
 /// Validate a UUID value (must be 16 bytes).
 pub fn validate_uuid(value: &[u8], field_name: &str) -> VoiceResult<()> {
     if value.len() != UUID_BYTES_LENGTH {
@@ -359,6 +490,16 @@ pub fn py_validate_search_query(query: Option<&str>) -> PyResult<()> {
     Ok(())
 }
 
+/// Validate a datetime string format
+#[pyfunction]
+#[pyo3(name = "validate_datetime")]
+#[pyo3(signature = (value, field_name=None))]
+pub fn py_validate_datetime(value: &str, field_name: Option<&str>) -> PyResult<()> {
+    let field = field_name.unwrap_or("datetime");
+    validate_datetime(value, field)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,5 +611,58 @@ mod tests {
         let hex = uuid.simple().to_string();
         let result = validate_parent_tag_id(Some(&hex), Some(&hex));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_datetime_valid() {
+        assert!(validate_datetime("2025-01-01 00:00:00", "test").is_ok());
+        assert!(validate_datetime("2025-12-31 23:59:59", "test").is_ok());
+        assert!(validate_datetime("1970-01-01 00:00:00", "test").is_ok());
+        assert!(validate_datetime("2099-06-15 12:30:45", "test").is_ok());
+    }
+
+    #[test]
+    fn test_validate_datetime_non_zero_padded() {
+        // These should fail - not zero-padded
+        assert!(validate_datetime("2025-1-1 0:0:0", "test").is_err());
+        assert!(validate_datetime("2025-1-01 00:00:00", "test").is_err());
+        assert!(validate_datetime("2025-01-1 00:00:00", "test").is_err());
+        assert!(validate_datetime("2025-01-01 0:00:00", "test").is_err());
+    }
+
+    #[test]
+    fn test_validate_datetime_wrong_format() {
+        // Wrong separators
+        assert!(validate_datetime("2025/01/01 00:00:00", "test").is_err());
+        assert!(validate_datetime("2025-01-01T00:00:00", "test").is_err());
+        assert!(validate_datetime("2025-01-01 00-00-00", "test").is_err());
+        // Wrong order
+        assert!(validate_datetime("01-01-2025 00:00:00", "test").is_err());
+        // Missing parts
+        assert!(validate_datetime("2025-01-01", "test").is_err());
+        assert!(validate_datetime("00:00:00", "test").is_err());
+    }
+
+    #[test]
+    fn test_validate_datetime_invalid_ranges() {
+        // Invalid month
+        assert!(validate_datetime("2025-00-01 00:00:00", "test").is_err());
+        assert!(validate_datetime("2025-13-01 00:00:00", "test").is_err());
+        // Invalid day
+        assert!(validate_datetime("2025-01-00 00:00:00", "test").is_err());
+        assert!(validate_datetime("2025-01-32 00:00:00", "test").is_err());
+        // Invalid hour
+        assert!(validate_datetime("2025-01-01 24:00:00", "test").is_err());
+        // Invalid minute
+        assert!(validate_datetime("2025-01-01 00:60:00", "test").is_err());
+        // Invalid second
+        assert!(validate_datetime("2025-01-01 00:00:60", "test").is_err());
+    }
+
+    #[test]
+    fn test_validate_datetime_optional() {
+        assert!(validate_datetime_optional(None, "test").is_ok());
+        assert!(validate_datetime_optional(Some("2025-01-01 00:00:00"), "test").is_ok());
+        assert!(validate_datetime_optional(Some("2025-1-1 0:0:0"), "test").is_err());
     }
 }
