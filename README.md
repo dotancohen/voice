@@ -33,8 +33,8 @@
 ## Roadmap
 
 - Features for working with voice notes specifically - the original inspiration for this project.
-- Add UI for Tag management (create, rename, delete)
-- Add UI for sync conflict management
+- Add UI for Tag management (create, rename, delete).
+- Add UI for sync conflict management.
 - Web UI that uses Web API.
 - Multiple user accounts per server.
 - Text-To-Speech transcription of voice notes, using either local Whisper AI or Google Cloud Speech.
@@ -42,16 +42,18 @@
 - Detect file timestamps from filesystem metadata or filenames, import as new notes.
 
 ## Requirements
+
 - Python 3.10 or higher
 - PySide6 + pyqtdarktheme (for GUI mode)
 - Flask + Flask-CORS (for Web API mode)
 
 ## Architecture
 
-- Written in fully typed Python 3.
-- GUI writted in Qt, other modes available if if Qt (PySide) is not installed.
-- TUI writted in Textual, other modes available if if Textual is not installed.
-- REST API writted in Flask, other modes available if if Flask is not installed.
+- Core functionallity written in Rust.
+- Primary application written in fully typed Python 3.
+- GUI writted in Qt, other modes remain available if Qt (PySide) is not installed.
+- TUI writted in Textual, other modes remain available if if Textual is not installed.
+- REST API writted in Flask, other modes remain available if if Flask is not installed.
 - The CLI is always available.
 - SQLite database.
 - Comprehensive test suite.
@@ -59,6 +61,7 @@
 ## Installation
 
 ### Create Virtual Environment
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate  # On Linux/Mac
@@ -67,39 +70,34 @@ source .venv/bin/activate  # On Linux/Mac
 ```
 
 ### Install Dependencies
+
 ```bash
 pip install -r requirements.txt
-pip install -r requirements-dev.txt # Only for development
+pip install -r requirements-dev.txt     # Only for development
+pip install -r requirements-server.txt # For deployment to a server, useful for centralized syncing and TUI/CLI access.
 ```
 
 ## Usage
 
 - For now no packaged executable. All interfaces are accessed through a unified entry point: `python -m src.main`
 
+```bash
+python -m src.main          # Auto-detect interface: GUI if available, else TUI
+python -m src.main -d /path/to/config  # Custom configuration directory
+```
+
 ### GUI Mode
 
 ```bash
-python -m src.main                    # Auto-detect: GUI if available, else TUI
-python -m src.main gui                # Explicit GUI mode with dark theme
-python -m src.main gui --theme light  # Light theme
-python -m src.main gui --theme dark   # Dark theme (explicit)
-```
-
-With custom configuration directory:
-```bash
-python -m src.main -d /path/to/config gui
+python -m src.main gui                        # Force GUI mode
+python -m src.main gui --theme light  # Force light theme
+python -m src.main gui --theme dark   # Force dark theme
 ```
 
 ### TUI Mode
 
-Launch the terminal user interface:
 ```bash
 python -m src.main tui
-```
-
-With custom configuration directory:
-```bash
-python -m src.main tui -d /path/to/config gui
 ```
 
 #### TUI Keybaord Controls
@@ -121,17 +119,9 @@ python -m src.main cli new-note "Hello, world!"
 echo "Note from stdin" | python -m src.main cli new-note
 ```
 
-List all notes:
-```bash
-python -m src.main cli list-notes
-python -m src.main cli --format json list-notes  # JSON output
-python -m src.main cli --format csv list-notes   # CSV output
-```
-
 Show specific note:
 ```bash
 python -m src.main cli show-note <note-uuid>
-python -m src.main cli --format json show-note a1b2c3d4e5f6789012345678abcdef01
 ```
 
 List tags (hierarchical):
@@ -139,101 +129,64 @@ List tags (hierarchical):
 python -m src.main cli list-tags
 ```
 
-Search notes:
+List all notes:
 ```bash
-# Search by text
-python -m src.main cli search --text "meeting"
-
-# Search by tag
-python -m src.main cli search --tag Work
-
-# Search by hierarchical tag path
-python -m src.main cli search --tag Geography/Europe/France/Paris
-
-# Multiple tags (AND logic)
-python -m src.main cli search --tag Work --tag Work/Projects
-
-# Combined text and tags
-python -m src.main cli search --text "meeting" --tag Work
-
-# JSON output
-python -m src.main cli --format json search --tag Personal
+python -m src.main cli list-notes
 ```
 
-Custom configuration directory (all commands):
+Search notes:
 ```bash
-python -m src.main -d /path/to/config cli list-notes
+python -m src.main cli search --text "meeting"                            # Search by text
+python -m src.main cli search --tag Work                                         # Search by tag
+python -m src.main cli search --tag Europe/France/Paris         # Search by hierarchical tag path
+python -m src.main cli search --tag Work --tag Projects  # Multiple tags (AND logic)
+python -m src.main cli search --text "meeting" --tag Work        # Combined text and tags
+```
+
+#### Output formatting
+
+```bash
+python -m src.main cli --format json # JSON output
+python -m src.main cli --format csv  # CSV output
 ```
 
 ### Web API Mode
 
 - Server runs on `http://127.0.0.1:5000` by default.
 
-Start the web server:
 ```bash
 python -m src.main web
-
-# Custom host or port
-python -m src.main web --host 0.0.0.0 --port 8080
+python -m src.main web --host 0.0.0.0 --port 8080 # Custom host or port
+python -m src.main web --debug                      # Debug mode
 ```
 
-#### Debug mode
-
-```bash
-python -m src.main web --debug
-```
-
-# Web API Endpoints
+#### Web API Endpoints
 
 - All endpoints return JSON.
 - CORS is enabled for cross-origin requests.
 
 ```bash
-# List all notes
-curl http://127.0.0.1:5000/api/notes
-
-# Get specific note
-curl http://127.0.0.1:5000/api/notes/<note-uuid>
-
-# List all tags
-curl http://127.0.0.1:5000/api/tags
-
-# Search notes by text
-curl "http://127.0.0.1:5000/api/search?text=meeting"
-
-# Search notes by tag
-curl "http://127.0.0.1:5000/api/search?tag=Work"
-
-# Search notes by hierarchical tag
-curl "http://127.0.0.1:5000/api/search?tag=Geography/Europe/France/Paris"
-
-# Search notes by specifying multiple tags (AND logic)
-curl "http://127.0.0.1:5000/api/search?tag=Work&tag=Work/Projects"
-
-# Combined text and tags
-curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work"
-
-# Health check
-curl http://127.0.0.1:5000/api/health
+curl http://127.0.0.1:5000/api/health                            # Health check
+curl http://127.0.0.1:5000/api/notes                             # List all notes
+curl http://127.0.0.1:5000/api/notes/<note-uuid>  # Get specific note
+curl http://127.0.0.1:5000/api/tags                                 # List all tags
+curl "http://127.0.0.1:5000/api/search?text=meeting"                     # Search notes by text
+curl "http://127.0.0.1:5000/api/search?tag=Work"                              # Search notes by tag
+curl "http://127.0.0.1:5000/api/search?tag=Europe/France/Paris" # Search notes by hierarchical tag
+curl "http://127.0.0.1:5000/api/search?tag=Work&tag=Projects"   # Search notes by specifying multiple tags (AND logic)
+curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work" # Combined text and tags
 ```
 
 ## Server Deployment
 
-For deploying Voice on a server (sync server + TUI for SSH access), use the server requirements file.
+- For deploying Voice on a server (sync server + TUI for SSH access), use the server requirements file.
 
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/dotancohen/voice.git
-cd voice
-
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install server dependencies (includes TUI, no GUI)
-pip install -r requirements-server.txt
+pip install -r requirements-server.txt # Provides centralized syncing and TUI/CLI access.
 ```
 
 ### Starting the Sync Server
@@ -242,14 +195,9 @@ pip install -r requirements-server.txt
 - The default config directory is at `~/.config/voice/notes.db`, use the -d flag to set a custom directory.
 
 ```bash
-# Start with defaults (0.0.0.0:8384)
-python -m src.main cli sync serve
-
-# Custom host/port
-python -m src.main cli sync serve --host 0.0.0.0 --port 8384
-
-# With custom config directory
-python -m src.main -d /path/to/config cli sync serve
+python -m src.main cli sync serve                                                     # Start with defaults (0.0.0.0:8384)
+python -m src.main cli sync serve --host 0.0.0.0 --port 8384  # Custom host/port
+python -m src.main -d /path/to/config cli sync serve               # With custom config directory
 ```
 
 ### Using the TUI via SSH
@@ -261,6 +209,7 @@ python -m src.main -d /path/to/config cli sync serve
 ssh user@server
 cd /opt/voice
 source .venv/bin/activate
+python -m src.main       # Will launch TUI if GUI is not available
 python -m src.main tui # Force TUI even if GUI is available
 ```
 
@@ -424,49 +373,47 @@ python -m src.main cli sync add-peer <server-device-id> "Server" https://sync.ex
 ## Testing
 
 ### Run All Tests
+
 ```bash
 pytest
+cargo test --manifest-path rust/voice-core/Cargo.toml
 ```
 
 ### Run Tests by Type
+
 ```bash
-# Unit tests only (fast, no dependencies)
-pytest tests/unit
-
-# GUI tests only (requires Qt/PySide6)
-pytest tests/gui
-
-# CLI tests only
-pytest tests/cli
-
-# Web API tests only (Flask)
-pytest tests/web
-
-# By marker
-pytest -m unit   # Unit tests
-pytest -m gui    # GUI tests
-pytest -m cli    # CLI tests
-pytest -m web    # Web API tests
+pytest tests/unit  # Unit tests only (fast, no dependencies)
+pytest tests/gui    # GUI tests only (requires Qt/PySide6)
+pytest tests/cli      # CLI tests only
+pytest tests/web  # Web API tests only (Flask)
+pytest -m unit        # Unit tests
+pytest -m gui         # GUI tests
+pytest -m cli           # CLI tests
+pytest -m web      # Web API tests
 ```
 
 ### Run with Coverage Report
+
 ```bash
 pytest --cov=src --cov-report=html
 ```
 
 ### Run Specific Test File
+
 ```bash
 pytest tests/unit/test_database.py
 pytest tests/cli/test_cli_search.py
 ```
 
 ### Run Specific Test Class or Function
+
 ```bash
 pytest tests/unit/test_database.py::TestSearchNotes
 pytest tests/cli/test_cli_search.py::TestSearchText::test_search_by_text
 ```
 
 ### Test Data
+
 The test suite uses a pre-populated database with:
 - 14 tags in hierarchical structure
 - 6 notes with various tag combinations
@@ -478,16 +425,19 @@ See [TESTING.md](TESTING.md) for detailed test documentation.
 ## Development
 
 ### Type Checking
+
 ```bash
 mypy src/
 ```
 
 ### Code Formatting
+
 ```bash
 black src/
 ```
 
 ## Database Location
+
 - Default: `~/.config/voice/notes.db`
 - Custom: `<config-dir>/notes.db` when using `-d` flag
 
@@ -574,6 +524,7 @@ tag:Europe/France/Paris
 ```
 
 ### Combined Search (AND logic)
+
 ```
 tag:Work meeting
 tag:Personal tag:Family reunion
@@ -639,6 +590,5 @@ Multiple terms are combined with AND logic:
 
 ## Authorship
 
-- Written by Dotan Cohen
-- Extensive help, especially with writing the test suite, attributed to Anthropic Claude via Claude Code.
-
+- Written by [Dotan Cohen](https://dotancohen.com).
+- Extensive help, especially with writing the test suite and Rust components, attributed to Anthropic Claude via Claude Code.
