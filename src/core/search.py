@@ -3,7 +3,7 @@
 This module provides search parsing and execution logic.
 It is used by both the GUI and CLI interfaces.
 
-This is a wrapper around the Rust voice_core extension.
+This is a wrapper around the Rust voicecore extension.
 
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 # Import from Rust extension
-from voice_core import (
+from voicecore import (
     ParsedSearch as RustParsedSearch,
     parse_search_input as _rust_parse_search_input,
 )

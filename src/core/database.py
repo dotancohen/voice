@@ -4,7 +4,7 @@ This module provides all data access functionality using SQLite.
 All methods return JSON-serializable types (dicts, lists, primitives)
 to support future CLI and web server modes.
 
-This is a wrapper around the Rust voice_core extension.
+This is a wrapper around the Rust voicecore extension.
 
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 # Import Database from the Rust extension
-from voice_core import Database as RustDatabase
-from voice_core import set_local_device_id as _rust_set_local_device_id
+from voicecore import Database as RustDatabase
+from voicecore import set_local_device_id as _rust_set_local_device_id
 import uuid as uuid_module
 
 logger = logging.getLogger(__name__)

@@ -3,7 +3,7 @@
 This module handles loading and saving application configuration to/from
 a JSON file. The config directory can be customized via CLI argument.
 
-This is a wrapper around the Rust voice_core extension.
+This is a wrapper around the Rust voicecore extension.
 
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Import from Rust extension
-from voice_core import Config as RustConfig
+from voicecore import Config as RustConfig
 
 # Import ValidationError for backward compatibility
 from .validation import ValidationError

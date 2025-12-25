@@ -3,7 +3,7 @@
 This module provides validation functions for all user inputs.
 All validators raise ValidationError with descriptive messages.
 
-This is a wrapper around the Rust voice_core extension.
+This is a wrapper around the Rust voicecore extension.
 
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
@@ -14,7 +14,7 @@ import uuid
 from typing import List, Optional, Union
 
 # Import from Rust extension
-from voice_core import (
+from voicecore import (
     ValidationError as _RustValidationError,
     validate_uuid_hex as _rust_validate_uuid_hex,
     validate_note_id as _rust_validate_note_id,

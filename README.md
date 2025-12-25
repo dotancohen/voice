@@ -99,7 +99,7 @@ maturin develop --release
 cd ../..
 ```
 
-This compiles the Rust code and installs it as a Python module. Rebuild after any changes to Rust code in `submodules/voice-core/` or `rust/voice-python/`.
+This compiles the Rust code and installs it as a Python module. Rebuild after any changes to Rust code in `submodules/voicecore/` or `rust/voice-python/`.
 
 ## Updating
 
@@ -432,7 +432,7 @@ python -m src.main cli sync add-peer <server-device-id> "Server" https://sync.ex
 
 ```bash
 pytest
-cargo test --manifest-path submodules/voice-core/Cargo.toml
+cargo test --manifest-path submodules/voicecore/Cargo.toml
 ```
 
 ### Run Tests by Type

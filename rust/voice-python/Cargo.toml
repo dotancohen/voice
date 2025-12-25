@@ -3,15 +3,15 @@ name = "voice-python"
 version = "0.1.0"
 edition = "2021"
 authors = ["Dotan Cohen"]
-description = "Python bindings for Voice Core library"
+description = "Python bindings for VoiceCore library"
 
 [lib]
-name = "voice_core"
+name = "voicecore"
 crate-type = ["cdylib"]
 
 [dependencies]
 # Core library from submodule
-voice_core_lib = { package = "voice-core", path = "../../submodules/voice-core" }
+voicecore_lib = { package = "voicecore", path = "../../submodules/voicecore" }
 
 # PyO3 for Python bindings
 pyo3 = { version = "0.23", features = ["extension-module"] }

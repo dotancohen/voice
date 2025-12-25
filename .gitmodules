@@ -1,3 +1,3 @@
-[submodule "submodules/voice-core"]
-	path = submodules/voice-core
-	url = https://github.com/dotancohen/voicecore
+[submodule "submodules/voicecore"]
+	path = submodules/voicecore
+	url = git@dc-github:dotancohen/voicecore.git

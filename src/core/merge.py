@@ -2,7 +2,7 @@
 
 This module provides text merging functionality with conflict detection.
 
-This is a wrapper around the Rust voice_core extension.
+This is a wrapper around the Rust voicecore extension.
 
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 # Import from Rust extension
-from voice_core import (
+from voicecore import (
     MergeResult as RustMergeResult,
     merge_content as _rust_merge_content,
 )

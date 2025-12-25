@@ -15,7 +15,7 @@ from core.config import Config
 from core.database import Database
 from core.validation import ValidationError
 # Import Rust validation error for direct database operations
-from voice_core import ValidationError as RustValidationError
+from voicecore import ValidationError as RustValidationError
 
 
 @pytest.mark.integration

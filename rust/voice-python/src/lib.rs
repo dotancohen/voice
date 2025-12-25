@@ -1,21 +1,21 @@
-//! Python bindings for Voice Core.
+//! Python bindings for VoiceCore.
 //!
-//! This crate provides PyO3 bindings to expose the voice-core library to Python.
+//! This crate provides PyO3 bindings to expose the voicecore library to Python.
 
 use pyo3::create_exception;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 
-use voice_core_lib::{config, database, error, merge, search, validation};
+use voicecore_lib::{config, database, error, merge, search, validation};
 
 // ============================================================================
 // Error types
 // ============================================================================
 
-create_exception!(voice_core, ValidationError, pyo3::exceptions::PyException);
-create_exception!(voice_core, DatabaseError, pyo3::exceptions::PyException);
-create_exception!(voice_core, SyncError, pyo3::exceptions::PyException);
+create_exception!(voicecore, ValidationError, pyo3::exceptions::PyException);
+create_exception!(voicecore, DatabaseError, pyo3::exceptions::PyException);
+create_exception!(voicecore, SyncError, pyo3::exceptions::PyException);
 
 fn voice_error_to_pyerr(err: error::VoiceError) -> PyErr {
     match &err {
@@ -1083,7 +1083,7 @@ fn py_get_local_device_id() -> PyResult<String> {
 // ============================================================================
 
 #[pymodule]
-fn voice_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register error types
     m.add("ValidationError", m.py().get_type::<ValidationError>())?;
     m.add("DatabaseError", m.py().get_type::<DatabaseError>())?;
