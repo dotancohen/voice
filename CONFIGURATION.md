@@ -121,6 +121,114 @@ Border color for unfocused panes in the TUI.
 
 Accepts Textual color names or hex colors.
 
+### device_id
+
+**Type**: `string` (32 hex characters)
+**Default**: Auto-generated on first run
+
+A unique identifier for this device, used for sync. This is a UUIDv7 generated automatically when the config is first created. Do not modify this value manually.
+
+```json
+{
+  "device_id": "019b552595fd7413a3eaffd04ea82f8b"
+}
+```
+
+### device_name
+
+**Type**: `string`
+**Default**: `"Voice on <hostname>"`
+
+A human-readable name for this device, displayed to peers during sync.
+
+```json
+{
+  "device_name": "My Desktop"
+}
+```
+
+### sync
+
+**Type**: `object`
+**Default**: See below
+
+Configuration for the sync feature. Sync allows multiple devices to synchronize notes and tags.
+
+```json
+{
+  "sync": {
+    "enabled": false,
+    "server_port": 8384,
+    "peers": []
+  }
+}
+```
+
+#### sync.enabled
+
+**Type**: `boolean`
+**Default**: `false`
+
+Whether sync is enabled for this device.
+
+#### sync.server_port
+
+**Type**: `integer`
+**Default**: `8384`
+
+The port this device listens on when running as a sync server (`python -m src.main cli sync serve`). Other peers connect to this port to sync with this device.
+
+#### sync.peers
+
+**Type**: `array` of peer objects
+**Default**: `[]`
+
+List of peer devices to sync with. Each peer object has the following properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `peer_id` | string | The peer's device ID (32 hex characters) |
+| `peer_name` | string | Human-readable name for the peer |
+| `peer_url` | string | URL of the peer's sync server (e.g., `http://192.168.1.100:8384`) |
+| `certificate_fingerprint` | string or null | TLS certificate fingerprint for TOFU verification |
+
+```json
+{
+  "sync": {
+    "peers": [
+      {
+        "peer_id": "019b5574d6357f409ee72734053c05a7",
+        "peer_name": "My Server",
+        "peer_url": "http://192.168.1.100:8384",
+        "certificate_fingerprint": null
+      }
+    ]
+  }
+}
+```
+
+##### Certificate Fingerprint (TOFU)
+
+The `certificate_fingerprint` field implements Trust On First Use (TOFU) for TLS connections, similar to SSH host key verification:
+
+1. When first connecting to a peer over HTTPS with `certificate_fingerprint: null`, the peer's TLS certificate fingerprint is automatically recorded
+2. On subsequent connections, the certificate is verified against the stored fingerprint
+3. If the fingerprint doesn't match (e.g., man-in-the-middle attack or server certificate changed), the connection is rejected
+
+**Format**: `SHA256:xx:xx:xx:xx:...` (SHA-256 hash, colon-separated hex)
+
+You can pre-set a fingerprint when adding a peer via CLI:
+```bash
+python -m src.main cli sync add-peer <id> "<name>" "<url>" --fingerprint "SHA256:aa:bb:..."
+```
+
+### server_certificate_fingerprint
+
+**Type**: `string` or `null`
+**Default**: `null`
+
+The fingerprint of this device's own TLS certificate, automatically set when the certificate is generated. This is informational and used internally.
+
 ## Example Complete Configuration
 
 ```json
@@ -135,7 +243,15 @@ Accepts Textual color names or hex colors.
       "tui_border_focused": "green",
       "tui_border_unfocused": "blue"
     }
-  }
+  },
+  "device_id": "019b552595fd7413a3eaffd04ea82f8b",
+  "device_name": "My Desktop",
+  "sync": {
+    "enabled": false,
+    "server_port": 8384,
+    "peers": []
+  },
+  "server_certificate_fingerprint": null
 }
 ```
 
@@ -167,11 +283,52 @@ This allows you to:
 
 In this example, dark theme uses `#FFD700` (overrides `warnings`) and light theme uses `#FF6600` (overrides `warnings`).
 
+## Managing Sync Peers
+
+Peers are best managed via CLI commands rather than editing the config file directly:
+
+```bash
+# Add a peer
+python -m src.main cli sync add-peer <peer_id> "<peer_name>" "<peer_url>"
+
+# List all peers
+python -m src.main cli sync list-peers
+
+# Remove a peer
+python -m src.main cli sync remove-peer <peer_id>
+
+# Sync with all peers
+python -m src.main cli sync now
+
+# Start the sync server
+python -m src.main cli sync serve
+```
+
+## File Locations
+
+All Voice data is stored in the configuration directory:
+
+| File/Directory | Description |
+|----------------|-------------|
+| `config.json` | Configuration file (settings, sync peers) |
+| `notes.db` | SQLite database (notes, tags, sync state) |
+| `certs/` | TLS certificates for sync |
+| `certs/server.crt` | This device's TLS certificate |
+| `certs/server.key` | This device's TLS private key |
+
+Default location: `~/.config/voice/`
+
+Use `--config-dir` to specify a custom location:
+```bash
+python -m src.main --config-dir /path/to/config cli sync list-peers
+```
+
 ## Modifying Configuration
 
 Configuration can be modified by:
 
 1. **Editing the JSON file directly** - Changes take effect on next application launch
 2. **Using the application** - Some settings (like `window_geometry`) are automatically updated
+3. **Using CLI commands** - For sync peer management (recommended)
 
 The application validates configuration on load. If the JSON is malformed, default values will be used and a warning will be logged.

@@ -215,6 +215,22 @@ curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work" # Combined text an
 
 - For deploying Voice on a server (sync server + TUI for SSH access), use the server requirements file.
 
+### Pre-Installation
+
+- Ensure that tooling is installed.
+- Log out and log back in to ensure that environment is set properly.
+
+```bash
+sudo apt update && sudo apt install build-essential  # Debian family
+sudo apt install pkg-config libssl-dev                              # Debian family
+
+sudo dnf groupinstall "Development Tools"                # Redhat family
+sudo dnf install pkg-config openssl-devel                    # Redhat family
+
+which rustc
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y  # Only if rustc is not installed.
+```
+
 ### Installation
 
 ```bash
@@ -223,7 +239,6 @@ cd voice
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-server.txt # Provides centralized syncing and TUI/CLI access.
-pip install maturin
 cd rust/voice-python && maturin develop --release && cd ../..
 ```
 
@@ -279,6 +294,9 @@ sudo systemctl start voice-sync
 ```
 
 ## Syncing between installations
+
+- Sync peers are defined in the Config file.
+- All sync peers can function equally as both servers and clients.
 
 **Step 1: Get device IDs** (on each device):
 ```bash
@@ -481,9 +499,9 @@ black src/
 
 ## Configuration
 
-Configuration is stored in `<config-dir>/config.json`. The default location is `~/.config/voice/config.json`.
-
-For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+- Configuration is stored in `<config-dir>/config.json`. The default location is `~/.config/voice/config.json`, or can be set with the `-d` flag.
+- Tho configuration file can be edited manually. The application reads the config file on startup.
+- For detailed documentation, see [CONFIGURATION.md](CONFIGURATION.md).
 
 ### Config Schema
 
@@ -518,6 +536,18 @@ For detailed documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | themes.colours.warnings_light       | string      | #FF8C00             | Warning color for light theme (dark orange)                          |
 | themes.colours.tui_border_focused   | string      | green               | TUI border color for focused pane                                    |
 | themes.colours.tui_border_unfocused | string      | blue                | TUI border color for unfocused panes                                 |
+| sync                                                                        | object/null | null          | Sync settings                                                                                    |
+| sync.enabled                                                                | object/null | null          | Sync settings                                                                                    |
+| sync.server_port                                                     | number |                 | Port that this instance listens on when running as a sync server  |
+| sync.peers                                                                | object/null | null          | Servers that this instance is configured to connect to as a client  |
+| sync.peers.peer_id                                                 | string |           | ID of server. Printed to stdout when server started, and when using cli option `cli sync status`  |
+| sync.peers.peer_name                                                 | string |           | Human readable name of the server. |
+| sync.peers.peer_url                                                 | string |           | URL of the server. |
+| sync.peers.peer_certificate_fingerprint         | string/null | null      | Stored after Trust On First Use TLS certificate verification  |
+
+### Sync configuration
+
+- Sync settings are stored in the config file.
 
 ### Color Values
 
@@ -537,7 +567,25 @@ Theme-specific colors take precedence:
       "warnings_dark": "#FFD700",
       "warnings_light": "#FF6600"
     }
-  }
+  },
+  "device_id": "019b552595fd7413a3eaffd04ea82f8b",
+  "device_name": "Foo on desktop",
+  "sync": {
+    "enabled": false,
+    "server_port": 8384,
+    "peers": [
+      {
+        "peer_id": "018e5874b8357f489eb72834083c05b7",
+        "peer_name": "Bar on server",
+        "peer_url": "http://1.2.3.4:8384",
+        "certificate_fingerprint": null
+      }
+    ]
+  },
+  "server_certificate_fingerprint": null
+
+
+
 }
 ```
 
