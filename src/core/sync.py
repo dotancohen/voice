@@ -693,7 +693,9 @@ def apply_tag_change(
             return "skipped"
 
         # Both changed - check for conflicts
-        has_conflict = False
+        has_name_conflict = False
+        has_parent_conflict = False
+        final_name = local_name
 
         # Check for name conflict
         if local_name != remote_name:
@@ -706,7 +708,9 @@ def apply_tag_change(
                 change.device_id if change.device_id else None,
                 peer_device_name,
             )
-            has_conflict = True
+            has_name_conflict = True
+            # Combine both names so no rename is lost
+            final_name = f"{local_name} | {remote_name}"
 
         # Check for parent_id conflict
         if local_parent_id != remote_parent_id:
@@ -719,10 +723,16 @@ def apply_tag_change(
                 change.device_id if change.device_id else None,
                 peer_device_name,
             )
-            has_conflict = True
+            has_parent_conflict = True
 
-        if has_conflict:
-            # Don't apply remote change - keep local state
+        if has_name_conflict or has_parent_conflict:
+            # Apply combined name (for name conflicts) but keep local parent
+            # Use the later timestamp as modified_at
+            final_modified = max(local_modified, remote_modified) if local_modified and remote_modified else (local_modified or remote_modified)
+            db.apply_sync_tag(
+                tag_id, final_name, local_parent_id,
+                existing["created_at"], final_modified
+            )
             return "conflict"
 
         # No conflicts - apply (same name and parent)

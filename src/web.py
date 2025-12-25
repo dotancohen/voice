@@ -282,11 +282,12 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     # Create Flask app
     app = create_app(config_dir=config_dir)
 
-    # Run server
+    # Run server (single-threaded because PyDatabase is not thread-safe)
     app.run(
         host=args.host,
         port=args.port,
-        debug=args.debug
+        debug=args.debug,
+        threaded=False
     )
 
     return 0

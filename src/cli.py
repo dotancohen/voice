@@ -697,7 +697,8 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
     print()
 
     app = create_sync_server(db, config, host=host, port=port)
-    app.run(host=host, port=port, debug=False)
+    # Run single-threaded because PyDatabase is not thread-safe
+    app.run(host=host, port=port, debug=False, threaded=False)
 
     return 0
 

@@ -1,0 +1,3 @@
+[submodule "submodules/voice-core"]
+	path = submodules/voice-core
+	url = /home/dotancohen/Projects/VoiceCore

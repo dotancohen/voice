@@ -2129,7 +2129,6 @@ dependencies = [
  "diffy",
  "dirs",
  "hostname",
- "pyo3",
  "rcgen",
  "reqwest",
  "rusqlite",
@@ -2139,7 +2138,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
- "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tower",
@@ -2148,6 +2146,18 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "voice-python"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pyo3",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "voice-core",
 ]
 
 [[package]]
