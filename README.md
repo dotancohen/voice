@@ -44,29 +44,41 @@
 ## Requirements
 
 - Python 3.10 or higher
+- Rust toolchain (for building the core library)
+- maturin (for building Python bindings)
 - PySide6 + pyqtdarktheme (for GUI mode)
 - Flask + Flask-CORS (for Web API mode)
 
 ## Architecture
 
-- Core functionallity written in Rust.
 - Primary application written in fully typed Python 3.
-- GUI writted in Qt, other modes remain available if Qt (PySide) is not installed.
-- TUI writted in Textual, other modes remain available if if Textual is not installed.
-- REST API writted in Flask, other modes remain available if if Flask is not installed.
+- Core functionality in Rust module for seamless compatibility with mobile applications.
+- GUI written in Qt, other modes remain available if Qt (PySide) is not installed.
+- TUI written in Textual, other modes remain available if Textual is not installed.
+- REST API written in Flask, other modes remain available if Flask is not installed.
 - The CLI is always available.
 - SQLite database.
 - Comprehensive test suite.
 
 ## Installation
 
-### Create Virtual Environment
+### Clone and create Virtual Environment
 
 ```bash
+git clone --recurse-submodules https://github.com/dotancohen/voice.git
+cd voice
 python3 -m venv .venv
 source .venv/bin/activate  # On Linux/Mac
 # or
 .venv\Scripts\activate  # On Windows
+```
+
+### Clone submodules
+
+- If the repo had been cloned without submodules, add them.
+
+```bash
+git submodule update --init --recursive
 ```
 
 ### Install Dependencies
@@ -74,7 +86,29 @@ source .venv/bin/activate  # On Linux/Mac
 ```bash
 pip install -r requirements.txt
 pip install -r requirements-dev.txt     # Only for development
-pip install -r requirements-server.txt # For deployment to a server, useful for centralized syncing and TUI/CLI access.
+pip install -r requirements-server.txt  # For deployment to a server, useful for centralized syncing and TUI/CLI access.
+```
+
+### Build Rust Extension
+
+The Rust core library must be built and installed into the virtual environment:
+
+```bash
+cd rust/voice-python
+maturin develop --release
+cd ../..
+```
+
+This compiles the Rust code and installs it as a Python module. Rebuild after any changes to Rust code in `submodules/voice-core/` or `rust/voice-python/`.
+
+## Updating
+
+```bash
+git pull
+git submodule update              # Checkout the submodule commit that Voice points to
+cd rust/voice-python
+maturin develop --release         # Rebuild if Rust code changed
+cd ../..
 ```
 
 ## Usage
@@ -184,9 +218,13 @@ curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work" # Combined text an
 ### Installation
 
 ```bash
+git clone --recurse-submodules https://github.com/dotancohen/voice.git
+cd voice
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-server.txt # Provides centralized syncing and TUI/CLI access.
+pip install maturin
+cd rust/voice-python && maturin develop --release && cd ../..
 ```
 
 ### Starting the Sync Server
@@ -376,7 +414,7 @@ python -m src.main cli sync add-peer <server-device-id> "Server" https://sync.ex
 
 ```bash
 pytest
-cargo test --manifest-path rust/voice-core/Cargo.toml
+cargo test --manifest-path submodules/voice-core/Cargo.toml
 ```
 
 ### Run Tests by Type

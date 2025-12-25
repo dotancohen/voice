@@ -1,6 +1,7 @@
 # Requirements for server deployments (sync server + TUI)
 # Does not include GUI (PySide6) dependencies
 
+maturin>=1.7.0
 textual>=0.50.0
 Flask>=3.0.0
 Flask-CORS>=4.0.0
