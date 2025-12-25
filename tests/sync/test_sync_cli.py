@@ -586,14 +586,37 @@ class TestCLIEdgeCases:
         """Multiple CLI commands can run concurrently."""
         node_a, node_b = two_nodes_with_servers
 
-        import concurrent.futures
+        # Use subprocess.Popen to run truly concurrent processes
+        # (avoids ThreadPoolExecutor cleanup issues with Rust extension)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
 
-        def run_status():
-            return run_cli_command(node_a.config_dir, ["sync", "status"])
+        cmd = [
+            sys.executable,
+            "-m", "src.main",
+            "-d", str(node_a.config_dir),
+            "cli",
+            "sync", "status",
+        ]
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = [executor.submit(run_status) for _ in range(3)]
-            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+        # Start 3 processes concurrently
+        processes = []
+        for _ in range(3):
+            proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(Path(__file__).parent.parent.parent),
+            )
+            processes.append(proc)
+
+        # Wait for all to complete and collect results
+        results = []
+        for proc in processes:
+            stdout, stderr = proc.communicate(timeout=30)
+            results.append((proc.returncode, stdout, stderr))
 
         # All should succeed
         for code, stdout, stderr in results:

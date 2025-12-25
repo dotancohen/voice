@@ -426,3 +426,157 @@ class MockNetworkError:
     def connection_reset():
         """Raise connection reset error."""
         raise requests.exceptions.ConnectionError("Connection reset by peer")
+
+
+# ============================================================================
+# Subprocess-based helpers for concurrent tests
+# ============================================================================
+# These helpers run operations in separate processes to avoid thread-safety
+# issues with the Rust PyDatabase (marked as 'unsendable').
+
+
+def run_db_operation(
+    config_dir: Path,
+    operation: str,
+    **kwargs,
+) -> Dict[str, Any]:
+    """Run a database operation in a subprocess.
+
+    Args:
+        config_dir: Path to the node's config directory
+        operation: Operation name (create_note, update_note, sync, etc.)
+        **kwargs: Operation-specific arguments
+
+    Returns:
+        Dict with operation result
+    """
+    import pickle
+    import base64
+
+    # Encode kwargs for subprocess
+    kwargs_encoded = base64.b64encode(pickle.dumps(kwargs)).decode('ascii')
+
+    project_root = Path(__file__).parent.parent.parent
+    src_path = project_root / "src"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(src_path)
+
+    script = f'''
+import sys
+import pickle
+import base64
+import json
+sys.path.insert(0, "{src_path}")
+
+from pathlib import Path
+from core.config import Config
+from core.database import Database, set_local_device_id
+
+config_dir = Path("{config_dir}")
+config = Config(config_dir=config_dir)
+device_id = bytes.fromhex(config.get_device_id_hex())
+set_local_device_id(device_id)
+
+db = Database(config.config_data["database_file"])
+kwargs = pickle.loads(base64.b64decode("{kwargs_encoded}"))
+
+operation = "{operation}"
+result = {{"success": True}}
+
+try:
+    if operation == "create_note":
+        note_id = db.create_note(kwargs["content"])
+        result["note_id"] = note_id
+    elif operation == "update_note":
+        db.update_note(kwargs["note_id"], kwargs["content"])
+    elif operation == "delete_note":
+        db.delete_note(kwargs["note_id"])
+    elif operation == "get_note":
+        note = db.get_note(kwargs["note_id"])
+        result["note"] = note
+    elif operation == "get_note_count":
+        notes = db.get_all_notes()
+        result["count"] = len(notes)
+    elif operation == "sync":
+        from core.sync_client import SyncClient
+        client = SyncClient(db, config)
+        sync_result = client.sync_with_peer(kwargs["peer_id"])
+        result["pulled"] = sync_result.pulled
+        result["pushed"] = sync_result.pushed
+        result["conflicts"] = sync_result.conflicts
+        result["errors"] = sync_result.errors
+        result["sync_success"] = sync_result.success
+    else:
+        result["success"] = False
+        result["error"] = f"Unknown operation: {{operation}}"
+except Exception as e:
+    result["success"] = False
+    result["error"] = str(e)
+finally:
+    db.close()
+
+print(json.dumps(result))
+'''
+
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    if proc.returncode != 0:
+        return {"success": False, "error": proc.stderr}
+
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"success": False, "error": f"Invalid JSON: {proc.stdout}"}
+
+
+def create_note_subprocess(node: SyncNode, content: str) -> Optional[str]:
+    """Create a note via subprocess. Returns note ID or None on failure."""
+    result = run_db_operation(node.config_dir, "create_note", content=content)
+    if result.get("success"):
+        return result.get("note_id")
+    return None
+
+
+def update_note_subprocess(node: SyncNode, note_id: str, content: str) -> bool:
+    """Update a note via subprocess."""
+    result = run_db_operation(node.config_dir, "update_note", note_id=note_id, content=content)
+    return result.get("success", False)
+
+
+def delete_note_subprocess(node: SyncNode, note_id: str) -> bool:
+    """Delete a note via subprocess."""
+    result = run_db_operation(node.config_dir, "delete_note", note_id=note_id)
+    return result.get("success", False)
+
+
+def get_note_subprocess(node: SyncNode, note_id: str) -> Optional[Dict[str, Any]]:
+    """Get a note via subprocess."""
+    result = run_db_operation(node.config_dir, "get_note", note_id=note_id)
+    if result.get("success"):
+        return result.get("note")
+    return None
+
+
+def get_note_count_subprocess(node: SyncNode) -> int:
+    """Get note count via subprocess."""
+    result = run_db_operation(node.config_dir, "get_note_count")
+    return result.get("count", 0)
+
+
+def sync_nodes_subprocess(source: SyncNode, target: SyncNode) -> Dict[str, Any]:
+    """Perform sync via subprocess."""
+    result = run_db_operation(source.config_dir, "sync", peer_id=target.device_id_hex)
+    return {
+        "success": result.get("sync_success", False),
+        "pulled": result.get("pulled", 0),
+        "pushed": result.get("pushed", 0),
+        "conflicts": result.get("conflicts", 0),
+        "errors": result.get("errors", []),
+    }

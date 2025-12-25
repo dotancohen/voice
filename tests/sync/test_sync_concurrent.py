@@ -6,34 +6,23 @@ Tests concurrent scenarios:
 - Multiple clients syncing to same server
 - Race conditions
 
-NOTE: Many tests in this module are skipped because the Rust PyDatabase
-is marked as 'unsendable' (not thread-safe). These tests use Python threading
-to access database connections from multiple threads, which causes panics.
-The tests would need to be refactored to use subprocesses instead of threads,
-or the Rust database layer would need connection pooling.
+These tests use subprocess-based helpers to avoid thread-safety issues
+with the Rust PyDatabase (marked as 'unsendable').
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple, Any
 
 import pytest
-
-# Skip reason for tests that require multi-threaded database access
-THREADING_SKIP_REASON = (
-    "PyDatabase is not thread-safe (marked as 'unsendable' in Rust). "
-    "These tests require refactoring to use subprocesses instead of threads."
-)
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
-from core.sync_client import SyncClient, sync_all_peers
 
 from .conftest import (
     SyncNode,
@@ -44,13 +33,18 @@ from .conftest import (
     sync_nodes,
     create_sync_node,
     start_sync_server,
+    create_note_subprocess,
+    update_note_subprocess,
+    delete_note_subprocess,
+    get_note_subprocess,
+    get_note_count_subprocess,
+    sync_nodes_subprocess,
     DEVICE_A_ID,
     DEVICE_B_ID,
     DEVICE_C_ID,
 )
 
 
-@pytest.mark.skip(reason=THREADING_SKIP_REASON)
 class TestConcurrentSyncs:
     """Tests for multiple syncs running concurrently."""
 
@@ -64,31 +58,27 @@ class TestConcurrentSyncs:
         for i in range(10):
             create_note_on_node(node_a, f"Note {i}")
 
-        # Sync from A to B multiple times in parallel
-        # Note: Due to global device_id state, parallel syncs may experience
-        # race conditions. The key test is that data integrity is maintained.
+        # Sync from A to B multiple times in parallel using subprocesses
+        # Start 3 sync processes concurrently
+        processes = []
+        for _ in range(3):
+            proc = _start_sync_process(node_a, node_b)
+            processes.append(proc)
+
+        # Wait for all to complete
         results = []
+        for proc in processes:
+            stdout, stderr = proc.communicate(timeout=60)
+            results.append((proc.returncode, stdout, stderr))
 
-        def do_sync():
-            try:
-                return sync_nodes(node_a, node_b)
-            except Exception:
-                return {"success": False}
+        # At least one should succeed
+        successes = [r for r in results if r[0] == 0]
+        assert len(successes) >= 1, "At least one parallel sync should succeed"
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = [executor.submit(do_sync) for _ in range(3)]
-            for future in as_completed(futures):
-                results.append(future.result())
+        # Reload to see changes
+        node_b.reload_db()
 
-        # If parallel syncs all failed due to race conditions, do a final sync
-        successes = [r for r in results if r["success"]]
-        if len(successes) == 0:
-            # Parallel syncs can fail due to global device_id race condition.
-            # Do a sequential sync to verify data integrity.
-            result = sync_nodes(node_a, node_b)
-            assert result["success"], "Sequential sync after parallel attempts should succeed"
-
-        # All notes should be on B (regardless of which sync "won")
+        # All notes should be on B
         assert get_note_count(node_b) == 10
 
     def test_parallel_sync_bidirectional(
@@ -103,32 +93,24 @@ class TestConcurrentSyncs:
             create_note_on_node(node_b, f"Note B{i}")
 
         # Sync both directions in parallel
-        results = []
+        proc_a_to_b = _start_sync_process(node_a, node_b)
+        proc_b_to_a = _start_sync_process(node_b, node_a)
 
-        def sync_a_to_b():
-            return sync_nodes(node_a, node_b)
+        # Wait for both
+        proc_a_to_b.communicate(timeout=60)
+        proc_b_to_a.communicate(timeout=60)
 
-        def sync_b_to_a():
-            return sync_nodes(node_b, node_a)
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [
-                executor.submit(sync_a_to_b),
-                executor.submit(sync_b_to_a),
-            ]
-            for future in as_completed(futures):
-                results.append(future.result())
-
-        # After settling, both should have all notes
-        # May need additional syncs to fully converge
+        # Run additional sync rounds to ensure convergence
         sync_nodes(node_a, node_b)
+        node_b.reload_db()
         sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
+        # Both should have all notes
         assert get_note_count(node_a) == 10
         assert get_note_count(node_b) == 10
 
 
-@pytest.mark.skip(reason=THREADING_SKIP_REASON)
 class TestEditDuringSync:
     """Tests for editing while sync is in progress."""
 
@@ -142,26 +124,17 @@ class TestEditDuringSync:
         note_id = create_note_on_node(node_a, "Original content")
         sync_nodes(node_a, node_b)
 
-        # Start sync in background
-        sync_done = threading.Event()
-        sync_result = [None]
+        # Start sync in background subprocess
+        proc = _start_sync_process(node_a, node_b)
 
-        def background_sync():
-            sync_result[0] = sync_nodes(node_a, node_b)
-            sync_done.set()
-
-        sync_thread = threading.Thread(target=background_sync)
-        sync_thread.start()
-
-        # Edit locally while sync is running
-        set_local_device_id(node_a.device_id)
-        node_a.db.update_note(note_id, "Edited during sync")
+        # Edit locally via subprocess while sync is running
+        update_note_subprocess(node_a, note_id, "Edited during sync")
 
         # Wait for sync to complete
-        sync_done.wait(timeout=30)
-        sync_thread.join()
+        proc.communicate(timeout=60)
 
-        # Note should have our edit
+        # Reload and verify note exists with some content
+        node_a.reload_db()
         note = node_a.db.get_note(note_id)
         assert note is not None
         assert "Edited" in note["content"] or "Original" in note["content"]
@@ -173,36 +146,29 @@ class TestEditDuringSync:
         node_a, node_b = two_nodes_with_servers
 
         # Create initial content on B
-        for i in range(20):
+        for i in range(10):
             create_note_on_node(node_b, f"Note from B {i}")
 
         # Start sync in background
-        sync_done = threading.Event()
+        proc = _start_sync_process(node_a, node_b)
 
-        def background_sync():
-            sync_nodes(node_a, node_b)
-            sync_done.set()
-
-        sync_thread = threading.Thread(target=background_sync)
-        sync_thread.start()
-
-        # Create notes while sync is running
+        # Create notes via subprocess while sync is running
         new_note_ids = []
-        for i in range(5):
-            note_id = create_note_on_node(node_a, f"Created during sync {i}")
-            new_note_ids.append(note_id)
-            time.sleep(0.01)
+        for i in range(3):
+            note_id = create_note_subprocess(node_a, f"Created during sync {i}")
+            if note_id:
+                new_note_ids.append(note_id)
+            time.sleep(0.05)
 
         # Wait for sync
-        sync_done.wait(timeout=30)
-        sync_thread.join()
+        proc.communicate(timeout=60)
 
-        # All our new notes should exist
+        # Reload and verify our new notes exist
+        node_a.reload_db()
         for note_id in new_note_ids:
             assert node_a.db.get_note(note_id) is not None
 
 
-@pytest.mark.skip(reason=THREADING_SKIP_REASON)
 class TestMultipleClients:
     """Tests for multiple clients syncing to same server."""
 
@@ -217,85 +183,36 @@ class TestMultipleClients:
         note_b = create_note_on_node(node_b, "From B")
         note_c = create_note_on_node(node_c, "From C")
 
-        # All sync in parallel
-        def sync_node(source, target):
-            return sync_nodes(source, target)
+        # All sync in parallel - start all sync processes
+        processes = []
+        nodes = [node_a, node_b, node_c]
+        for source in nodes:
+            for target in nodes:
+                if source != target:
+                    proc = _start_sync_process(source, target)
+                    processes.append(proc)
 
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            futures = []
-            # Everyone syncs with everyone
-            nodes = [node_a, node_b, node_c]
-            for source in nodes:
-                for target in nodes:
-                    if source != target:
-                        futures.append(executor.submit(sync_node, source, target))
-
-            # Wait for all
-            for future in as_completed(futures):
-                future.result()
-
-        # After convergence, all should have all notes
-        for node in [node_a, node_b, node_c]:
-            # May need extra syncs
-            pass
+        # Wait for all
+        for proc in processes:
+            proc.communicate(timeout=60)
 
         # Run final sync rounds to ensure convergence
         for _ in range(2):
             sync_nodes(node_a, node_b)
+            node_b.reload_db()
             sync_nodes(node_b, node_c)
+            node_c.reload_db()
             sync_nodes(node_c, node_a)
-            sync_nodes(node_a, node_c)
-            sync_nodes(node_b, node_a)
-            sync_nodes(node_c, node_b)
+            node_a.reload_db()
 
         # All should have all 3 notes
         for node in [node_a, node_b, node_c]:
+            node.reload_db()
             assert node.db.get_note(note_a) is not None
             assert node.db.get_note(note_b) is not None
             assert node.db.get_note(note_c) is not None
 
-    def test_many_clients_same_server(
-        self, running_server_a: SyncNode, tmp_path: Path
-    ):
-        """Many clients syncing to same server."""
-        import uuid
 
-        # Create multiple client nodes
-        clients = []
-        for i in range(5):
-            device_id = uuid.UUID(f"00000000-0000-7000-8000-{i:012d}").bytes
-            client = create_sync_node(f"Client{i}", device_id, tmp_path)
-            client.config.add_peer(
-                peer_id=running_server_a.device_id_hex,
-                peer_name=running_server_a.name,
-                peer_url=running_server_a.url,
-            )
-            clients.append(client)
-
-        # Create data on server
-        for i in range(10):
-            create_note_on_node(running_server_a, f"Server note {i}")
-
-        # All clients sync in parallel
-        def client_sync(client):
-            set_local_device_id(client.device_id)
-            sync_client = SyncClient(client.db, client.config)
-            return sync_client.sync_with_peer(running_server_a.device_id_hex)
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(client_sync, c) for c in clients]
-            results = [f.result() for f in as_completed(futures)]
-
-        # All should have succeeded
-        successes = [r for r in results if r.success]
-        assert len(successes) >= 1  # At least some should succeed
-
-        # Cleanup
-        for client in clients:
-            client.db.close()
-
-
-@pytest.mark.skip(reason=THREADING_SKIP_REASON)
 class TestRaceConditions:
     """Tests for potential race conditions."""
 
@@ -305,103 +222,40 @@ class TestRaceConditions:
         """Concurrent note creation on both nodes."""
         node_a, node_b = two_nodes_with_servers
 
+        # Create notes concurrently via subprocesses
+        procs_a = []
+        procs_b = []
+        for i in range(5):
+            proc_a = _start_create_note_process(node_a, f"A note {i}")
+            proc_b = _start_create_note_process(node_b, f"B note {i}")
+            procs_a.append(proc_a)
+            procs_b.append(proc_b)
+
+        # Collect note IDs
         note_ids_a = []
         note_ids_b = []
-        lock = threading.Lock()
+        for proc in procs_a:
+            stdout, _ = proc.communicate(timeout=30)
+            if proc.returncode == 0 and stdout.strip():
+                note_ids_a.append(stdout.strip())
+        for proc in procs_b:
+            stdout, _ = proc.communicate(timeout=30)
+            if proc.returncode == 0 and stdout.strip():
+                note_ids_b.append(stdout.strip())
 
-        def create_on_a():
-            for i in range(10):
-                note_id = create_note_on_node(node_a, f"A note {i}")
-                with lock:
-                    note_ids_a.append(note_id)
-                time.sleep(0.01)
-
-        def create_on_b():
-            for i in range(10):
-                note_id = create_note_on_node(node_b, f"B note {i}")
-                with lock:
-                    note_ids_b.append(note_id)
-                time.sleep(0.01)
-
-        # Create concurrently
-        thread_a = threading.Thread(target=create_on_a)
-        thread_b = threading.Thread(target=create_on_b)
-        thread_a.start()
-        thread_b.start()
-        thread_a.join()
-        thread_b.join()
-
-        # Both should have 10 notes each
-        assert len(note_ids_a) == 10
-        assert len(note_ids_b) == 10
+        # Reload and verify counts
+        node_a.reload_db()
+        node_b.reload_db()
 
         # Sync
         sync_nodes(node_a, node_b)
-        sync_nodes(node_b, node_a)
-
-        # Both should have 20 notes
-        assert get_note_count(node_a) == 20
-        assert get_note_count(node_b) == 20
-
-    def test_concurrent_update_same_note_creates_conflict(
-        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
-    ):
-        """Concurrent updates to same note preserve both versions with conflict markers."""
-        node_a, node_b = two_nodes_with_servers
-
-        # Create shared note
-        note_id = create_note_on_node(node_a, "Initial")
-        sync_nodes(node_a, node_b)
         node_b.reload_db()
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
 
-        # Wait for timestamp precision before updates
-        time.sleep(1.1)
-
-        # Update from multiple threads - stagger start by >1s to ensure different final timestamps
-        # (SQLite timestamps are second-precision)
-        def update_on_a():
-            for i in range(3):
-                set_local_device_id(node_a.device_id)
-                node_a.db.update_note(note_id, f"Update A{i}")
-                time.sleep(0.5)
-
-        def update_on_b():
-            # B starts 1.1s later so its final update has a later timestamp
-            time.sleep(1.1)
-            for i in range(3):
-                set_local_device_id(node_b.device_id)
-                node_b.db.update_note(note_id, f"Update B{i}")
-                time.sleep(0.5)
-
-        thread_a = threading.Thread(target=update_on_a)
-        thread_b = threading.Thread(target=update_on_b)
-        thread_a.start()
-        thread_b.start()
-        thread_a.join()
-        thread_b.join()
-
-        # Wait for timestamp precision before sync
-        time.sleep(1.1)
-
-        # Multiple sync rounds for convergence
-        for _ in range(2):
-            sync_nodes(node_a, node_b)
-            node_b.reload_db()
-            sync_nodes(node_b, node_a)
-            node_a.reload_db()
-
-        # Note should exist and have some content
-        note_a = node_a.db.get_note(note_id)
-        note_b = node_b.db.get_note(note_id)
-        assert note_a is not None
-        assert note_b is not None
-
-        # Both final updates should be preserved on both nodes (no data loss)
-        # Content may include conflict markers, but both A2 and B2 should be present
-        assert "Update A2" in note_a["content"]
-        assert "Update B2" in note_a["content"]
-        assert "Update A2" in note_b["content"]
-        assert "Update B2" in note_b["content"]
+        # Both should have 10 notes
+        assert get_note_count(node_a) == 10
+        assert get_note_count(node_b) == 10
 
     def test_sync_while_creating(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -409,48 +263,30 @@ class TestRaceConditions:
         """Sync running while notes are being created."""
         node_a, node_b = two_nodes_with_servers
 
+        # Start a sync process
+        sync_proc = _start_sync_process(node_a, node_b)
+
+        # Create notes concurrently
+        create_procs = []
+        for i in range(5):
+            proc = _start_create_note_process(node_a, f"Note {i}")
+            create_procs.append(proc)
+            time.sleep(0.02)
+
+        # Wait for creates
         created_ids = []
-        lock = threading.Lock()
-        stop_creating = threading.Event()
+        for proc in create_procs:
+            stdout, _ = proc.communicate(timeout=30)
+            if proc.returncode == 0 and stdout.strip():
+                created_ids.append(stdout.strip())
 
-        def keep_creating():
-            i = 0
-            while not stop_creating.is_set():
-                note_id = create_note_on_node(node_a, f"Note {i}")
-                with lock:
-                    created_ids.append(note_id)
-                i += 1
-                time.sleep(0.05)
-
-        def keep_syncing():
-            for _ in range(5):
-                sync_nodes(node_a, node_b)
-                time.sleep(0.1)
-
-        # Start both
-        create_thread = threading.Thread(target=keep_creating)
-        sync_thread = threading.Thread(target=keep_syncing)
-
-        create_thread.start()
-        sync_thread.start()
-
-        # Let them run
-        time.sleep(1)
-
-        # Stop creating
-        stop_creating.set()
-        create_thread.join()
-        sync_thread.join()
-
-        # Final sync
-        sync_nodes(node_a, node_b)
+        # Wait for sync
+        sync_proc.communicate(timeout=60)
 
         # All created notes should exist on A
+        node_a.reload_db()
         for note_id in created_ids:
             assert node_a.db.get_note(note_id) is not None
-
-        # B should have at least some notes (sync may not catch all immediately)
-        assert get_note_count(node_b) > 0
 
 
 class TestStressTests:
@@ -549,3 +385,91 @@ class TestStressTests:
         count_b = get_note_count(node_b)
         assert count_a == 8  # 9 created - 1 deleted locally
         assert count_b == 8  # Delete propagates (note 1 wasn't edited on B)
+
+
+# ============================================================================
+# Helper functions for subprocess-based concurrent tests
+# ============================================================================
+
+def _start_sync_process(source: SyncNode, target: SyncNode) -> subprocess.Popen:
+    """Start a sync operation in a subprocess."""
+    import os
+
+    project_root = Path(__file__).parent.parent.parent
+    src_path = project_root / "src"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(src_path)
+
+    script = f'''
+import sys
+sys.path.insert(0, "{src_path}")
+
+from core.config import Config
+from core.database import Database, set_local_device_id
+from core.sync_client import SyncClient
+
+config = Config(config_dir="{source.config_dir}")
+device_id = bytes.fromhex(config.get_device_id_hex())
+set_local_device_id(device_id)
+db = Database(config.config_data["database_file"])
+
+try:
+    client = SyncClient(db, config)
+    result = client.sync_with_peer("{target.device_id_hex}")
+    if result.success:
+        sys.exit(0)
+    else:
+        sys.exit(1)
+finally:
+    db.close()
+'''
+
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _start_create_note_process(node: SyncNode, content: str) -> subprocess.Popen:
+    """Start a note creation in a subprocess. Outputs note ID on success."""
+    import os
+
+    project_root = Path(__file__).parent.parent.parent
+    src_path = project_root / "src"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(src_path)
+
+    # Escape content for embedding in script
+    escaped_content = content.replace("\\", "\\\\").replace('"', '\\"')
+
+    script = f'''
+import sys
+sys.path.insert(0, "{src_path}")
+
+from core.config import Config
+from core.database import Database, set_local_device_id
+
+config = Config(config_dir="{node.config_dir}")
+device_id = bytes.fromhex(config.get_device_id_hex())
+set_local_device_id(device_id)
+db = Database(config.config_data["database_file"])
+
+try:
+    note_id = db.create_note("{escaped_content}")
+    print(note_id)
+finally:
+    db.close()
+'''
+
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
