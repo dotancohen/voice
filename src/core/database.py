@@ -464,3 +464,165 @@ class Database:
     ) -> bool:
         """Resolve a tag rename conflict."""
         return self._rust_db.resolve_tag_rename_conflict(conflict_id, new_name)
+
+    # ============================================================================
+    # AudioFile and NoteAttachment methods
+    # ============================================================================
+
+    def create_audio_file(
+        self,
+        filename: str,
+        file_created_at: Optional[str] = None,
+    ) -> str:
+        """Create a new audio file record.
+
+        Args:
+            filename: Original filename
+            file_created_at: Optional file creation timestamp
+
+        Returns:
+            Audio file ID (hex string)
+        """
+        return self._rust_db.create_audio_file(filename, file_created_at)
+
+    def get_audio_file(self, audio_id: str) -> Optional[Dict[str, Any]]:
+        """Get an audio file by ID.
+
+        Args:
+            audio_id: Audio file UUID hex string
+
+        Returns:
+            Audio file dict or None if not found
+        """
+        return self._rust_db.get_audio_file(audio_id)
+
+    def get_audio_files_for_note(self, note_id: str) -> List[Dict[str, Any]]:
+        """Get all audio files attached to a note.
+
+        Args:
+            note_id: Note UUID hex string
+
+        Returns:
+            List of audio file dicts
+        """
+        return self._rust_db.get_audio_files_for_note(note_id)
+
+    def update_audio_file_summary(self, audio_id: str, summary: str) -> bool:
+        """Update an audio file's summary.
+
+        Args:
+            audio_id: Audio file UUID hex string
+            summary: New summary text
+
+        Returns:
+            True if updated, False if not found
+        """
+        return self._rust_db.update_audio_file_summary(audio_id, summary)
+
+    def delete_audio_file(self, audio_id: str) -> bool:
+        """Soft delete an audio file.
+
+        Args:
+            audio_id: Audio file UUID hex string
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return self._rust_db.delete_audio_file(audio_id)
+
+    def attach_to_note(
+        self,
+        note_id: str,
+        attachment_id: str,
+        attachment_type: str,
+    ) -> str:
+        """Attach an item to a note.
+
+        Args:
+            note_id: Note UUID hex string
+            attachment_id: Attachment UUID hex string
+            attachment_type: Type of attachment (e.g., "audio_file")
+
+        Returns:
+            Association ID (hex string)
+        """
+        return self._rust_db.attach_to_note(note_id, attachment_id, attachment_type)
+
+    def detach_from_note(self, association_id: str) -> bool:
+        """Detach an item from a note (soft delete).
+
+        Args:
+            association_id: Association UUID hex string
+
+        Returns:
+            True if detached, False if not found
+        """
+        return self._rust_db.detach_from_note(association_id)
+
+    def get_attachments_for_note(self, note_id: str) -> List[Dict[str, Any]]:
+        """Get all attachments for a note.
+
+        Args:
+            note_id: Note UUID hex string
+
+        Returns:
+            List of attachment dicts
+        """
+        return self._rust_db.get_attachments_for_note(note_id)
+
+    def get_attachment(self, association_id: str) -> Optional[Dict[str, Any]]:
+        """Get an attachment by association ID.
+
+        Args:
+            association_id: Association UUID hex string
+
+        Returns:
+            Attachment dict or None if not found
+        """
+        return self._rust_db.get_attachment(association_id)
+
+    # ============================================================================
+    # AudioFile and NoteAttachment sync methods
+    # ============================================================================
+
+    def get_audio_file_raw(self, audio_id: str) -> Optional[Dict[str, Any]]:
+        """Get raw audio file data by ID (including deleted, for sync)."""
+        return self._rust_db.get_audio_file_raw(audio_id)
+
+    def apply_sync_audio_file(
+        self,
+        audio_id: str,
+        imported_at: str,
+        filename: str,
+        file_created_at: Optional[str] = None,
+        summary: Optional[str] = None,
+        modified_at: Optional[str] = None,
+        deleted_at: Optional[str] = None,
+    ) -> bool:
+        """Apply a sync audio file change."""
+        return self._rust_db.apply_sync_audio_file(
+            audio_id, imported_at, filename,
+            file_created_at, summary, modified_at, deleted_at
+        )
+
+    def get_note_attachment_raw(
+        self, association_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get raw note attachment data by ID (including deleted, for sync)."""
+        return self._rust_db.get_note_attachment_raw(association_id)
+
+    def apply_sync_note_attachment(
+        self,
+        association_id: str,
+        note_id: str,
+        attachment_id: str,
+        attachment_type: str,
+        created_at: str,
+        modified_at: Optional[str] = None,
+        deleted_at: Optional[str] = None,
+    ) -> bool:
+        """Apply a sync note attachment change."""
+        return self._rust_db.apply_sync_note_attachment(
+            association_id, note_id, attachment_id, attachment_type,
+            created_at, modified_at, deleted_at
+        )

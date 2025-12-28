@@ -21,9 +21,11 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.core.audiofile_manager import AudioFileManager, is_supported_audio_format
 from src.core.config import Config
 from src.core.conflicts import ConflictManager, ResolutionChoice
 from src.core.database import Database
+from src.core.models import AUDIO_FILE_FORMATS
 from src.core.search import resolve_tag_term
 from src.core.sync import create_sync_server
 from src.core.sync_client import SyncClient, sync_all_peers
@@ -309,6 +311,187 @@ def cmd_search(db: Database, args: argparse.Namespace) -> int:
             if i > 0:
                 print("\n" + "=" * 60 + "\n")
             print(format_note(note, "text"))
+
+    return 0
+
+
+def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Import audio files from a directory.
+
+    For each valid audio file:
+    1. Validate format (mp3, wav, flac, ogg, opus, m4a)
+    2. Get file_created_at from filesystem metadata
+    3. Create Note with content="Audio: {filename}", created_at=file_created_at
+    4. Create AudioFile record
+    5. Copy file to {audiofile_directory}/{uuid}.{ext}
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    # Check audiofile_directory is configured
+    audiofile_dir = config.get_audiofile_directory()
+    if not audiofile_dir:
+        print("Error: audiofile_directory not configured.")
+        print("Run: voice config set audiofile_directory /path/to/audio/files")
+        return 1
+
+    source_dir = Path(args.directory)
+    if not source_dir.exists():
+        print(f"Error: Directory not found: {source_dir}")
+        return 1
+
+    if not source_dir.is_dir():
+        print(f"Error: Not a directory: {source_dir}")
+        return 1
+
+    manager = AudioFileManager(audiofile_dir)
+
+    # Find audio files
+    if args.recursive:
+        files = list(source_dir.rglob("*"))
+    else:
+        files = list(source_dir.iterdir())
+
+    audio_files = [f for f in files if f.is_file() and is_supported_audio_format(f.name)]
+
+    if not audio_files:
+        print(f"No supported audio files found in {source_dir}")
+        print(f"Supported formats: {', '.join(sorted(AUDIO_FILE_FORMATS))}")
+        return 0
+
+    imported = 0
+    errors = 0
+
+    for audio_path in audio_files:
+        try:
+            # Get file extension
+            ext = manager.get_extension_from_filename(audio_path.name)
+            if not ext:
+                print(f"  Skipping (no valid extension): {audio_path.name}")
+                continue
+
+            # Get file creation time
+            file_created_at = manager.get_file_created_at(audio_path)
+            file_created_at_str = file_created_at.strftime("%Y-%m-%d %H:%M:%S") if file_created_at else None
+
+            # Create AudioFile record in database
+            audio_file_id = db.create_audio_file(audio_path.name, file_created_at_str)
+
+            # Copy file to audiofile_directory
+            manager.import_file(audio_path, audio_file_id, ext)
+
+            # Create Note with audio reference
+            # Use file_created_at for note's created_at for chronological sorting
+            note_content = f"Audio: {audio_path.name}"
+
+            if file_created_at_str:
+                # Use apply_sync_note to create note with the correct created_at
+                # Generate a new UUID7 for the note
+                from uuid6 import uuid7
+                note_uuid = uuid7()
+                note_id = note_uuid.hex
+                db.apply_sync_note(note_id, file_created_at_str, note_content, None, None)
+            else:
+                # No file timestamp, use current time
+                note_id = db.create_note(note_content)
+
+            # Attach audio file to note
+            db.attach_to_note(note_id, audio_file_id, "audio_file")
+
+            print(f"  Imported: {audio_path.name} -> {audio_file_id[:8]}...")
+            imported += 1
+
+        except Exception as e:
+            print(f"  Error importing {audio_path.name}: {e}")
+            errors += 1
+
+    print(f"\nImported {imported} file(s), {errors} error(s)")
+    return 0 if errors == 0 else 1
+
+
+def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """List audio files.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success)
+    """
+    if args.note_id:
+        # List audio files for a specific note
+        audio_files = db.get_audio_files_for_note(args.note_id)
+        if not audio_files:
+            print(f"No audio files attached to note {args.note_id}")
+            return 0
+
+        print(f"Audio files for note {args.note_id}:\n")
+    else:
+        # List all audio files - we need to query all notes and their attachments
+        # For now, we'll just say this is not fully implemented
+        print("Listing all audio files requires --note-id parameter.")
+        print("Use: voice cli list-audiofiles --note-id <note_id>")
+        return 0
+
+    for af in audio_files:
+        print(f"ID: {af['id'][:8]}...")
+        print(f"  Filename: {af['filename']}")
+        print(f"  Imported: {af['imported_at']}")
+        if af.get('file_created_at'):
+            print(f"  File created: {af['file_created_at']}")
+        if af.get('summary'):
+            print(f"  Summary: {af['summary']}")
+        print()
+
+    return 0
+
+
+def cmd_show_audiofile(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Show details of an audio file.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for not found)
+    """
+    audio_file = db.get_audio_file(args.audio_id)
+    if not audio_file:
+        print(f"Audio file not found: {args.audio_id}")
+        return 1
+
+    print(f"ID: {audio_file['id']}")
+    print(f"Filename: {audio_file['filename']}")
+    print(f"Imported: {audio_file['imported_at']}")
+    if audio_file.get('file_created_at'):
+        print(f"File created: {audio_file['file_created_at']}")
+    if audio_file.get('summary'):
+        print(f"Summary: {audio_file['summary']}")
+    if audio_file.get('modified_at'):
+        print(f"Modified: {audio_file['modified_at']}")
+    if audio_file.get('deleted_at'):
+        print(f"Deleted: {audio_file['deleted_at']}")
+
+    # Show file location
+    audiofile_dir = config.get_audiofile_directory()
+    if audiofile_dir:
+        manager = AudioFileManager(audiofile_dir)
+        ext = manager.get_extension_from_filename(audio_file['filename'])
+        if ext:
+            file_path = manager.get_file_path(audio_file['id'], ext)
+            if file_path:
+                print(f"File path: {file_path}")
+            else:
+                print("File path: (file not found on disk)")
 
     return 0
 
@@ -794,6 +977,45 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Tag path to filter by (can be specified multiple times for AND logic)"
     )
 
+    # import-audiofiles command
+    import_audio_parser = cli_subparsers.add_parser(
+        "import-audiofiles",
+        help="Import audio files from a directory"
+    )
+    import_audio_parser.add_argument(
+        "directory",
+        type=str,
+        help="Directory containing audio files to import"
+    )
+    import_audio_parser.add_argument(
+        "--recursive",
+        "-r",
+        action="store_true",
+        help="Recursively search subdirectories"
+    )
+
+    # list-audiofiles command
+    list_audio_parser = cli_subparsers.add_parser(
+        "list-audiofiles",
+        help="List audio files"
+    )
+    list_audio_parser.add_argument(
+        "--note-id",
+        type=str,
+        help="List audio files attached to a specific note"
+    )
+
+    # show-audiofile command
+    show_audio_parser = cli_subparsers.add_parser(
+        "show-audiofile",
+        help="Show details of an audio file"
+    )
+    show_audio_parser.add_argument(
+        "audio_id",
+        type=str,
+        help="Audio file ID to show"
+    )
+
     # sync command with subcommands
     sync_parser = cli_subparsers.add_parser(
         "sync",
@@ -900,6 +1122,12 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_list_tags(db, args)
         elif args.cli_command == "search":
             return cmd_search(db, args)
+        elif args.cli_command == "import-audiofiles":
+            return cmd_import_audiofiles(db, config, args)
+        elif args.cli_command == "list-audiofiles":
+            return cmd_list_audiofiles(db, config, args)
+        elif args.cli_command == "show-audiofile":
+            return cmd_show_audiofile(db, config, args)
         elif args.cli_command == "sync":
             # Handle sync subcommands
             sync_cmd = getattr(args, 'sync_command', None)

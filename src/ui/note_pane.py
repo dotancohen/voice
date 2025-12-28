@@ -13,6 +13,8 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -87,11 +89,19 @@ class NotePane(QWidget, NoteEditorMixin):
         self.tags_label = QLabel("Tags: ")
         layout.addWidget(self.tags_label)
 
-        # Content (initially read-only)
+        # Content (initially read-only) - BEFORE attachments per requirements
         self.content_text = QTextEdit()
         self.content_text.setReadOnly(True)
         self.content_text.setTabChangesFocus(True)  # Tab moves to next widget
         layout.addWidget(self.content_text)
+
+        # Attachments - BELOW content per requirements
+        self.attachments_label = QLabel("Attachments:")
+        layout.addWidget(self.attachments_label)
+
+        self.attachments_list = QListWidget()
+        self.attachments_list.setMaximumHeight(100)  # Compact display
+        layout.addWidget(self.attachments_list)
 
         # Button toolbar
         button_layout = QHBoxLayout()
@@ -147,6 +157,28 @@ class NotePane(QWidget, NoteEditorMixin):
         else:
             self.tags_label.setText("Tags: None")
 
+        # Update attachments - display BELOW content
+        self.attachments_list.clear()
+        try:
+            audio_files = self.db.get_audio_files_for_note(note_id)
+            if audio_files:
+                self.attachments_label.setText(f"Attachments ({len(audio_files)}):")
+                for af in audio_files:
+                    # Display: id (8 chars) | filename | imported_at | file_created_at
+                    id_short = af.get("id", "")[:8]
+                    filename = af.get("filename", "unknown")
+                    imported_at = af.get("imported_at", "unknown")
+                    file_created_at = af.get("file_created_at", "unknown")
+
+                    item_text = f"{id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
+                    item = QListWidgetItem(item_text)
+                    self.attachments_list.addItem(item)
+            else:
+                self.attachments_label.setText("Attachments: None")
+        except Exception as e:
+            logger.warning(f"Error loading attachments for note {note_id}: {e}")
+            self.attachments_label.setText("Attachments: None")
+
         # Use mixin to handle content and state
         content = note.get("content", "")
         self.load_note_content(note_id, content)
@@ -158,6 +190,8 @@ class NotePane(QWidget, NoteEditorMixin):
         self.created_label.setText("Created: ")
         self.modified_label.setText("Modified: Never modified")
         self.tags_label.setText("Tags: ")
+        self.attachments_label.setText("Attachments:")
+        self.attachments_list.clear()
         self.clear_editor()  # Handles content and state via mixin
 
     # ===== NoteEditorMixin abstract method implementations =====

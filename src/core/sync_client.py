@@ -728,6 +728,85 @@ class SyncClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def download_audio_file(
+        self, peer_url: str, audio_id: str, dest_path: Path
+    ) -> Dict[str, Any]:
+        """Download an audio file from a peer.
+
+        Args:
+            peer_url: Base URL of the peer sync server
+            audio_id: Audio file UUID hex string
+            dest_path: Local path to save the file
+
+        Returns:
+            Dict with 'success' and 'error' or 'bytes_downloaded'
+        """
+        url = f"{peer_url}/sync/audio/{audio_id}/file"
+
+        try:
+            request = urllib.request.Request(url, method="GET")
+            request.add_header("X-Device-ID", self.device_id)
+            request.add_header("X-Device-Name", self.device_name)
+
+            # Create SSL context
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+
+            response = urllib.request.urlopen(request, context=context, timeout=60)
+            content = response.read()
+
+            # Ensure parent directory exists
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write file
+            dest_path.write_bytes(content)
+
+            return {"success": True, "bytes_downloaded": len(content)}
+
+        except urllib.error.HTTPError as e:
+            return {"success": False, "error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def upload_audio_file(
+        self, peer_url: str, audio_id: str, source_path: Path
+    ) -> Dict[str, Any]:
+        """Upload an audio file to a peer.
+
+        Args:
+            peer_url: Base URL of the peer sync server
+            audio_id: Audio file UUID hex string
+            source_path: Local path of the file to upload
+
+        Returns:
+            Dict with 'success' and 'error' or 'bytes_uploaded'
+        """
+        url = f"{peer_url}/sync/audio/{audio_id}/file"
+
+        try:
+            content = source_path.read_bytes()
+
+            request = urllib.request.Request(url, data=content, method="POST")
+            request.add_header("X-Device-ID", self.device_id)
+            request.add_header("X-Device-Name", self.device_name)
+            request.add_header("Content-Type", "application/octet-stream")
+
+            # Create SSL context
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+
+            response = urllib.request.urlopen(request, context=context, timeout=60)
+            response.read()  # Consume response
+
+            return {"success": True, "bytes_uploaded": len(content)}
+
+        except urllib.error.HTTPError as e:
+            return {"success": False, "error": f"HTTP {e.code}: {e.reason}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 
 def sync_all_peers(db: Database, config: Config) -> Dict[str, SyncResult]:
     """Sync with all configured peers.

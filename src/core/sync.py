@@ -78,17 +78,25 @@ class HandshakeResponse:
     server_timestamp: Optional[str] = None  # For clock skew detection
 
 
-def create_sync_blueprint(db: Database, device_id: str, device_name: str) -> Blueprint:
+def create_sync_blueprint(
+    db: Database,
+    device_id: str,
+    device_name: str,
+    audiofile_directory: Optional[str] = None,
+) -> Blueprint:
     """Create Flask blueprint for sync endpoints.
 
     Args:
         db: Database instance
         device_id: This device's UUID hex string
         device_name: Human-readable device name
+        audiofile_directory: Path to audio file storage directory
 
     Returns:
         Flask Blueprint with sync routes
     """
+    from pathlib import Path
+
     sync_bp = Blueprint("sync", __name__, url_prefix="/sync")
 
     @sync_bp.route("/handshake", methods=["POST"])
@@ -292,6 +300,101 @@ def create_sync_blueprint(db: Database, device_id: str, device_name: str) -> Blu
             "protocol_version": "1.0",
         }), 200
 
+    @sync_bp.route("/audio/<audio_id>/file", methods=["GET"])
+    def download_audio_file(audio_id: str) -> Tuple[Any, int]:
+        """Download an audio file.
+
+        Args:
+            audio_id: Audio file UUID hex string
+
+        Response:
+            Binary audio file content with 200 OK, or:
+            - 400 Bad Request if audio_id is invalid
+            - 404 Not Found if audiofile_directory not configured or file not found
+        """
+        from flask import Response
+
+        # Validate audio_id
+        try:
+            validate_uuid_hex(audio_id)
+        except Exception:
+            return jsonify({"error": "Invalid audio ID"}), 400
+
+        # Check audiofile_directory is configured
+        if not audiofile_directory:
+            return jsonify({"error": "audiofile_directory not configured"}), 404
+
+        # Find the file (look for {audio_id}.*)
+        audiofile_path = Path(audiofile_directory)
+        found_file = None
+        if audiofile_path.exists():
+            for f in audiofile_path.iterdir():
+                if f.name.startswith(audio_id) and "." in f.name:
+                    found_file = f
+                    break
+
+        if not found_file or not found_file.exists():
+            return jsonify({"error": f"Audio file not found: {audio_id}"}), 404
+
+        # Read and return file content
+        try:
+            content = found_file.read_bytes()
+            return Response(content, status=200, mimetype="application/octet-stream")
+        except Exception as e:
+            logger.error(f"Error reading audio file: {e}")
+            return jsonify({"error": f"Failed to read file: {e}"}), 500
+
+    @sync_bp.route("/audio/<audio_id>/file", methods=["POST"])
+    def upload_audio_file(audio_id: str) -> Tuple[Any, int]:
+        """Upload an audio file.
+
+        Args:
+            audio_id: Audio file UUID hex string
+
+        Request body:
+            Binary audio file content
+
+        Response:
+            200 OK on success, or:
+            - 400 Bad Request if audio_id is invalid or audiofile_directory not configured
+            - 404 Not Found if audio file record not found
+            - 500 Internal Server Error on file write failure
+        """
+        # Validate audio_id
+        try:
+            validate_uuid_hex(audio_id)
+        except Exception:
+            return jsonify({"error": "Invalid audio ID"}), 400
+
+        # Check audiofile_directory is configured
+        if not audiofile_directory:
+            return jsonify({"error": "audiofile_directory not configured"}), 400
+
+        # Get audio file record to determine extension
+        audio_file = db.get_audio_file(audio_id)
+        if not audio_file:
+            return jsonify({"error": f"Audio file record not found: {audio_id}"}), 404
+
+        # Extract extension from filename
+        filename = audio_file.get("filename", "")
+        if "." in filename:
+            ext = filename.rsplit(".", 1)[-1].lower()
+        else:
+            ext = "bin"
+
+        # Ensure directory exists
+        audiofile_path = Path(audiofile_directory)
+        audiofile_path.mkdir(parents=True, exist_ok=True)
+
+        # Write file
+        file_path = audiofile_path / f"{audio_id}.{ext}"
+        try:
+            file_path.write_bytes(request.data)
+            return "OK", 200
+        except Exception as e:
+            logger.error(f"Error writing audio file: {e}")
+            return jsonify({"error": f"Failed to write file: {e}"}), 500
+
     return sync_bp
 
 
@@ -387,6 +490,14 @@ def apply_sync_changes(
                 )
             elif change.entity_type == "note_tag":
                 result = apply_note_tag_change(
+                    db, change, peer_device_name, last_sync_at
+                )
+            elif change.entity_type == "note_attachment":
+                result = apply_note_attachment_change(
+                    db, change, peer_device_name, last_sync_at
+                )
+            elif change.entity_type == "audio_file":
+                result = apply_audio_file_change(
                     db, change, peer_device_name, last_sync_at
                 )
             else:
@@ -911,11 +1022,216 @@ def apply_note_tag_change(
     return "skipped"
 
 
+def apply_note_attachment_change(
+    db: Database,
+    change: SyncChange,
+    peer_device_name: Optional[str] = None,
+    last_sync_at: Optional[str] = None,
+) -> str:
+    """Apply a note-attachment association change.
+
+    Returns: "applied", "skipped", or "conflict"
+    """
+    attachment_assoc_id = change.entity_id
+    data = change.data
+
+    # Determine the timestamp of this incoming change
+    if change.operation == "delete":
+        incoming_time = data.get("deleted_at") or data.get("modified_at")
+    else:
+        incoming_time = data.get("modified_at") or data.get("created_at")
+
+    # If this change happened before or at last_sync, skip it
+    if last_sync_at and incoming_time and incoming_time <= last_sync_at:
+        return "skipped"
+
+    # Check if association exists locally
+    existing = db.get_note_attachment_raw(attachment_assoc_id)
+
+    # Determine if local changed since last_sync
+    local_changed = False
+    if existing:
+        local_time = existing.get("modified_at") or existing.get("deleted_at") or existing.get("created_at")
+        local_changed = last_sync_at is None or (local_time and local_time > last_sync_at)
+
+    if change.operation == "create":
+        if existing:
+            if existing.get("deleted_at") is None:
+                return "skipped"  # Already active
+            # Local is deleted, remote wants active - reactivate
+            db.apply_sync_note_attachment(
+                data["id"], data["note_id"], data["attachment_id"],
+                data["attachment_type"], data["created_at"],
+                data.get("modified_at"), None  # Clear deleted_at
+            )
+            return "conflict" if local_changed else "applied"
+        # New association
+        db.apply_sync_note_attachment(
+            data["id"], data["note_id"], data["attachment_id"],
+            data["attachment_type"], data["created_at"],
+            data.get("modified_at"), None
+        )
+        return "applied"
+
+    elif change.operation == "delete":
+        if not existing:
+            # Create as deleted for sync consistency
+            db.apply_sync_note_attachment(
+                data["id"], data["note_id"], data["attachment_id"],
+                data["attachment_type"], data["created_at"],
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "applied"
+
+        if existing.get("deleted_at"):
+            return "skipped"  # Already deleted
+
+        # Local is active, remote wants to delete
+        if local_changed:
+            return "conflict"  # Keep active
+
+        db.apply_sync_note_attachment(
+            data["id"], data["note_id"], data["attachment_id"],
+            data["attachment_type"], data["created_at"],
+            data.get("modified_at"), data.get("deleted_at")
+        )
+        return "applied"
+
+    elif change.operation == "update":
+        if not existing:
+            db.apply_sync_note_attachment(
+                data["id"], data["note_id"], data["attachment_id"],
+                data["attachment_type"], data["created_at"],
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "applied"
+
+        remote_deleted = data.get("deleted_at")
+        local_deleted = existing.get("deleted_at")
+
+        if remote_deleted is None and local_deleted is not None:
+            # Remote reactivated
+            db.apply_sync_note_attachment(
+                data["id"], data["note_id"], data["attachment_id"],
+                data["attachment_type"], existing["created_at"],
+                data.get("modified_at"), None
+            )
+            return "conflict" if local_changed else "applied"
+
+        if remote_deleted is not None and local_deleted is None:
+            # Remote wants to delete, local is active
+            if local_changed:
+                return "conflict"
+            db.apply_sync_note_attachment(
+                data["id"], data["note_id"], data["attachment_id"],
+                data["attachment_type"], existing["created_at"],
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "applied"
+
+        # Both have same deleted state - update
+        db.apply_sync_note_attachment(
+            data["id"], data["note_id"], data["attachment_id"],
+            data["attachment_type"], existing["created_at"],
+            data.get("modified_at"), data.get("deleted_at")
+        )
+        return "applied"
+
+    return "skipped"
+
+
+def apply_audio_file_change(
+    db: Database,
+    change: SyncChange,
+    peer_device_name: Optional[str] = None,
+    last_sync_at: Optional[str] = None,
+) -> str:
+    """Apply an audio file change.
+
+    Returns: "applied", "skipped", or "conflict"
+    """
+    audio_file_id = change.entity_id
+    data = change.data
+
+    # Determine the timestamp of this incoming change
+    if change.operation == "delete":
+        incoming_time = data.get("deleted_at") or data.get("modified_at")
+    else:
+        incoming_time = data.get("modified_at") or data.get("imported_at")
+
+    # If this change happened before or at last_sync, skip it
+    if last_sync_at and incoming_time and incoming_time <= last_sync_at:
+        return "skipped"
+
+    # Check if audio file exists locally
+    existing = db.get_audio_file_raw(audio_file_id)
+
+    # Determine if local changed since last_sync
+    local_changed = False
+    if existing:
+        local_time = existing.get("modified_at") or existing.get("deleted_at") or existing.get("imported_at")
+        local_changed = last_sync_at is None or (local_time and local_time > last_sync_at)
+
+    if change.operation == "create":
+        if existing:
+            return "skipped"  # Already exists
+        db.apply_sync_audio_file(
+            data["id"], data["imported_at"], data["filename"],
+            data.get("file_created_at"), data.get("summary"),
+            data.get("modified_at"), data.get("deleted_at")
+        )
+        return "applied"
+
+    elif change.operation in ("update", "delete"):
+        if not existing:
+            db.apply_sync_audio_file(
+                data["id"], data["imported_at"], data["filename"],
+                data.get("file_created_at"), data.get("summary"),
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "applied"
+
+        local_deleted = existing.get("deleted_at") is not None
+        remote_deleted = data.get("deleted_at") is not None
+
+        # If both deleted, apply
+        if local_deleted and remote_deleted:
+            db.apply_sync_audio_file(
+                data["id"], data["imported_at"], data["filename"],
+                data.get("file_created_at"), data.get("summary"),
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "applied"
+
+        # If local edited but remote deletes, conflict (preserve local)
+        if not local_deleted and remote_deleted and local_changed:
+            return "conflict"
+
+        # If local deleted but remote has updates (reactivation)
+        if local_deleted and not remote_deleted:
+            db.apply_sync_audio_file(
+                data["id"], data["imported_at"], data["filename"],
+                data.get("file_created_at"), data.get("summary"),
+                data.get("modified_at"), data.get("deleted_at")
+            )
+            return "conflict" if local_changed else "applied"
+
+        # Otherwise apply the update
+        db.apply_sync_audio_file(
+            data["id"], data["imported_at"], data["filename"],
+            data.get("file_created_at"), data.get("summary"),
+            data.get("modified_at"), data.get("deleted_at")
+        )
+        return "applied"
+
+    return "skipped"
+
+
 def get_full_dataset(db: Database) -> Dict[str, List[Dict[str, Any]]]:
     """Get the full dataset for initial sync.
 
     Returns:
-        Dictionary with notes, tags, and note_tags lists.
+        Dictionary with notes, tags, note_tags, note_attachments, and audio_files lists.
     """
     return db.get_full_dataset()
 
@@ -955,8 +1271,9 @@ def create_sync_server(
 
     device_id = config.get_device_id_hex()
     device_name = config.get_device_name()
+    audiofile_directory = config.get_audiofile_directory()
 
-    sync_bp = create_sync_blueprint(db, device_id, device_name)
+    sync_bp = create_sync_blueprint(db, device_id, device_name, audiofile_directory)
     app.register_blueprint(sync_bp)
 
     return app

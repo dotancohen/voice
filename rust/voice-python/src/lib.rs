@@ -62,6 +62,32 @@ fn tag_row_to_dict<'py>(py: Python<'py>, tag: &database::TagRow) -> PyResult<Bou
     Ok(dict)
 }
 
+fn note_attachment_row_to_dict<'py>(py: Python<'py>, attachment: &database::NoteAttachmentRow) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("id", &attachment.id)?;
+    dict.set_item("note_id", &attachment.note_id)?;
+    dict.set_item("attachment_id", &attachment.attachment_id)?;
+    dict.set_item("attachment_type", &attachment.attachment_type)?;
+    dict.set_item("created_at", &attachment.created_at)?;
+    dict.set_item("device_id", &attachment.device_id)?;
+    dict.set_item("modified_at", &attachment.modified_at)?;
+    dict.set_item("deleted_at", &attachment.deleted_at)?;
+    Ok(dict)
+}
+
+fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFileRow) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("id", &audio_file.id)?;
+    dict.set_item("imported_at", &audio_file.imported_at)?;
+    dict.set_item("filename", &audio_file.filename)?;
+    dict.set_item("file_created_at", &audio_file.file_created_at)?;
+    dict.set_item("summary", &audio_file.summary)?;
+    dict.set_item("device_id", &audio_file.device_id)?;
+    dict.set_item("modified_at", &audio_file.modified_at)?;
+    dict.set_item("deleted_at", &audio_file.deleted_at)?;
+    Ok(dict)
+}
+
 fn hashmap_to_pydict<'py>(
     py: Python<'py>,
     map: &HashMap<String, serde_json::Value>,
@@ -707,6 +733,139 @@ impl PyDatabase {
             .resolve_tag_rename_conflict(conflict_id, new_name)
             .map_err(voice_error_to_pyerr)
     }
+
+    // ========================================================================
+    // NoteAttachment methods
+    // ========================================================================
+
+    fn attach_to_note(&self, note_id: &str, attachment_id: &str, attachment_type: &str) -> PyResult<String> {
+        self.inner_ref()?
+            .attach_to_note(note_id, attachment_id, attachment_type)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    fn detach_from_note(&self, association_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .detach_from_note(association_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    fn get_attachments_for_note<'py>(&self, py: Python<'py>, note_id: &str) -> PyResult<PyObject> {
+        let attachments = self.inner_ref()?
+            .get_attachments_for_note(note_id)
+            .map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for attachment in &attachments {
+            list.append(note_attachment_row_to_dict(py, attachment)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn get_attachment<'py>(&self, py: Python<'py>, association_id: &str) -> PyResult<Option<PyObject>> {
+        let attachment = self.inner_ref()?
+            .get_attachment(association_id)
+            .map_err(voice_error_to_pyerr)?;
+        match attachment {
+            Some(a) => Ok(Some(note_attachment_row_to_dict(py, &a)?.into_any().unbind())),
+            None => Ok(None),
+        }
+    }
+
+    fn get_note_attachment_raw<'py>(&self, py: Python<'py>, association_id: &str) -> PyResult<Option<PyObject>> {
+        let attachment = self.inner_ref()?
+            .get_note_attachment_raw(association_id)
+            .map_err(voice_error_to_pyerr)?;
+        match attachment {
+            Some(a) => Ok(Some(json_value_to_pyobject(py, &a)?)),
+            None => Ok(None),
+        }
+    }
+
+    #[pyo3(signature = (id, note_id, attachment_id, attachment_type, created_at, modified_at=None, deleted_at=None))]
+    fn apply_sync_note_attachment(
+        &self,
+        id: &str,
+        note_id: &str,
+        attachment_id: &str,
+        attachment_type: &str,
+        created_at: &str,
+        modified_at: Option<&str>,
+        deleted_at: Option<&str>,
+    ) -> PyResult<()> {
+        self.inner_ref()?
+            .apply_sync_note_attachment(id, note_id, attachment_id, attachment_type, created_at, modified_at, deleted_at)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    // ========================================================================
+    // AudioFile methods
+    // ========================================================================
+
+    #[pyo3(signature = (filename, file_created_at=None))]
+    fn create_audio_file(&self, filename: &str, file_created_at: Option<&str>) -> PyResult<String> {
+        self.inner_ref()?
+            .create_audio_file(filename, file_created_at)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    fn get_audio_file<'py>(&self, py: Python<'py>, audio_file_id: &str) -> PyResult<Option<PyObject>> {
+        let audio_file = self.inner_ref()?
+            .get_audio_file(audio_file_id)
+            .map_err(voice_error_to_pyerr)?;
+        match audio_file {
+            Some(af) => Ok(Some(audio_file_row_to_dict(py, &af)?.into_any().unbind())),
+            None => Ok(None),
+        }
+    }
+
+    fn get_audio_files_for_note<'py>(&self, py: Python<'py>, note_id: &str) -> PyResult<PyObject> {
+        let audio_files = self.inner_ref()?
+            .get_audio_files_for_note(note_id)
+            .map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for audio_file in &audio_files {
+            list.append(audio_file_row_to_dict(py, audio_file)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn update_audio_file_summary(&self, audio_file_id: &str, summary: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .update_audio_file_summary(audio_file_id, summary)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    fn delete_audio_file(&self, audio_file_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .delete_audio_file(audio_file_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    fn get_audio_file_raw<'py>(&self, py: Python<'py>, audio_file_id: &str) -> PyResult<Option<PyObject>> {
+        let audio_file = self.inner_ref()?
+            .get_audio_file_raw(audio_file_id)
+            .map_err(voice_error_to_pyerr)?;
+        match audio_file {
+            Some(af) => Ok(Some(json_value_to_pyobject(py, &af)?)),
+            None => Ok(None),
+        }
+    }
+
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, summary=None, modified_at=None, deleted_at=None))]
+    fn apply_sync_audio_file(
+        &self,
+        id: &str,
+        imported_at: &str,
+        filename: &str,
+        file_created_at: Option<&str>,
+        summary: Option<&str>,
+        modified_at: Option<&str>,
+        deleted_at: Option<&str>,
+    ) -> PyResult<()> {
+        self.inner_ref()?
+            .apply_sync_audio_file(id, imported_at, filename, file_created_at, summary, modified_at, deleted_at)
+            .map_err(voice_error_to_pyerr)
+    }
 }
 
 // ============================================================================
@@ -864,6 +1023,26 @@ impl PyConfig {
     fn set_device_name(&self, name: &str) -> PyResult<()> {
         let mut cfg = self.inner.lock().unwrap();
         cfg.set_device_name(name).map_err(voice_error_to_pyerr)
+    }
+
+    fn get_audiofile_directory(&self) -> PyResult<Option<String>> {
+        let cfg = self.inner.lock().unwrap();
+        Ok(cfg.audiofile_directory().map(|s| s.to_string()))
+    }
+
+    fn set_audiofile_directory(&self, path: &str) -> PyResult<()> {
+        let mut cfg = self.inner.lock().unwrap();
+        cfg.set_audiofile_directory(path).map_err(voice_error_to_pyerr)
+    }
+
+    fn clear_audiofile_directory(&self) -> PyResult<()> {
+        let mut cfg = self.inner.lock().unwrap();
+        cfg.clear_audiofile_directory().map_err(voice_error_to_pyerr)
+    }
+
+    fn get_audiofile_trash_directory(&self) -> PyResult<Option<String>> {
+        let cfg = self.inner.lock().unwrap();
+        Ok(cfg.audiofile_trash_directory().map(|p| p.to_string_lossy().to_string()))
     }
 
     fn get_sync_config<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
@@ -1059,6 +1238,26 @@ fn py_validate_datetime(value: &str, field_name: Option<&str>) -> PyResult<()> {
     validation::validate_datetime(value, field).map_err(voice_error_to_pyerr)
 }
 
+#[pyfunction]
+#[pyo3(name = "validate_audio_file_id")]
+fn py_validate_audio_file_id(audio_file_id: &str) -> PyResult<String> {
+    let uuid = validation::validate_audio_file_id(audio_file_id).map_err(voice_error_to_pyerr)?;
+    Ok(validation::uuid_to_hex(&uuid))
+}
+
+#[pyfunction]
+#[pyo3(name = "validate_attachment_id")]
+fn py_validate_attachment_id(attachment_id: &str) -> PyResult<String> {
+    let uuid = validation::validate_attachment_id(attachment_id).map_err(voice_error_to_pyerr)?;
+    Ok(validation::uuid_to_hex(&uuid))
+}
+
+#[pyfunction]
+#[pyo3(name = "validate_audio_extension")]
+fn py_validate_audio_extension(filename: &str) -> PyResult<()> {
+    validation::validate_audio_extension(filename).map_err(voice_error_to_pyerr)
+}
+
 // ============================================================================
 // Database helper
 // ============================================================================
@@ -1114,6 +1313,9 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_validate_note_content, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_search_query, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_datetime, m)?)?;
+    m.add_function(wrap_pyfunction!(py_validate_audio_file_id, m)?)?;
+    m.add_function(wrap_pyfunction!(py_validate_attachment_id, m)?)?;
+    m.add_function(wrap_pyfunction!(py_validate_audio_extension, m)?)?;
 
     // Register database helper functions
     m.add_function(wrap_pyfunction!(py_set_local_device_id, m)?)?;

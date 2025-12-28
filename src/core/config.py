@@ -147,6 +147,24 @@ class Config:
         """Get the directory for TLS certificates."""
         return Path(self._rust_config.get_certs_dir())
 
+    # ===== AudioFile Configuration =====
+
+    def get_audiofile_directory(self) -> Optional[str]:
+        """Get the audiofile directory path.
+
+        Returns:
+            Path to audiofile directory, or None if not configured.
+        """
+        return self._rust_config.get_audiofile_directory()
+
+    def set_audiofile_directory(self, path: str) -> None:
+        """Set the audiofile directory path.
+
+        Args:
+            path: Path to the audiofile directory.
+        """
+        self._rust_config.set_audiofile_directory(path)
+
     # ===== Backward Compatibility =====
 
     @property

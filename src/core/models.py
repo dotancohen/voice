@@ -1,7 +1,7 @@
 """Data models for the Voice application.
 
 This module defines immutable dataclasses representing the core entities:
-Note and Tag.
+Note, Tag, NoteAttachment, and AudioFile.
 
 All IDs are UUID7 stored as bytes (16 bytes).
 """
@@ -10,7 +10,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Optional
+
+
+class AttachmentType(Enum):
+    """Types of attachments that can be associated with notes."""
+
+    AUDIO_FILE = "audio_file"
+    SUMMARY = "summary"  # Future
 
 
 @dataclass(frozen=True)
@@ -80,3 +88,63 @@ class NoteTag:
     created_at: datetime
     device_id: bytes
     deleted_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class NoteAttachment:
+    """Represents the association between a note and an attachment.
+
+    This is a junction table record that links notes to their attachments
+    (audio files, summaries, etc.). An attachment can be linked to multiple notes.
+
+    Attributes:
+        id: Unique identifier for this association (UUID7 as bytes)
+        note_id: UUID7 of the note
+        attachment_id: UUID7 of the attachment (audio_file, summary, etc.)
+        attachment_type: Type of the attachment
+        created_at: When the association was created
+        device_id: UUID7 of the device that created this association
+        modified_at: When the association was modified (for sync tracking)
+        deleted_at: When the association was removed (None if active)
+    """
+
+    id: bytes
+    note_id: bytes
+    attachment_id: bytes
+    attachment_type: AttachmentType
+    created_at: datetime
+    device_id: bytes
+    modified_at: Optional[datetime] = None
+    deleted_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class AudioFile:
+    """Represents an audio file entity.
+
+    Audio files are stored on disk and can be attached to notes via NoteAttachment.
+    The actual file is stored at `{audiofile_directory}/{id}.{extension}`.
+
+    Attributes:
+        id: Unique identifier for the audio file (UUID7 as bytes)
+        imported_at: When the file was imported into the system
+        filename: Original filename from import
+        device_id: UUID7 of the device that created/last modified this record
+        file_created_at: When the file was originally created (from filesystem metadata)
+        summary: Quick text summary of the audio content
+        modified_at: When the record was last modified
+        deleted_at: When the file was soft-deleted (None if active)
+    """
+
+    id: bytes
+    imported_at: datetime
+    filename: str
+    device_id: bytes
+    file_created_at: Optional[datetime] = None
+    summary: Optional[str] = None
+    modified_at: Optional[datetime] = None
+    deleted_at: Optional[datetime] = None
+
+
+# Supported audio file formats for import
+AUDIO_FILE_FORMATS = frozenset(["mp3", "wav", "flac", "ogg", "opus", "m4a"])

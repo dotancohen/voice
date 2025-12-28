@@ -377,10 +377,12 @@ class NoteDetail(Container, NoteEditorMixin):
 
     def compose(self) -> ComposeResult:
         yield Label("Select a note to view", id="note-header")
-        # View mode: Static with RTL support
+        # View mode: Static with RTL support (CONTENT FIRST)
         yield Static("", id="note-view")
         # Edit mode: TextArea (hidden initially)
         yield TextArea(id="note-edit", language=None)
+        # Attachments displayed BELOW content per requirements
+        yield Label("", id="note-attachments")
         yield Horizontal(
             Button("Edit", id="edit-btn", variant="primary"),
             Button("Save", id="save-btn", variant="success"),
@@ -414,6 +416,29 @@ class NoteDetail(Container, NoteEditorMixin):
             else:
                 header.update(header_text)
                 header.remove_class("rtl")
+
+            # Update attachments - displayed BELOW content per requirements
+            attachments_label = self.query_one("#note-attachments", Label)
+            try:
+                audio_files = self.db.get_audio_files_for_note(note_id)
+                if audio_files:
+                    # Display: id (8 chars) | filename | imported_at | file_created_at
+                    attachment_lines = []
+                    for af in audio_files:
+                        id_short = af.get("id", "")[:8]
+                        filename = af.get("filename", "unknown")
+                        imported_at = af.get("imported_at", "unknown")
+                        file_created_at = af.get("file_created_at", "unknown")
+                        attachment_lines.append(
+                            f"  {id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
+                        )
+                    attachments_text = f"Attachments ({len(audio_files)}):\n" + "\n".join(attachment_lines)
+                    attachments_label.update(attachments_text)
+                else:
+                    attachments_label.update("Attachments: None")
+            except Exception as e:
+                logger.warning(f"Error loading attachments for note {note_id}: {e}")
+                attachments_label.update("Attachments: None")
 
             # Use mixin to handle content and state
             self.load_note_content(note_id, note["content"])
@@ -551,6 +576,12 @@ class VoiceTUI(App):
         height: 3;
         background: $surface;
         padding: 1;
+    }}
+
+    #note-attachments {{
+        height: 2;
+        color: $text-muted;
+        padding: 0 1;
     }}
 
     .rtl {{

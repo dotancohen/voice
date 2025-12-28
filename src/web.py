@@ -5,12 +5,15 @@ This module provides a RESTful HTTP API for interacting with notes and tags.
 Uses only core/ modules - no Qt/PySide6 dependencies.
 
 Endpoints:
-    GET  /api/notes              List all notes
-    POST /api/notes              Create a new note
-    GET  /api/notes/<id>         Get specific note
-    PUT  /api/notes/<id>         Update a note
-    GET  /api/tags               List all tags
-    GET  /api/search             Search notes
+    GET  /api/notes                      List all notes
+    POST /api/notes                      Create a new note
+    GET  /api/notes/<id>                 Get specific note
+    PUT  /api/notes/<id>                 Update a note
+    DELETE /api/notes/<id>               Delete a note (soft delete)
+    GET  /api/notes/<id>/attachments     List attachments for a note
+    GET  /api/audiofiles/<id>            Get audio file details
+    GET  /api/tags                       List all tags
+    GET  /api/search                     Search notes
 
 All endpoints return JSON responses.
 IDs are UUID7 hex strings (32 characters, no hyphens).
@@ -171,6 +174,50 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
         if deleted:
             return jsonify({"message": f"Note {note_id} deleted"}), 200
         return jsonify({"error": f"Note {note_id} not found"}), 404
+
+    @app.route("/api/notes/<note_id>/attachments", methods=["GET"])
+    @api_endpoint
+    def get_note_attachments(note_id: str) -> tuple[Response, int]:
+        """Get all attachments for a note.
+
+        Returns list of attachments with their type and details.
+        For audio_file type, includes audio file details inline.
+        """
+        validate_uuid_hex(note_id, "note_id")
+        note = db.get_note(note_id)
+        if not note:
+            return jsonify({"error": f"Note {note_id} not found"}), 404
+
+        # Get all attachments for the note
+        attachments = db.get_attachments_for_note(note_id)
+
+        # Enrich audio_file attachments with audio file details
+        result = []
+        for attachment in attachments:
+            item = {
+                "id": attachment["id"],
+                "note_id": attachment["note_id"],
+                "attachment_id": attachment["attachment_id"],
+                "attachment_type": attachment["attachment_type"],
+                "created_at": attachment["created_at"],
+            }
+            if attachment["attachment_type"] == "audio_file":
+                audio_file = db.get_audio_file(attachment["attachment_id"])
+                if audio_file:
+                    item["audio_file"] = audio_file
+            result.append(item)
+
+        return jsonify({"attachments": result}), 200
+
+    @app.route("/api/audiofiles/<audio_id>", methods=["GET"])
+    @api_endpoint
+    def get_audiofile(audio_id: str) -> tuple[Response, int]:
+        """Get audio file details by ID."""
+        validate_uuid_hex(audio_id, "audio_id")
+        audio_file = db.get_audio_file(audio_id)
+        if audio_file:
+            return jsonify(audio_file), 200
+        return jsonify({"error": f"Audio file {audio_id} not found"}), 404
 
     @app.route("/api/tags", methods=["GET"])
     @api_endpoint
