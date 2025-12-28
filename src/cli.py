@@ -28,7 +28,7 @@ from src.core.database import Database
 from src.core.models import AUDIO_FILE_FORMATS
 from src.core.search import resolve_tag_term
 from src.core.sync import create_sync_server
-from src.core.sync_client import SyncClient, sync_all_peers
+from voicecore import SyncClient, sync_all_peers
 from src.core.validation import ValidationError
 
 
@@ -663,7 +663,7 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
 
     if peer_id:
         # Sync with specific peer
-        client = SyncClient(db, config)
+        client = SyncClient(str(config.get_config_dir()))
         result = client.sync_with_peer(peer_id)
 
         if args.format == "json":
@@ -689,7 +689,7 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
                 return 1
     else:
         # Sync with all peers
-        results = sync_all_peers(db, config)
+        results = sync_all_peers(str(config.get_config_dir()))
 
         if not results:
             if args.format == "json":

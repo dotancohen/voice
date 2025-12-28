@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
 from core.sync import get_peer_last_sync, update_peer_last_sync
-from core.sync_client import SyncClient
+from voicecore import SyncClient
 
 from .conftest import (
     SyncNode,
@@ -223,7 +223,7 @@ class TestPeerStateDuringSync:
 
         # Attempt sync (will fail)
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
         result = client.sync_with_peer(sync_node_b.device_id_hex)
 
         assert result.success is False

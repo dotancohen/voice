@@ -369,10 +369,10 @@ def sync_nodes(source: SyncNode, target: SyncNode) -> Dict[str, Any]:
 
     Returns the sync result.
     """
-    from core.sync_client import SyncClient
+    from voicecore import SyncClient
 
     set_local_device_id(source.device_id)
-    client = SyncClient(source.db, source.config)
+    client = SyncClient(str(source.config_dir))
     result = client.sync_with_peer(target.device_id_hex)
     return {
         "success": result.success,
@@ -499,8 +499,8 @@ try:
         notes = db.get_all_notes()
         result["count"] = len(notes)
     elif operation == "sync":
-        from core.sync_client import SyncClient
-        client = SyncClient(db, config)
+        from voicecore import SyncClient
+        client = SyncClient(str(config_dir))
         sync_result = client.sync_with_peer(kwargs["peer_id"])
         result["pulled"] = sync_result.pulled
         result["pushed"] = sync_result.pushed

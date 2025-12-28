@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
-from core.sync_client import SyncClient
+from voicecore import SyncClient
 
 from .conftest import (
     SyncNode,
@@ -50,7 +50,7 @@ class TestInitialSyncEmptyLocal:
 
         # A does initial sync with B
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -71,7 +71,7 @@ class TestInitialSyncEmptyLocal:
 
         # A does initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -90,7 +90,7 @@ class TestInitialSyncEmptyLocal:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
         # Verify hierarchy
@@ -114,7 +114,7 @@ class TestInitialSyncEmptyLocal:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
         # Verify association
@@ -137,7 +137,7 @@ class TestInitialSyncLocalHasData:
 
         # Initial sync from A to B
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -158,7 +158,7 @@ class TestInitialSyncLocalHasData:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -189,7 +189,7 @@ class TestInitialSyncLocalHasData:
 
         # A does initial sync - only B edited since last sync, so update applies cleanly
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
         # A should have B's version (only B edited, A unchanged since last sync)
@@ -225,7 +225,7 @@ class TestInitialSyncLocalHasData:
 
         # A does initial sync - both edited, so conflict
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
         # A should have conflict markers
@@ -250,7 +250,7 @@ class TestInitialSyncRemoteEmpty:
 
         # Initial sync - should just push
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -271,7 +271,7 @@ class TestInitialSyncRemoteEmpty:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -295,7 +295,7 @@ class TestInitialSyncLargeDatasets:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -314,7 +314,7 @@ class TestInitialSyncLargeDatasets:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -340,7 +340,7 @@ class TestInitialSyncReturnsResults:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.pulled >= 5
@@ -357,7 +357,7 @@ class TestInitialSyncReturnsResults:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.pushed >= 3
@@ -369,7 +369,7 @@ class TestInitialSyncReturnsResults:
         node_a, node_b = two_nodes_with_servers
 
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
@@ -381,7 +381,7 @@ class TestInitialSyncErrorHandling:
     def test_initial_sync_unknown_peer(self, sync_node_a: SyncNode):
         """Initial sync with unknown peer fails gracefully."""
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         result = client.initial_sync("00000000000070008000000000099999")
 
@@ -400,7 +400,7 @@ class TestInitialSyncErrorHandling:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         result = client.initial_sync(sync_node_b.device_id_hex)
 
@@ -422,7 +422,7 @@ class TestInitialSyncErrorHandling:
 
         # Attempt initial sync (will fail)
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
         client.initial_sync(sync_node_b.device_id_hex)
 
         # Local data preserved
@@ -445,7 +445,7 @@ class TestInitialSyncVsRegularSync:
 
         # Initial sync
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
         # Wait for timestamp precision
@@ -470,7 +470,7 @@ class TestInitialSyncVsRegularSync:
         create_note_on_node(node_b, "Test note")
 
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
         initial_count = get_note_count(node_a)

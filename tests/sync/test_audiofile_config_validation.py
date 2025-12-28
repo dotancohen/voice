@@ -98,7 +98,7 @@ class TestSyncRejectsWithoutAudiofileDirectory:
         server_with_audiofiles: SyncNode,
     ) -> None:
         """Test client sync_client.download_audio_file rejects when no local audiofile_directory."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         server = server_with_audiofiles
 

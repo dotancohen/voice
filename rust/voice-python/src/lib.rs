@@ -6,8 +6,9 @@ use pyo3::create_exception;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-use voicecore_lib::{config, database, error, merge, search, validation};
+use voicecore_lib::{config, database, error, merge, search, sync_client, validation};
 
 // ============================================================================
 // Error types
@@ -1066,6 +1067,213 @@ impl PyConfig {
 }
 
 // ============================================================================
+// Sync client wrappers
+// ============================================================================
+
+/// Result of a sync operation
+#[pyclass(name = "SyncResult")]
+pub struct PySyncResult {
+    #[pyo3(get)]
+    success: bool,
+    #[pyo3(get)]
+    pulled: i64,
+    #[pyo3(get)]
+    pushed: i64,
+    #[pyo3(get)]
+    conflicts: i64,
+    #[pyo3(get)]
+    errors: Vec<String>,
+}
+
+impl From<sync_client::SyncResult> for PySyncResult {
+    fn from(result: sync_client::SyncResult) -> Self {
+        Self {
+            success: result.success,
+            pulled: result.pulled,
+            pushed: result.pushed,
+            conflicts: result.conflicts,
+            errors: result.errors,
+        }
+    }
+}
+
+/// Sync client for synchronizing with peers
+#[pyclass(name = "SyncClient", unsendable)]
+pub struct PySyncClient {
+    inner: sync_client::SyncClient,
+    runtime: tokio::runtime::Runtime,
+}
+
+#[pymethods]
+impl PySyncClient {
+    /// Create a new sync client.
+    ///
+    /// Args:
+    ///     config_dir: Path to config directory (optional, uses default if None)
+    ///
+    /// The sync client creates its own database connection from the config.
+    #[new]
+    #[pyo3(signature = (config_dir=None))]
+    fn new(config_dir: Option<&str>) -> PyResult<Self> {
+        // Create Tokio runtime for blocking async calls
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        // Create Config from config_dir
+        let config_path = config_dir.map(std::path::PathBuf::from);
+        let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+
+        // Create Database from config's database_file path
+        let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+
+        // Wrap in Arc<Mutex<>> for SyncClient
+        let db_arc = Arc::new(Mutex::new(db));
+        let config_arc = Arc::new(Mutex::new(cfg));
+
+        let inner = sync_client::SyncClient::new(db_arc, config_arc)
+            .map_err(voice_error_to_pyerr)?;
+
+        Ok(Self { inner, runtime })
+    }
+
+    /// Perform full bidirectional sync with a peer
+    fn sync_with_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.runtime.block_on(self.inner.sync_with_peer(peer_id));
+        Ok(PySyncResult::from(result))
+    }
+
+    /// Pull changes from a peer (one-way)
+    fn pull_from_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.runtime.block_on(self.inner.pull_from_peer(peer_id));
+        Ok(PySyncResult::from(result))
+    }
+
+    /// Push changes to a peer (one-way)
+    fn push_to_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.runtime.block_on(self.inner.push_to_peer(peer_id));
+        Ok(PySyncResult::from(result))
+    }
+
+    /// Perform initial sync (full dataset transfer) with a peer
+    fn initial_sync(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.runtime.block_on(self.inner.initial_sync(peer_id));
+        Ok(PySyncResult::from(result))
+    }
+
+    /// Check if a peer is reachable
+    fn check_peer_status<'py>(&self, py: Python<'py>, peer_id: &str) -> PyResult<PyObject> {
+        let result = self.runtime.block_on(self.inner.check_peer_status(peer_id));
+        let dict = PyDict::new(py);
+        for (key, value) in result {
+            dict.set_item(key, json_value_to_pyobject(py, &value)?)?;
+        }
+        Ok(dict.into_any().unbind())
+    }
+
+    /// Download an audio file from a peer
+    /// Returns a dict with {"success": bool, "bytes": int} or {"success": false, "error": str}
+    fn download_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, dest_path: &str) -> PyResult<PyObject> {
+        let dest = std::path::Path::new(dest_path);
+        let result = self.runtime.block_on(
+            self.inner.download_audio_file(peer_url, audio_id, dest)
+        );
+        let dict = PyDict::new(py);
+        match result {
+            Ok(bytes) => {
+                dict.set_item("success", true)?;
+                dict.set_item("bytes", bytes)?;
+            }
+            Err(e) => {
+                dict.set_item("success", false)?;
+                dict.set_item("error", format!("{}", e))?;
+            }
+        }
+        Ok(dict.into_any().unbind())
+    }
+
+    /// Upload an audio file to a peer
+    /// Returns a dict with {"success": bool, "bytes": int} or {"success": false, "error": str}
+    fn upload_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, source_path: &str) -> PyResult<PyObject> {
+        let source = std::path::Path::new(source_path);
+        let result = self.runtime.block_on(
+            self.inner.upload_audio_file(peer_url, audio_id, source)
+        );
+        let dict = PyDict::new(py);
+        match result {
+            Ok(bytes) => {
+                dict.set_item("success", true)?;
+                dict.set_item("bytes", bytes)?;
+            }
+            Err(e) => {
+                dict.set_item("success", false)?;
+                dict.set_item("error", format!("{}", e))?;
+            }
+        }
+        Ok(dict.into_any().unbind())
+    }
+
+    /// Debug method to see what changes would be pushed for a peer
+    fn debug_get_changes(&self, peer_id: &str, since: Option<&str>) -> PyResult<Vec<String>> {
+        // Get local last_sync for peer
+        let local_last_sync = self.inner.debug_get_local_last_sync(peer_id);
+        let effective_since = since.or(local_last_sync.as_deref());
+
+        // Get changes since that timestamp
+        let changes = self.inner.debug_get_changes_since(effective_since)
+            .map_err(voice_error_to_pyerr)?;
+
+        // Return a summary of each change
+        let mut result = vec![
+            format!("local_last_sync for {}: {:?}", peer_id, local_last_sync),
+            format!("effective_since: {:?}", effective_since),
+            format!("changes found: {}", changes.len()),
+        ];
+        for c in changes.iter().take(5) {
+            result.push(format!("  {} {} {} ts={}", c.entity_type, c.operation, c.entity_id, c.timestamp));
+        }
+        Ok(result)
+    }
+}
+
+/// Sync with all configured peers
+///
+/// Args:
+///     config_dir: Path to config directory (optional, uses default if None)
+///
+/// Returns:
+///     Dict mapping peer_id to SyncResult
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn sync_all_peers<'py>(
+    py: Python<'py>,
+    config_dir: Option<&str>,
+) -> PyResult<PyObject> {
+    // Create Tokio runtime
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    // Create Config and Database from config_dir
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+
+    // Wrap in Arc<Mutex<>> for sync_all_peers
+    let db_arc = Arc::new(Mutex::new(db));
+    let config_arc = Arc::new(Mutex::new(cfg));
+
+    // Run sync
+    let results = runtime.block_on(sync_client::sync_all_peers(db_arc, config_arc));
+
+    // Convert to Python dict
+    let dict = PyDict::new(py);
+    for (peer_id, result) in results {
+        let py_result = PySyncResult::from(result);
+        dict.set_item(peer_id, py_result.into_pyobject(py)?)?;
+    }
+    Ok(dict.into_any().unbind())
+}
+
+// ============================================================================
 // Merge wrapper
 // ============================================================================
 
@@ -1293,6 +1501,11 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register config class
     m.add_class::<PyConfig>()?;
+
+    // Register sync client classes and functions
+    m.add_class::<PySyncResult>()?;
+    m.add_class::<PySyncClient>()?;
+    m.add_function(wrap_pyfunction!(sync_all_peers, m)?)?;
 
     // Register search classes and functions
     m.add_class::<PySearchResult>()?;

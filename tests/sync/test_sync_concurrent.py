@@ -407,7 +407,7 @@ sys.path.insert(0, "{src_path}")
 
 from core.config import Config
 from core.database import Database, set_local_device_id
-from core.sync_client import SyncClient
+from voicecore import SyncClient
 
 config = Config(config_dir="{source.config_dir}")
 device_id = bytes.fromhex(config.get_device_id_hex())

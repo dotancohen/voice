@@ -661,7 +661,7 @@ class TestOneWaySyncMethods:
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:
         """Test that pull_from_peer updates last_sync_at on success."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audio
 
@@ -675,7 +675,7 @@ class TestOneWaySyncMethods:
 
         # Pull from B to A
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.pull_from_peer(node_b.device_id_hex)
 
         assert result.success is True
@@ -689,7 +689,7 @@ class TestOneWaySyncMethods:
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:
         """Test that push_to_peer updates last_sync_at on success."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audio
 
@@ -702,7 +702,7 @@ class TestOneWaySyncMethods:
         assert initial is None
 
         # Push from A to B
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.push_to_peer(node_b.device_id_hex)
 
         assert result.success is True
@@ -716,7 +716,7 @@ class TestOneWaySyncMethods:
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:
         """Test that pull_from_peer downloads binary audio files."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audio
 
@@ -735,7 +735,7 @@ class TestOneWaySyncMethods:
 
         # Pull from B to A
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.pull_from_peer(node_b.device_id_hex)
 
         assert result.success is True
@@ -749,7 +749,7 @@ class TestOneWaySyncMethods:
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:
         """Test that push_to_peer uploads binary audio files."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audio
 
@@ -767,7 +767,7 @@ class TestOneWaySyncMethods:
         audio_file_path.write_bytes(b"fake mp3 content for push test")
 
         # Push from A to B
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.push_to_peer(node_b.device_id_hex)
 
         assert result.success is True

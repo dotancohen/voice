@@ -22,7 +22,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
-from core.sync_client import SyncClient, SyncResult
+from voicecore import SyncClient, SyncResult
 
 from .conftest import (
     SyncNode,
@@ -55,7 +55,7 @@ class TestServerUnavailable:
 
         # Try to sync - should fail gracefully
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
         result = client.sync_with_peer(sync_node_b.device_id_hex)
 
         assert result.success is False
@@ -72,7 +72,7 @@ class TestServerUnavailable:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
         result = client.sync_with_peer(sync_node_b.device_id_hex)
 
         assert result.success is False
@@ -98,7 +98,7 @@ class TestServerUnavailable:
 
         # Try to sync (will fail)
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
         client.sync_with_peer(sync_node_b.device_id_hex)
 
         # Local notes should still exist
@@ -124,7 +124,7 @@ class TestConnectionTimeout:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         # Mock timeout using urllib timeout exception
         def mock_urlopen(*args, **kwargs):
@@ -153,7 +153,7 @@ class TestConnectionTimeout:
         note_id = create_note_on_node(sync_node_a, "Important data")
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         # Timeout during sync
         def mock_urlopen(*args, **kwargs):
@@ -310,7 +310,7 @@ class TestPartialDataTransfer:
             create_note_on_node(running_server_b, f"Note {i}")
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         # Mock partial response
         original_get = requests.get
@@ -351,7 +351,7 @@ class TestMockedNetworkErrors:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         # Server not running, so connection will be refused
         result = client.sync_with_peer(sync_node_b.device_id_hex)
@@ -371,7 +371,7 @@ class TestMockedNetworkErrors:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         result = client.sync_with_peer(sync_node_b.device_id_hex)
 
@@ -390,7 +390,7 @@ class TestMockedNetworkErrors:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         result = client.sync_with_peer("00000000000070008000000000000099")
 
@@ -410,7 +410,7 @@ class TestMockedNetworkErrors:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         # Mock urllib to return HTTP 500 error
         def mock_urlopen(*args, **kwargs):

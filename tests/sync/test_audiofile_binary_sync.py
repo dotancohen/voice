@@ -85,7 +85,7 @@ class TestClientUploadToServer:
         test_audio_content: bytes,
     ) -> None:
         """Test that client can upload an audio file to the sync server."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         server = server_node_with_audiofiles
         client = client_node_with_audiofiles
@@ -112,9 +112,9 @@ class TestClientUploadToServer:
             pytest.fail("Failed to start sync server")
 
         # Create sync client and upload
-        sync_client = SyncClient(client.db, client.config)
+        sync_client = SyncClient(str(client.config_dir))
 
-        result = sync_client.upload_audio_file(server.url, audio_id, client_file)
+        result = sync_client.upload_audio_file(server.url, audio_id, str(client_file))
 
         assert result["success"], f"Upload failed: {result.get('error')}"
 
@@ -142,7 +142,7 @@ class TestClientDownloadFromServer:
         test_audio_content: bytes,
     ) -> None:
         """Test that client can download an audio file from the sync server."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         server = server_node_with_audiofiles
         client = client_node_with_audiofiles
@@ -169,12 +169,12 @@ class TestClientDownloadFromServer:
             pytest.fail("Failed to start sync server")
 
         # Create sync client and download
-        sync_client = SyncClient(client.db, client.config)
+        sync_client = SyncClient(str(client.config_dir))
 
         client_audiofile_dir = Path(client.config.get_audiofile_directory())
         client_file = client_audiofile_dir / f"{audio_id}.ogg"
 
-        result = sync_client.download_audio_file(server.url, audio_id, client_file)
+        result = sync_client.download_audio_file(server.url, audio_id, str(client_file))
 
         assert result["success"], f"Download failed: {result.get('error')}"
 
@@ -323,7 +323,7 @@ class TestBinarySyncRoundTrip:
         test_audio_content: bytes,
     ) -> None:
         """Test that uploading then downloading preserves exact file content."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         server = server_node_with_audiofiles
         client = client_node_with_audiofiles
@@ -349,14 +349,14 @@ class TestBinarySyncRoundTrip:
             pytest.fail("Failed to start sync server")
 
         # Upload to server
-        sync_client = SyncClient(client.db, client.config)
+        sync_client = SyncClient(str(client.config_dir))
 
-        upload_result = sync_client.upload_audio_file(server.url, audio_id, original_file)
+        upload_result = sync_client.upload_audio_file(server.url, audio_id, str(original_file))
         assert upload_result["success"], f"Upload failed: {upload_result.get('error')}"
 
         # Download to different location
         downloaded_file = client_audiofile_dir / f"{audio_id}_downloaded.ogg"
-        download_result = sync_client.download_audio_file(server.url, audio_id, downloaded_file)
+        download_result = sync_client.download_audio_file(server.url, audio_id, str(downloaded_file))
         assert download_result["success"], f"Download failed: {download_result.get('error')}"
 
         # After round-trip, content should be identical

@@ -472,7 +472,7 @@ class TestSyncClientTLSIntegration:
 
     def test_make_request_creates_ssl_context_for_https(self, tmp_path: Path):
         """_make_request creates SSL context for HTTPS URLs."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
         from core.tls import create_client_ssl_context
 
         node = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
@@ -483,7 +483,7 @@ class TestSyncClientTLSIntegration:
             certificate_fingerprint="SHA256:aa:bb:cc",
         )
 
-        client = SyncClient(node.db, node.config)
+        client = SyncClient(str(node.config_dir))
 
         # Mock urllib.request.urlopen to capture the SSL context
         with patch("urllib.request.urlopen") as mock_urlopen:
@@ -508,7 +508,7 @@ class TestSyncClientTLSIntegration:
 
     def test_make_request_no_ssl_for_http(self, tmp_path: Path):
         """_make_request doesn't use SSL for HTTP URLs."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
         node.config.add_peer(
@@ -517,7 +517,7 @@ class TestSyncClientTLSIntegration:
             peer_url="http://localhost:8384",
         )
 
-        client = SyncClient(node.db, node.config)
+        client = SyncClient(str(node.config_dir))
 
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_response = MagicMock()
@@ -541,7 +541,7 @@ class TestSyncClientTLSIntegration:
 
     def test_check_peer_status_https(self, tmp_path: Path):
         """check_peer_status works with HTTPS peer."""
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
         node.config.add_peer(
@@ -550,7 +550,7 @@ class TestSyncClientTLSIntegration:
             peer_url="https://localhost:8384",
         )
 
-        client = SyncClient(node.db, node.config)
+        client = SyncClient(str(node.config_dir))
 
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_response = MagicMock()

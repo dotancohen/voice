@@ -637,7 +637,7 @@ class TestAudioFileSyncIntegration:
         2. Client syncs to server
         3. Server receives both metadata AND binary file
         """
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audiofiles
 
@@ -667,9 +667,9 @@ class TestAudioFileSyncIntegration:
         assert result["success"] is True, f"Sync failed: {result}"
 
         # Now upload the binary file
-        sync_client = SyncClient(node_a.db, node_a.config)
+        sync_client = SyncClient(str(node_a.config_dir))
         upload_result = sync_client.upload_audio_file(
-            node_b.url, audio_id, audio_file_a
+            node_b.url, audio_id, str(audio_file_a)
         )
         assert upload_result["success"], f"Upload failed: {upload_result}"
 
@@ -710,7 +710,7 @@ class TestAudioFileSyncIntegration:
         2. Client syncs from server
         3. Client receives both metadata AND binary file
         """
-        from core.sync_client import SyncClient
+        from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audiofiles
 
@@ -756,12 +756,12 @@ class TestAudioFileSyncIntegration:
         assert len(attachments_a) == 1, "Note should have one audio attachment"
 
         # Now download the binary file
-        sync_client = SyncClient(node_a.db, node_a.config)
+        sync_client = SyncClient(str(node_a.config_dir))
         audiodir_a = Path(node_a.config.get_audiofile_directory())
         audio_file_a = audiodir_a / f"{audio_id}.mp3"
 
         download_result = sync_client.download_audio_file(
-            node_b.url, audio_id, audio_file_a
+            node_b.url, audio_id, str(audio_file_a)
         )
         assert download_result["success"], f"Download failed: {download_result}"
 

@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
 from core.sync import get_changes_since
-from core.sync_client import SyncClient
+from voicecore import SyncClient
 
 from .conftest import (
     SyncNode,
@@ -427,7 +427,7 @@ class TestSyncClientPaginationHandling:
 
         # Client should handle pagination
         set_local_device_id(node_a.device_id)
-        client = SyncClient(node_a.db, node_a.config)
+        client = SyncClient(str(node_a.config_dir))
         result = client.sync_with_peer(node_b.device_id_hex)
 
         assert result.success is True

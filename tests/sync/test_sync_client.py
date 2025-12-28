@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.sync_client import SyncClient, SyncResult
+from voicecore import SyncClient, SyncResult
 from core.database import set_local_device_id
 
 from .conftest import (
@@ -39,17 +39,17 @@ class TestSyncClientInit:
     def test_client_creation(self, sync_node_a: SyncNode):
         """SyncClient can be created with database and config."""
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
         assert client is not None
 
     def test_client_with_no_peers(self, sync_node_a: SyncNode):
         """SyncClient handles having no peers configured."""
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         # sync_all should return empty dict
-        from core.sync_client import sync_all_peers
-        results = sync_all_peers(sync_node_a.db, sync_node_a.config)
+        from voicecore import sync_all_peers
+        results = sync_all_peers(str(sync_node_a.config_dir))
         assert results == {}
 
 
@@ -68,7 +68,7 @@ class TestSyncClientHandshake:
         )
 
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         # Check peer status (performs handshake internally)
         result = client.check_peer_status(running_server_b.device_id_hex)
@@ -80,7 +80,7 @@ class TestSyncClientHandshake:
     def test_handshake_peer_not_configured(self, sync_node_a: SyncNode):
         """Status check fails for unconfigured peer."""
         set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(sync_node_a.db, sync_node_a.config)
+        client = SyncClient(str(sync_node_a.config_dir))
 
         result = client.check_peer_status("00000000000070008000000000000099")
         # Returns None or error dict for unconfigured peer
@@ -280,14 +280,14 @@ class TestSyncClientBidirectional:
         """sync_all_peers syncs with all configured peers."""
         node_a, node_b = two_nodes_with_servers
 
-        from core.sync_client import sync_all_peers
+        from voicecore import sync_all_peers
 
         # Create content on B
         create_note_on_node(node_b, "Note to sync")
 
         # Sync A with all peers
         set_local_device_id(node_a.device_id)
-        results = sync_all_peers(node_a.db, node_a.config)
+        results = sync_all_peers(str(node_a.config_dir))
 
         assert node_b.device_id_hex in results
         assert results[node_b.device_id_hex].success is True
@@ -333,16 +333,64 @@ class TestSyncClientIdempotency:
         )
 
         # First sync
-        sync_nodes(sync_node_a, running_server_b)
+        result1 = sync_nodes(sync_node_a, running_server_b)
+        print(f"DEBUG First sync result: {result1}")
+        sync_node_a.reload_db()  # Refresh view after sync
+
+        # Check A's local sync_peers record (using raw database query to see actual format)
+        from core.sync import get_peer_last_sync
+        local_last_sync = get_peer_last_sync(sync_node_a.db, running_server_b.device_id_hex)
+        print(f"DEBUG A's local last_sync for B (Python): {local_last_sync}")
+
+        # Check note on A after first sync
+        note_after_first = sync_node_a.db.get_note(note_id)
+        print(f"DEBUG Note on A after first sync: {note_after_first}")
+
+        # Wait for timestamp precision (timestamps are second-precision)
+        time.sleep(1.1)
 
         # Update locally on A
         set_local_device_id(sync_node_a.device_id)
         sync_node_a.db.update_note(note_id, "Updated on A")
+        sync_node_a.reload_db()  # Ensure changes are visible to other connections
+
+        # Check note on A after update
+        note_after_update = sync_node_a.db.get_note(note_id)
+        print(f"DEBUG Note on A after update: {note_after_update}")
+
+        # Get raw note to see actual database format
+        note_raw = sync_node_a.db.get_note_raw(note_id)
+        print(f"DEBUG Note raw (database format): {note_raw}")
+
+        # Check what changes would be gathered via Python
+        from core.sync import get_changes_since
+        changes = get_changes_since(sync_node_a.db, local_last_sync)
+        print(f"DEBUG Python get_changes_since({local_last_sync}): {len(changes[0]) if changes else 0} changes")
+        if changes and changes[0]:
+            for c in changes[0][:3]:  # Show first 3
+                print(f"  Change: {c.entity_type} {c.operation} ts={c.timestamp}")
+
+        # Close and reopen the database to ensure all WAL changes are visible
+        sync_node_a.db.close()
+        time.sleep(0.1)  # Small delay for file system sync
+        from core.database import Database
+        sync_node_a.db = Database(sync_node_a.db_path)
+
+        # Debug: check what Rust SyncClient sees
+        from voicecore import SyncClient
+        debug_client = SyncClient(str(sync_node_a.config_dir))
+        debug_info = debug_client.debug_get_changes(running_server_b.device_id_hex, None)
+        print(f"DEBUG Rust SyncClient sees:")
+        for line in debug_info:
+            print(f"  {line}")
 
         # Sync again - should not revert (A's update is newer)
-        sync_nodes(sync_node_a, running_server_b)
+        result2 = sync_nodes(sync_node_a, running_server_b)
+        print(f"DEBUG Second sync result: {result2}")
+        sync_node_a.reload_db()  # Refresh view after sync
 
         note = sync_node_a.db.get_note(note_id)
+        print(f"DEBUG Note on A after second sync: {note}")
         assert note["content"] == "Updated on A"
 
 
@@ -453,6 +501,7 @@ class TestSyncClientDeletes:
         # Delete on A (B has same content - never edited)
         set_local_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
+        node_a.reload_db()  # Ensure delete is committed and visible
 
         # Verify deleted on A
         notes_a = node_a.db.get_all_notes()
