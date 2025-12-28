@@ -121,20 +121,26 @@ def create_sync_blueprint(
         try:
             data = request.get_json(silent=True)
             if not data:
-                return jsonify({"error": "Missing request body"}), 400
+                error_msg = "Missing JSON request body in handshake"
+                logger.warning(f"Handshake rejected: {error_msg}")
+                return jsonify({"error": error_msg}), 400
 
             peer_device_id = data.get("device_id")
             peer_device_name = data.get("device_name", "Unknown")
             peer_protocol_version = data.get("protocol_version", "1.0")
 
             if not peer_device_id:
-                return jsonify({"error": "Missing device_id"}), 400
+                error_msg = "Missing device_id in handshake request"
+                logger.warning(f"Handshake rejected from {peer_device_name}: {error_msg}")
+                return jsonify({"error": error_msg}), 400
 
             # Validate device_id format
             try:
                 validate_uuid_hex(peer_device_id, "device_id")
             except Exception as e:
-                return jsonify({"error": f"Invalid device_id: {e}"}), 400
+                error_msg = f"Invalid device_id format: {e}"
+                logger.warning(f"Handshake rejected from {peer_device_name}: {error_msg}")
+                return jsonify({"error": error_msg}), 400
 
             logger.info(f"Handshake from peer: {peer_device_name} ({peer_device_id})")
 
@@ -152,8 +158,9 @@ def create_sync_blueprint(
             return jsonify(asdict(response)), 200
 
         except Exception as e:
-            logger.error(f"Handshake error: {e}")
-            return jsonify({"error": str(e)}), 500
+            error_msg = f"Internal server error during handshake: {e}"
+            logger.error(error_msg)
+            return jsonify({"error": error_msg}), 500
 
     @sync_bp.route("/changes", methods=["GET"])
     def get_changes() -> Tuple[Any, int]:
@@ -175,7 +182,14 @@ def create_sync_blueprint(
         """
         try:
             since = request.args.get("since")
-            limit = min(int(request.args.get("limit", 1000)), 10000)
+            limit_str = request.args.get("limit", "1000")
+
+            try:
+                limit = min(int(limit_str), 10000)
+            except ValueError:
+                error_msg = f"Invalid limit parameter: '{limit_str}' - must be an integer"
+                logger.warning(f"Get changes rejected: {error_msg}")
+                return jsonify({"error": error_msg}), 400
 
             changes, latest_timestamp = get_changes_since(db, since, limit)
 
@@ -188,11 +202,13 @@ def create_sync_blueprint(
                 is_complete=len(changes) < limit,
             )
 
+            logger.debug(f"Returning {len(changes)} changes since {since}")
             return jsonify(asdict(batch)), 200
 
         except Exception as e:
-            logger.error(f"Get changes error: {e}")
-            return jsonify({"error": str(e)}), 500
+            error_msg = f"Internal server error getting changes: {e}"
+            logger.error(error_msg)
+            return jsonify({"error": error_msg}), 500
 
     @sync_bp.route("/apply", methods=["POST"])
     def apply_changes() -> Tuple[Any, int]:
@@ -215,27 +231,38 @@ def create_sync_blueprint(
         try:
             data = request.get_json(silent=True)
             if not data:
-                return jsonify({"error": "Missing request body"}), 400
+                error_msg = "Missing JSON request body in apply"
+                logger.warning(f"Apply rejected: {error_msg}")
+                return jsonify({"error": error_msg}), 400
 
             changes_data = data.get("changes", [])
             peer_device_id = data.get("device_id")
-            peer_device_name = data.get("device_name")
+            peer_device_name = data.get("device_name", "Unknown")
 
             if not peer_device_id:
-                return jsonify({"error": "Missing device_id"}), 400
+                error_msg = "Missing device_id in apply request"
+                logger.warning(f"Apply rejected from {peer_device_name}: {error_msg}")
+                return jsonify({"error": error_msg}), 400
+
+            logger.info(f"Applying {len(changes_data)} changes from {peer_device_name} ({peer_device_id})")
 
             # Parse changes
             changes = []
-            for c in changes_data:
-                changes.append(SyncChange(
-                    entity_type=c["entity_type"],
-                    entity_id=c["entity_id"],
-                    operation=c["operation"],
-                    data=c["data"],
-                    timestamp=c["timestamp"],
-                    device_id=c["device_id"],
-                    device_name=c.get("device_name"),
-                ))
+            for i, c in enumerate(changes_data):
+                try:
+                    changes.append(SyncChange(
+                        entity_type=c["entity_type"],
+                        entity_id=c["entity_id"],
+                        operation=c["operation"],
+                        data=c["data"],
+                        timestamp=c["timestamp"],
+                        device_id=c["device_id"],
+                        device_name=c.get("device_name"),
+                    ))
+                except KeyError as e:
+                    error_msg = f"Invalid change at index {i}: missing required field {e}"
+                    logger.warning(f"Apply rejected from {peer_device_name}: {error_msg}")
+                    return jsonify({"error": error_msg}), 400
 
             applied, conflicts, errors = apply_sync_changes(
                 db, changes, peer_device_id, peer_device_name
@@ -246,6 +273,15 @@ def create_sync_blueprint(
                 "conflicts": conflicts,
                 "errors": errors,
             }
+
+            # Log summary
+            if errors:
+                logger.warning(
+                    f"Apply from {peer_device_name}: {applied} applied, {conflicts} conflicts, "
+                    f"{len(errors)} errors: {errors[:3]}{'...' if len(errors) > 3 else ''}"
+                )
+            else:
+                logger.info(f"Apply from {peer_device_name}: {applied} applied, {conflicts} conflicts")
 
             # Return appropriate HTTP status:
             # - 200: All changes applied successfully
@@ -262,8 +298,9 @@ def create_sync_blueprint(
                 return jsonify(response_data), 200
 
         except Exception as e:
-            logger.error(f"Apply changes error: {e}")
-            return jsonify({"error": str(e)}), 500
+            error_msg = f"Internal server error applying changes: {e}"
+            logger.error(error_msg)
+            return jsonify({"error": error_msg}), 500
 
     @sync_bp.route("/full", methods=["GET"])
     def get_full_sync() -> Tuple[Any, int]:
@@ -284,6 +321,14 @@ def create_sync_blueprint(
         try:
             full_data = get_full_dataset(db)
 
+            notes_count = len(full_data["notes"])
+            tags_count = len(full_data["tags"])
+            audio_count = len(full_data.get("audio_files", []))
+            logger.info(
+                f"Full sync requested: returning {notes_count} notes, "
+                f"{tags_count} tags, {audio_count} audio files"
+            )
+
             return jsonify({
                 "notes": full_data["notes"],
                 "tags": full_data["tags"],
@@ -296,8 +341,9 @@ def create_sync_blueprint(
             }), 200
 
         except Exception as e:
-            logger.error(f"Full sync error: {e}")
-            return jsonify({"error": str(e)}), 500
+            error_msg = f"Internal server error getting full dataset: {e}"
+            logger.error(error_msg)
+            return jsonify({"error": error_msg}), 500
 
     @sync_bp.route("/status", methods=["GET"])
     def status() -> Tuple[Any, int]:
@@ -332,15 +378,23 @@ def create_sync_blueprint(
         """
         from flask import Response
 
+        # Get peer info from headers for logging
+        peer_device_id = request.headers.get("X-Device-ID", "unknown")
+        peer_device_name = request.headers.get("X-Device-Name", "unknown")
+
         # Validate audio_id
         try:
             validate_uuid_hex(audio_id)
         except Exception:
-            return jsonify({"error": "Invalid audio ID"}), 400
+            error_msg = f"Invalid audio ID format: {audio_id}"
+            logger.warning(f"Download rejected from {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 400
 
         # Check audiofile_directory is configured
         if not audiofile_directory:
-            return jsonify({"error": "audiofile_directory not configured"}), 404
+            error_msg = "audiofile_directory not configured on server"
+            logger.warning(f"Download rejected from {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 404
 
         # Find the file (look for {audio_id}.*)
         audiofile_path = Path(audiofile_directory)
@@ -352,15 +406,19 @@ def create_sync_blueprint(
                     break
 
         if not found_file or not found_file.exists():
-            return jsonify({"error": f"Audio file not found: {audio_id}"}), 404
+            error_msg = f"Audio file not found: {audio_id}"
+            logger.warning(f"Download from {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 404
 
         # Read and return file content
         try:
             content = found_file.read_bytes()
+            logger.info(f"Sent audio file {audio_id} to {peer_device_name} ({len(content)} bytes)")
             return Response(content, status=200, mimetype="application/octet-stream")
         except Exception as e:
-            logger.error(f"Error reading audio file: {e}")
-            return jsonify({"error": f"Failed to read file: {e}"}), 500
+            error_msg = f"Failed to read file: {e}"
+            logger.error(f"Download error for {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 500
 
     @sync_bp.route("/audio/<audio_id>/file", methods=["POST"])
     def upload_audio_file(audio_id: str) -> Tuple[Any, int]:
@@ -378,20 +436,30 @@ def create_sync_blueprint(
             - 404 Not Found if audio file record not found
             - 500 Internal Server Error on file write failure
         """
+        # Get peer info from headers for logging
+        peer_device_id = request.headers.get("X-Device-ID", "unknown")
+        peer_device_name = request.headers.get("X-Device-Name", "unknown")
+
         # Validate audio_id
         try:
             validate_uuid_hex(audio_id)
         except Exception:
-            return jsonify({"error": "Invalid audio ID"}), 400
+            error_msg = f"Invalid audio ID format: {audio_id}"
+            logger.warning(f"Upload rejected from {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 400
 
         # Check audiofile_directory is configured
         if not audiofile_directory:
-            return jsonify({"error": "audiofile_directory not configured"}), 400
+            error_msg = "audiofile_directory not configured on server - cannot receive audio files"
+            logger.warning(f"Upload rejected from {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 400
 
         # Get audio file record to determine extension
         audio_file = db.get_audio_file(audio_id)
         if not audio_file:
-            return jsonify({"error": f"Audio file record not found: {audio_id}"}), 404
+            error_msg = f"Audio file record not found in database: {audio_id}"
+            logger.warning(f"Upload rejected from {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 404
 
         # Extract extension from filename
         filename = audio_file.get("filename", "")
@@ -408,10 +476,12 @@ def create_sync_blueprint(
         file_path = audiofile_path / f"{audio_id}.{ext}"
         try:
             file_path.write_bytes(request.data)
+            logger.info(f"Received audio file {audio_id} from {peer_device_name} ({len(request.data)} bytes)")
             return "OK", 200
         except Exception as e:
-            logger.error(f"Error writing audio file: {e}")
-            return jsonify({"error": f"Failed to write file: {e}"}), 500
+            error_msg = f"Failed to write file: {e}"
+            logger.error(f"Upload error from {peer_device_name}: {error_msg}")
+            return jsonify({"error": error_msg}), 500
 
     return sync_bp
 

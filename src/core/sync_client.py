@@ -852,26 +852,33 @@ class SyncClient:
             return {"success": True, "data": response_data}
 
         except urllib.error.HTTPError as e:
-            error_body = ""
             try:
                 error_body = e.read().decode("utf-8")
                 error_data = json.loads(error_body)
-                # For 422 (Unprocessable Entity), return the full response
-                # so caller can see applied count and individual errors
-                if e.code == 422:
+                # For 422 (Unprocessable Entity) or 207 (Partial Success),
+                # return the full response so caller can see applied count and individual errors
+                if e.code in (207, 422):
                     return {
                         "success": True,  # HTTP request succeeded
                         "data": error_data,  # Contains applied, conflicts, errors
                     }
-                error_msg = error_data.get("error", str(e))
+                # Extract detailed error message from server response
+                error_msg = error_data.get("error", f"HTTP {e.code}: {e.reason}")
             except Exception:
                 error_msg = f"HTTP {e.code}: {e.reason}"
-            return {"success": False, "error": error_msg}
+
+            # Log the error with URL context
+            logger.error(f"Request to {url} failed: {error_msg}")
+            return {"success": False, "error": f"Server error: {error_msg}"}
 
         except urllib.error.URLError as e:
-            return {"success": False, "error": f"Connection error: {e.reason}"}
+            error_msg = f"Connection failed to {url}: {e.reason}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
 
         except Exception as e:
+            error_msg = f"Request to {url} failed: {e}"
+            logger.error(error_msg)
             return {"success": False, "error": str(e)}
 
     def download_audio_file(
@@ -927,8 +934,19 @@ class SyncClient:
             return {"success": True, "bytes_downloaded": len(content)}
 
         except urllib.error.HTTPError as e:
-            return {"success": False, "error": f"HTTP {e.code}: {e.reason}"}
+            # Try to get detailed error message from response body
+            error_msg = f"HTTP {e.code}: {e.reason}"
+            try:
+                error_body = e.read().decode("utf-8")
+                error_data = json.loads(error_body)
+                if "error" in error_data:
+                    error_msg = f"Server error: {error_data['error']}"
+            except Exception:
+                pass
+            logger.error(f"Failed to download audio {audio_id}: {error_msg}")
+            return {"success": False, "error": error_msg}
         except Exception as e:
+            logger.error(f"Failed to download audio {audio_id}: {e}")
             return {"success": False, "error": str(e)}
 
     def upload_audio_file(
@@ -965,8 +983,19 @@ class SyncClient:
             return {"success": True, "bytes_uploaded": len(content)}
 
         except urllib.error.HTTPError as e:
-            return {"success": False, "error": f"HTTP {e.code}: {e.reason}"}
+            # Try to get detailed error message from response body
+            error_msg = f"HTTP {e.code}: {e.reason}"
+            try:
+                error_body = e.read().decode("utf-8")
+                error_data = json.loads(error_body)
+                if "error" in error_data:
+                    error_msg = f"Server error: {error_data['error']}"
+            except Exception:
+                pass
+            logger.error(f"Failed to upload audio {audio_id}: {error_msg}")
+            return {"success": False, "error": error_msg}
         except Exception as e:
+            logger.error(f"Failed to upload audio {audio_id}: {e}")
             return {"success": False, "error": str(e)}
 
     def _sync_binary_files_after_pull(
