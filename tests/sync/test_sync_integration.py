@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Generator, Tuple
 
 import pytest
 
@@ -565,3 +565,275 @@ class TestComplexWorkflows:
         # Both notes should be on B
         assert node_b.db.get_note(note_id) is not None
         assert node_b.db.get_note(note_id2) is not None
+
+
+class TestAudioFileSyncIntegration:
+    """Tests for audio file sync with full HTTP client-server flow.
+
+    These tests verify that audio files sync correctly through the complete
+    sync protocol, including metadata sync and binary file transfer.
+    """
+
+    @pytest.fixture
+    def two_nodes_with_audiofiles(
+        self, tmp_path: Path
+    ) -> Generator[Tuple[SyncNode, SyncNode], None, None]:
+        """Two sync nodes with audiofile_directory configured."""
+        from .conftest import (
+            DEVICE_A_ID,
+            DEVICE_B_ID,
+            create_sync_node,
+            start_sync_server,
+        )
+
+        node_a = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
+        node_b = create_sync_node("NodeB", DEVICE_B_ID, tmp_path)
+
+        # Create audiofile directories
+        audiodir_a = tmp_path / "audiofiles_a"
+        audiodir_b = tmp_path / "audiofiles_b"
+        audiodir_a.mkdir()
+        audiodir_b.mkdir()
+
+        # Configure audiofile directories
+        node_a.config.set_audiofile_directory(str(audiodir_a))
+        node_b.config.set_audiofile_directory(str(audiodir_b))
+
+        # Configure as peers
+        node_a.config.add_peer(
+            peer_id=node_b.device_id_hex,
+            peer_name=node_b.name,
+            peer_url=node_b.url,
+        )
+        node_b.config.add_peer(
+            peer_id=node_a.device_id_hex,
+            peer_name=node_a.name,
+            peer_url=node_a.url,
+        )
+
+        # Start servers
+        start_sync_server(node_a)
+        start_sync_server(node_b)
+
+        if not node_a.wait_for_server():
+            pytest.fail("Failed to start sync server A")
+        if not node_b.wait_for_server():
+            pytest.fail("Failed to start sync server B")
+
+        yield node_a, node_b
+
+        node_a.stop_server()
+        node_b.stop_server()
+        node_a.db.close()
+        node_b.db.close()
+
+    def test_client_uploads_audio_to_server_during_sync(
+        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
+    ) -> None:
+        """Test that audio file on client is uploaded to server during sync.
+
+        This tests the full flow:
+        1. Client creates a note with an audio file attachment
+        2. Client syncs to server
+        3. Server receives both metadata AND binary file
+        """
+        from core.sync_client import SyncClient
+
+        node_a, node_b = two_nodes_with_audiofiles
+
+        # Create audio file content
+        test_audio_content = b"FAKE_AUDIO_DATA_FOR_TESTING_" * 100
+
+        # Create note and audio file on node A (client)
+        set_local_device_id(node_a.device_id)
+        note_id = node_a.db.create_note("Note with audio attachment")
+        audio_id = node_a.db.create_audio_file(
+            "recording.ogg", file_created_at="2024-06-15 10:30:00"
+        )
+        node_a.db.attach_to_note(note_id, audio_id, "audio_file")
+
+        # Store the actual binary file in A's audiofile_directory
+        audiodir_a = Path(node_a.config.get_audiofile_directory())
+        audio_file_a = audiodir_a / f"{audio_id}.ogg"
+        audio_file_a.write_bytes(test_audio_content)
+
+        # Verify initial state
+        assert node_a.db.get_note(note_id) is not None
+        assert node_a.db.get_audio_file(audio_id) is not None
+        assert len(node_a.db.get_audio_files_for_note(note_id)) == 1
+
+        # Sync A -> B (client pushes to server)
+        result = sync_nodes(node_a, node_b)
+        assert result["success"] is True, f"Sync failed: {result}"
+
+        # Now upload the binary file
+        sync_client = SyncClient(node_a.db, node_a.config)
+        upload_result = sync_client.upload_audio_file(
+            node_b.url, audio_id, audio_file_a
+        )
+        assert upload_result["success"], f"Upload failed: {upload_result}"
+
+        # Reload B's database to see changes from server subprocess
+        node_b.reload_db()
+
+        # Verify B has the note
+        note_b = node_b.db.get_note(note_id)
+        assert note_b is not None, "Note should exist on server after sync"
+        assert note_b["content"] == "Note with audio attachment"
+
+        # Verify B has the audio file metadata
+        audio_b = node_b.db.get_audio_file(audio_id)
+        assert audio_b is not None, "Audio file should exist on server after sync"
+        assert audio_b["filename"] == "recording.ogg"
+
+        # Verify B has the attachment association
+        attachments_b = node_b.db.get_audio_files_for_note(note_id)
+        assert len(attachments_b) == 1, "Note should have one audio attachment"
+
+        # Verify B has the actual binary file
+        audiodir_b = Path(node_b.config.get_audiofile_directory())
+        audio_file_b = audiodir_b / f"{audio_id}.ogg"
+        assert audio_file_b.exists(), (
+            f"Binary audio file should exist on server at {audio_file_b}"
+        )
+        assert audio_file_b.read_bytes() == test_audio_content, (
+            "Audio file content should match"
+        )
+
+    def test_client_downloads_audio_from_server_during_sync(
+        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
+    ) -> None:
+        """Test that audio file on server is downloaded to client during sync.
+
+        This tests the full flow:
+        1. Server has a note with an audio file attachment
+        2. Client syncs from server
+        3. Client receives both metadata AND binary file
+        """
+        from core.sync_client import SyncClient
+
+        node_a, node_b = two_nodes_with_audiofiles
+
+        # Create audio file content
+        test_audio_content = b"SERVER_AUDIO_DATA_FOR_TESTING_" * 100
+
+        # Create note and audio file on node B (server)
+        set_local_device_id(node_b.device_id)
+        note_id = node_b.db.create_note("Server note with audio")
+        audio_id = node_b.db.create_audio_file(
+            "server-recording.mp3", file_created_at="2024-07-20 14:00:00"
+        )
+        node_b.db.attach_to_note(note_id, audio_id, "audio_file")
+
+        # Store the actual binary file in B's audiofile_directory
+        audiodir_b = Path(node_b.config.get_audiofile_directory())
+        audio_file_b = audiodir_b / f"{audio_id}.mp3"
+        audio_file_b.write_bytes(test_audio_content)
+
+        # Verify initial state on B
+        assert node_b.db.get_note(note_id) is not None
+        assert node_b.db.get_audio_file(audio_id) is not None
+
+        # A should not have anything yet
+        assert node_a.db.get_note(note_id) is None
+
+        # Sync A -> B (A pulls from B)
+        result = sync_nodes(node_a, node_b)
+        assert result["success"] is True, f"Sync failed: {result}"
+
+        # Verify A has the note
+        note_a = node_a.db.get_note(note_id)
+        assert note_a is not None, "Note should exist on client after sync"
+        assert note_a["content"] == "Server note with audio"
+
+        # Verify A has the audio file metadata
+        audio_a = node_a.db.get_audio_file(audio_id)
+        assert audio_a is not None, "Audio file metadata should exist on client"
+        assert audio_a["filename"] == "server-recording.mp3"
+
+        # Verify A has the attachment association
+        attachments_a = node_a.db.get_audio_files_for_note(note_id)
+        assert len(attachments_a) == 1, "Note should have one audio attachment"
+
+        # Now download the binary file
+        sync_client = SyncClient(node_a.db, node_a.config)
+        audiodir_a = Path(node_a.config.get_audiofile_directory())
+        audio_file_a = audiodir_a / f"{audio_id}.mp3"
+
+        download_result = sync_client.download_audio_file(
+            node_b.url, audio_id, audio_file_a
+        )
+        assert download_result["success"], f"Download failed: {download_result}"
+
+        # Verify A has the actual binary file
+        assert audio_file_a.exists(), (
+            f"Binary audio file should exist on client at {audio_file_a}"
+        )
+        assert audio_file_a.read_bytes() == test_audio_content, (
+            "Downloaded audio file content should match server's"
+        )
+
+    def test_audio_attachment_sync_handles_out_of_order_changes(
+        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
+    ) -> None:
+        """Test that audio file sync works even when changes arrive out of order.
+
+        This is a regression test for the FOREIGN KEY constraint bug where
+        note_attachment changes arrived before note/audio_file changes.
+        """
+        node_a, node_b = two_nodes_with_audiofiles
+
+        # Create note and audio file on node A
+        set_local_device_id(node_a.device_id)
+        note_id = node_a.db.create_note("Note for ordering test")
+        audio_id = node_a.db.create_audio_file("ordering-test.wav")
+        node_a.db.attach_to_note(note_id, audio_id, "audio_file")
+
+        # Sync A -> B
+        result = sync_nodes(node_a, node_b)
+        assert result["success"] is True, f"Sync failed: {result}"
+        assert len(result["errors"]) == 0, f"Sync had errors: {result['errors']}"
+
+        # Reload B's database
+        node_b.reload_db()
+
+        # Verify everything synced correctly
+        note_b = node_b.db.get_note(note_id)
+        assert note_b is not None, "Note should exist after sync"
+
+        audio_b = node_b.db.get_audio_file(audio_id)
+        assert audio_b is not None, "Audio file should exist after sync"
+
+        attachments_b = node_b.db.get_audio_files_for_note(note_id)
+        assert len(attachments_b) == 1, "Attachment should exist after sync"
+
+    def test_multiple_audio_files_sync(
+        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
+    ) -> None:
+        """Test syncing a note with multiple audio attachments."""
+        node_a, node_b = two_nodes_with_audiofiles
+
+        # Create note with multiple audio files on node A
+        set_local_device_id(node_a.device_id)
+        note_id = node_a.db.create_note("Note with multiple audio files")
+
+        audio_ids = []
+        for i in range(5):
+            audio_id = node_a.db.create_audio_file(f"recording_{i}.mp3")
+            node_a.db.attach_to_note(note_id, audio_id, "audio_file")
+            audio_ids.append(audio_id)
+
+        # Sync A -> B
+        result = sync_nodes(node_a, node_b)
+        assert result["success"] is True
+
+        # Reload B's database
+        node_b.reload_db()
+
+        # Verify all audio files synced
+        attachments_b = node_b.db.get_audio_files_for_note(note_id)
+        assert len(attachments_b) == 5, "All 5 audio files should be attached"
+
+        for audio_id in audio_ids:
+            audio_b = node_b.db.get_audio_file(audio_id)
+            assert audio_b is not None, f"Audio file {audio_id} should exist"
