@@ -478,7 +478,22 @@ def apply_sync_changes(
     # Get last sync timestamp with this peer (for detecting unchanged local)
     last_sync_at = get_peer_last_sync(db, peer_device_id)
 
-    for change in changes:
+    # Sort changes by dependency order to avoid FOREIGN KEY constraint failures:
+    # 1. notes, tags, audio_files first (no dependencies)
+    # 2. note_tags, note_attachments last (depend on notes, tags, audio_files)
+    entity_order = {
+        "note": 0,
+        "tag": 0,
+        "audio_file": 0,
+        "note_tag": 1,
+        "note_attachment": 1,
+    }
+    sorted_changes = sorted(
+        changes,
+        key=lambda c: (entity_order.get(c.entity_type, 2), c.timestamp)
+    )
+
+    for change in sorted_changes:
         try:
             if change.entity_type == "note":
                 result = apply_note_change(
