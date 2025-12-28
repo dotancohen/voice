@@ -234,12 +234,22 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y  # Only 
 ### Installation
 
 ```bash
-git clone --recurse-submodules https://github.com/dotancohen/voice.git
-cd voice
+mkdir -p /var/www/voice
+cd /var/www/voice
+git clone --recurse-submodules https://github.com/dotancohen/voice.git .
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-server.txt # Provides centralized syncing and TUI/CLI access.
 cd rust/voice-python && maturin develop --release && cd ../..
+```
+
+### Updating
+
+```bash
+cd /var/www/voice
+git pull
+git submodule update --init --recursive
+cd rust/voice-python && ../../.venv/bin/maturin develop --release && cd ../..
 ```
 
 ### Starting the Sync Server
@@ -293,52 +303,45 @@ sudo systemctl enable voice-sync
 sudo systemctl start voice-sync
 ```
 
+Manage the service:
+```bash
+sudo systemctl start voice # Start the service
+sudo systemctl stop voice # Stop the service
+sudo systemctl restart voice # Restart systemd service, e.g. after updating
+sudo systemctl status voice # Check status
+journalctl -u voice -f  # Follow logs
+```
+
 ## Syncing between installations
 
 - Sync peers are defined in the Config file.
-- All sync peers can function equally as both servers and clients.
+- All sync peers can function equally as both servers and clients. Choose one instance to listen as a server, and another instance to contact it as a client. The sync result is the same no matter which instance is the client and which instance is the server.
+- Instances can be run as a systemd service to run in the background.
 
-**Step 1: Get device IDs** (on each device):
+On the instance designated as the server:
 ```bash
+# Get device ID
 python -m src.main cli sync status
-# Output includes: Device ID: <32-character-hex-id>
-```
 
-**Step 2: Start the sync server** (on devices you want to sync from):
-```bash
+# Start the sync server, if it is not running as a systemd service
 python -m src.main cli sync serve
-# Or run as a systemd service (see below)
 ```
 
-**Step 3: Add peers** (on each device, add the other devices):
+On the instance designated as the client:
 ```bash
+# Add server as a peer
 python -m src.main cli sync add-peer <peer-device-id> "PeerName" http://<peer-ip>:8384
-```
 
-Example:
-```bash
-python -m src.main cli sync add-peer a1b2c3d4e5f6789012345678abcdef01 "HomeServer" https://sync.example.com
-```
+# Trigger sync
+python -m src.main cli sync now                                              # Sync with all configured peers
+python -m src.main cli sync now --peer <peer-device-id> # Sync with a specific peer only
 
-**Step 4: Trigger sync**:
-```bash
-# Sync with all configured peers
-python -m src.main cli sync now
-
-# Sync with a specific peer only
-python -m src.main cli sync now --peer <peer-device-id>
-```
-
-**Step 5: Check for conflicts** (if any):
-```bash
+# Check for conflicts
 python -m src.main cli sync conflicts
-```
 
-**Step 6: Resolve conflicts** (if needed):
-```bash
 # Resolve a conflict by keeping local, remote, or merging
-python -m src.main cli sync resolve <conflict-id> local
-python -m src.main cli sync resolve <conflict-id> remote
+python -m src.main cli sync resolve <conflict-id> local       # Or:
+python -m src.main cli sync resolve <conflict-id> remote   # Or:
 python -m src.main cli sync resolve <conflict-id> merge
 ```
 
