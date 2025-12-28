@@ -241,11 +241,25 @@ def create_sync_blueprint(
                 db, changes, peer_device_id, peer_device_name
             )
 
-            return jsonify({
+            response_data = {
                 "applied": applied,
                 "conflicts": conflicts,
                 "errors": errors,
-            }), 200
+            }
+
+            # Return appropriate HTTP status:
+            # - 200: All changes applied successfully
+            # - 207: Partial success (some applied, some failed)
+            # - 422: All changes failed (unprocessable)
+            if errors:
+                if applied > 0:
+                    # Partial success
+                    return jsonify(response_data), 207
+                else:
+                    # All failed
+                    return jsonify(response_data), 422
+            else:
+                return jsonify(response_data), 200
 
         except Exception as e:
             logger.error(f"Apply changes error: {e}")
@@ -260,6 +274,8 @@ def create_sync_blueprint(
                 "notes": [...],
                 "tags": [...],
                 "note_tags": [...],
+                "audio_files": [...],
+                "note_attachments": [...],
                 "device_id": "...",
                 "device_name": "...",
                 "timestamp": "..."
@@ -272,6 +288,8 @@ def create_sync_blueprint(
                 "notes": full_data["notes"],
                 "tags": full_data["tags"],
                 "note_tags": full_data["note_tags"],
+                "audio_files": full_data.get("audio_files", []),
+                "note_attachments": full_data.get("note_attachments", []),
                 "device_id": device_id,
                 "device_name": device_name,
                 "timestamp": datetime.now().isoformat(),
@@ -529,8 +547,11 @@ def apply_sync_changes(
             errors.append(f"Error applying {change.entity_type} {change.entity_id}: {e}")
             logger.error(f"Error applying change: {e}")
 
-    # Update peer's last sync timestamp
-    update_peer_last_sync(db, peer_device_id, peer_device_name)
+    # Only update peer's last sync timestamp if ALL changes were applied successfully
+    # This ensures failed changes will be retried on next sync
+    # (Same logic as sync_client.py - failed sync should NOT move timestamp forward)
+    if not errors:
+        update_peer_last_sync(db, peer_device_id, peer_device_name)
 
     return applied, conflicts, errors
 

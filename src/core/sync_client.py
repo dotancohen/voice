@@ -20,6 +20,7 @@ import urllib.request
 import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import Config
@@ -117,7 +118,12 @@ class SyncClient:
             # Use space separator to match SQLite datetime format
             # (isoformat uses 'T' which breaks string comparison)
             return adjusted.strftime("%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            # Log warning - malformed timestamp may cause sync issues
+            logger.warning(
+                f"Failed to parse timestamp for skew adjustment: '{timestamp}': {e}. "
+                f"Using original timestamp, which may cause sync inconsistencies."
+            )
             return timestamp  # If parsing fails, return original
 
     def sync_with_peer(self, peer_id: str) -> SyncResult:
@@ -183,11 +189,29 @@ class SyncClient:
             else:
                 result.errors.append(f"Push failed: {push_result.get('error')}")
 
-            # Update last sync time for peer
-            self._update_peer_sync_time(peer_id)
+            # Step 4: Sync binary files (audio files)
+            # Download binary files for audio_files we pulled
+            pulled_changes = pull_result.get("changes", [])
+            if pulled_changes:
+                binary_errors = self._sync_binary_files_after_pull(
+                    peer_url, pulled_changes
+                )
+                result.errors.extend(binary_errors)
+
+            # Upload binary files for audio_files we pushed
+            pushed_changes = push_result.get("changes", [])
+            if pushed_changes:
+                binary_errors = self._sync_binary_files_after_push(
+                    peer_url, pushed_changes
+                )
+                result.errors.extend(binary_errors)
 
             if result.errors:
                 result.success = False
+            else:
+                # Only update last sync time if sync was completely successful
+                # This ensures we retry failed changes on next sync
+                self._update_peer_sync_time(peer_id)
 
             logger.info(
                 f"Sync complete: pulled={result.pulled}, pushed={result.pushed}, "
@@ -238,9 +262,25 @@ class SyncClient:
             if pull_result["success"]:
                 result.pulled = pull_result.get("applied", 0)
                 result.conflicts = pull_result.get("conflicts", 0)
+
+                # Sync binary files for pulled audio_files
+                pulled_changes = pull_result.get("changes", [])
+                if pulled_changes:
+                    binary_errors = self._sync_binary_files_after_pull(
+                        peer_url, pulled_changes
+                    )
+                    result.errors.extend(binary_errors)
+
+                # Only update timestamp if completely successful
+                if not result.errors:
+                    self._update_peer_sync_time(peer_id)
             else:
                 result.success = False
                 result.errors.append(pull_result.get("error", "Pull failed"))
+
+            # Mark as failed if any errors occurred
+            if result.errors:
+                result.success = False
 
         except Exception as e:
             result.success = False
@@ -283,9 +323,25 @@ class SyncClient:
             if push_result["success"]:
                 result.pushed = push_result.get("applied", 0)
                 result.conflicts = push_result.get("conflicts", 0)
+
+                # Sync binary files for pushed audio_files
+                pushed_changes = push_result.get("changes", [])
+                if pushed_changes:
+                    binary_errors = self._sync_binary_files_after_push(
+                        peer_url, pushed_changes
+                    )
+                    result.errors.extend(binary_errors)
+
+                # Only update timestamp if completely successful
+                if not result.errors:
+                    self._update_peer_sync_time(peer_id)
             else:
                 result.success = False
                 result.errors.append(push_result.get("error", "Push failed"))
+
+            # Mark as failed if any errors occurred
+            if result.errors:
+                result.success = False
 
         except Exception as e:
             result.success = False
@@ -325,6 +381,7 @@ class SyncClient:
 
             # Get full dataset
             full_result = self._get_full_sync(peer_url, peer_id)
+            pulled_changes = []
             if full_result["success"]:
                 # Apply all data
                 applied, conflicts, errors = self._apply_full_sync(
@@ -334,6 +391,17 @@ class SyncClient:
                 result.conflicts = conflicts
                 if errors:
                     result.errors.extend(errors)
+
+                # Build list of audio_file changes for binary sync
+                for af in full_result["data"].get("audio_files", []):
+                    pulled_changes.append(SyncChange(
+                        entity_type="audio_file",
+                        entity_id=af["id"],
+                        operation="create",
+                        data=af,
+                        timestamp=af.get("modified_at") or af.get("imported_at", ""),
+                        device_id="",
+                    ))
             else:
                 result.success = False
                 result.errors.append(full_result.get("error", "Full sync failed"))
@@ -345,7 +413,29 @@ class SyncClient:
             else:
                 result.errors.append(f"Push failed: {push_result.get('error')}")
 
-            self._update_peer_sync_time(peer_id)
+            # Sync binary files for audio_files
+            # Download binary files for audio_files we pulled
+            if pulled_changes:
+                binary_errors = self._sync_binary_files_after_pull(
+                    peer_url, pulled_changes
+                )
+                result.errors.extend(binary_errors)
+
+            # Upload binary files for audio_files we pushed
+            pushed_changes = push_result.get("changes", [])
+            if pushed_changes:
+                binary_errors = self._sync_binary_files_after_push(
+                    peer_url, pushed_changes
+                )
+                result.errors.extend(binary_errors)
+
+            # Mark as failed if there were any errors
+            if result.errors:
+                result.success = False
+            else:
+                # Only update last sync time if sync was completely successful
+                # This ensures we retry failed changes on next sync
+                self._update_peer_sync_time(peer_id)
 
         except Exception as e:
             result.success = False
@@ -421,8 +511,14 @@ class SyncClient:
                     local_midpoint = local_time_before + (local_time_after - local_time_before) / 2
                     skew = server_time - local_midpoint
                     clock_skew_seconds = skew.total_seconds()
-                except (ValueError, TypeError):
-                    pass  # If parsing fails, assume no skew
+                except (ValueError, TypeError) as e:
+                    # Log warning - unparseable timestamp could indicate protocol issue
+                    # or significant version mismatch. Proceeding with 0 skew may cause
+                    # changes to be missed if actual skew is significant.
+                    logger.warning(
+                        f"Failed to parse server timestamp '{server_timestamp_str}': {e}. "
+                        f"Proceeding with clock_skew=0, which may cause sync issues."
+                    )
 
             return {
                 "success": True,
@@ -480,11 +576,14 @@ class SyncClient:
             data.get("device_name"),
         )
 
+        # success is False if there were any errors applying changes
         return {
-            "success": True,
+            "success": len(errors) == 0,
             "applied": applied,
             "conflicts": conflicts,
             "errors": errors,
+            "error": "; ".join(errors) if errors else None,
+            "changes": changes,  # Return changes for binary sync
         }
 
     def _push_changes(
@@ -504,7 +603,7 @@ class SyncClient:
         changes, _ = get_changes_since(self.db, since)
 
         if not changes:
-            return {"success": True, "applied": 0, "conflicts": 0}
+            return {"success": True, "applied": 0, "conflicts": 0, "changes": []}
 
         # Convert changes to dicts for JSON
         changes_data = []
@@ -531,13 +630,19 @@ class SyncClient:
         )
 
         if response.get("success"):
+            data = response["data"]
+            server_errors = data.get("errors", [])
+            # success is False if server had any errors applying changes
             return {
-                "success": True,
-                "applied": response["data"].get("applied", 0),
-                "conflicts": response["data"].get("conflicts", 0),
+                "success": len(server_errors) == 0,
+                "applied": data.get("applied", 0),
+                "conflicts": data.get("conflicts", 0),
+                "errors": server_errors,
+                "error": "; ".join(server_errors) if server_errors else None,
+                "changes": changes,  # Return changes for binary sync
             }
         else:
-            return {"success": False, "error": response.get("error")}
+            return {"success": False, "error": response.get("error"), "changes": changes}
 
     def _get_full_sync(self, peer_url: str, peer_id: str) -> Dict[str, Any]:
         """Get full dataset from peer.
@@ -624,6 +729,40 @@ class SyncClient:
                 data=nt,
                 timestamp=nt.get("modified_at") or nt.get("deleted_at") or nt["created_at"],
                 device_id="",  # device_id no longer stored in main tables
+            ))
+
+        # Process audio_files
+        for af in data.get("audio_files", []):
+            if af.get("deleted_at"):
+                operation = "delete"
+            elif af.get("modified_at"):
+                operation = "update"
+            else:
+                operation = "create"
+
+            changes.append(SyncChange(
+                entity_type="audio_file",
+                entity_id=af["id"],
+                operation=operation,
+                data=af,
+                timestamp=af.get("modified_at") or af.get("imported_at", ""),
+                device_id="",
+            ))
+
+        # Process note_attachments
+        for na in data.get("note_attachments", []):
+            if na.get("deleted_at"):
+                operation = "delete"
+            else:
+                operation = "create"
+
+            changes.append(SyncChange(
+                entity_type="note_attachment",
+                entity_id=na["id"],
+                operation=operation,
+                data=na,
+                timestamp=na.get("modified_at") or na.get("created_at", ""),
+                device_id="",
             ))
 
         # Apply all changes
@@ -717,6 +856,13 @@ class SyncClient:
             try:
                 error_body = e.read().decode("utf-8")
                 error_data = json.loads(error_body)
+                # For 422 (Unprocessable Entity), return the full response
+                # so caller can see applied count and individual errors
+                if e.code == 422:
+                    return {
+                        "success": True,  # HTTP request succeeded
+                        "data": error_data,  # Contains applied, conflicts, errors
+                    }
                 error_msg = error_data.get("error", str(e))
             except Exception:
                 error_msg = f"HTTP {e.code}: {e.reason}"
@@ -741,6 +887,9 @@ class SyncClient:
         Returns:
             Dict with 'success' and 'error' or 'bytes_downloaded'
         """
+        import tempfile
+        import os
+
         url = f"{peer_url}/sync/audio/{audio_id}/file"
 
         try:
@@ -759,8 +908,21 @@ class SyncClient:
             # Ensure parent directory exists
             dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Write file
-            dest_path.write_bytes(content)
+            # Write to temp file first, then rename atomically
+            # This prevents partial files if interrupted mid-write
+            temp_fd, temp_path = tempfile.mkstemp(
+                dir=dest_path.parent, prefix=f".{audio_id}_"
+            )
+            try:
+                os.write(temp_fd, content)
+                os.close(temp_fd)
+                os.rename(temp_path, dest_path)
+            except Exception:
+                # Clean up temp file on failure
+                os.close(temp_fd)
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                raise
 
             return {"success": True, "bytes_downloaded": len(content)}
 
@@ -806,6 +968,130 @@ class SyncClient:
             return {"success": False, "error": f"HTTP {e.code}: {e.reason}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _sync_binary_files_after_pull(
+        self, peer_url: str, pulled_changes: List[SyncChange]
+    ) -> List[str]:
+        """Download binary files for audio_file entities that were pulled.
+
+        Args:
+            peer_url: Base URL of the peer sync server
+            pulled_changes: List of changes that were pulled from peer
+
+        Returns:
+            List of error messages (empty if all succeeded)
+        """
+        errors = []
+
+        # Get audiofile_directory from config
+        audiofile_dir = self.config.get_audiofile_directory()
+        if not audiofile_dir:
+            # No audiofile directory configured - skip binary sync
+            logger.debug("No audiofile_directory configured, skipping binary downloads")
+            return errors
+
+        audiofile_path = Path(audiofile_dir)
+        if not audiofile_path.exists():
+            audiofile_path.mkdir(parents=True, exist_ok=True)
+
+        # Find audio_file changes that were pulled
+        for change in pulled_changes:
+            if change.entity_type != "audio_file":
+                continue
+            if change.operation == "delete":
+                continue  # Don't download deleted files
+
+            audio_id = change.entity_id
+            filename = change.data.get("filename", "")
+
+            # Determine file extension
+            ext = Path(filename).suffix if filename else ".bin"
+
+            # Check if we already have this file
+            local_file = audiofile_path / f"{audio_id}{ext}"
+            if local_file.exists():
+                logger.debug(f"Binary file {audio_id} already exists locally")
+                continue
+
+            # Download the file
+            logger.info(f"Downloading binary file: {audio_id}")
+            result = self.download_audio_file(peer_url, audio_id, local_file)
+
+            if not result.get("success"):
+                error_msg = result.get("error", "Unknown error")
+                # 404 is expected if peer doesn't have the binary
+                if "404" not in error_msg:
+                    errors.append(f"Failed to download audio {audio_id}: {error_msg}")
+                else:
+                    logger.warning(f"Binary file {audio_id} not available on peer")
+
+        return errors
+
+    def _sync_binary_files_after_push(
+        self, peer_url: str, pushed_changes: List[SyncChange]
+    ) -> List[str]:
+        """Upload binary files for audio_file entities that were pushed.
+
+        Args:
+            peer_url: Base URL of the peer sync server
+            pushed_changes: List of changes that were pushed to peer
+
+        Returns:
+            List of error messages (empty if all succeeded)
+        """
+        errors = []
+
+        # Get audiofile_directory from config
+        audiofile_dir = self.config.get_audiofile_directory()
+        if not audiofile_dir:
+            # No audiofile directory configured - skip binary sync
+            logger.debug("No audiofile_directory configured, skipping binary uploads")
+            return errors
+
+        audiofile_path = Path(audiofile_dir)
+
+        # Find audio_file changes that were pushed
+        for change in pushed_changes:
+            if change.entity_type != "audio_file":
+                continue
+            if change.operation == "delete":
+                continue  # Don't upload deleted files
+
+            audio_id = change.entity_id
+            filename = change.data.get("filename", "")
+
+            # Determine file extension
+            ext = Path(filename).suffix if filename else ".bin"
+
+            # Check if we have this file locally
+            local_file = audiofile_path / f"{audio_id}{ext}"
+            if not local_file.exists():
+                logger.warning(f"Local binary file {audio_id} not found, skipping upload")
+                continue
+
+            # Upload the file
+            logger.info(f"Uploading binary file: {audio_id}")
+            result = self.upload_audio_file(peer_url, audio_id, local_file)
+
+            if not result.get("success"):
+                error_msg = result.get("error", "Unknown error")
+                errors.append(f"Failed to upload audio {audio_id}: {error_msg}")
+
+        return errors
+
+    def _get_changes_for_binary_sync(
+        self, since: Optional[str]
+    ) -> List[SyncChange]:
+        """Get local audio_file changes for binary sync.
+
+        Args:
+            since: Timestamp to get changes since (None for all)
+
+        Returns:
+            List of audio_file SyncChange objects
+        """
+        changes, _ = get_changes_since(self.db, since)
+        return [c for c in changes if c.entity_type == "audio_file"]
 
 
 def sync_all_peers(db: Database, config: Config) -> Dict[str, SyncResult]:

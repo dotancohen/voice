@@ -288,8 +288,8 @@ After=network.target
 [Service]
 Type=simple
 User=voice
-WorkingDirectory=/opt/voice
-ExecStart=/opt/voice/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384
+WorkingDirectory=/var/www/voice
+ExecStart=/var/www/voice/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384
 Restart=on-failure
 RestartSec=5
 
