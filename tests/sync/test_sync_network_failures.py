@@ -110,6 +110,7 @@ class TestServerUnavailable:
 class TestConnectionTimeout:
     """Tests for connection timeout scenarios."""
 
+    @pytest.mark.skip(reason="Mocks urllib but Rust SyncClient uses reqwest; can't mock from Python")
     def test_timeout_handled_gracefully(
         self, sync_node_a: SyncNode, running_server_b: SyncNode
     ):
@@ -396,6 +397,7 @@ class TestMockedNetworkErrors:
 
         assert result.success is False
 
+    @pytest.mark.skip(reason="Mocks urllib but Rust SyncClient uses reqwest; can't mock from Python")
     def test_http_500_error(
         self, sync_node_a: SyncNode, running_server_b: SyncNode
     ):

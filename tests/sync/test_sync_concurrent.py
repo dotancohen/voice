@@ -406,23 +406,23 @@ import sys
 sys.path.insert(0, "{src_path}")
 
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import set_local_device_id
 from voicecore import SyncClient
 
 config = Config(config_dir="{source.config_dir}")
 device_id = bytes.fromhex(config.get_device_id_hex())
 set_local_device_id(device_id)
-db = Database(config.config_data["database_file"])
 
 try:
-    client = SyncClient(db, config)
+    client = SyncClient("{source.config_dir}")
     result = client.sync_with_peer("{target.device_id_hex}")
     if result.success:
         sys.exit(0)
     else:
         sys.exit(1)
-finally:
-    db.close()
+except Exception as e:
+    print(f"Sync error: {{e}}", file=sys.stderr)
+    sys.exit(1)
 '''
 
     return subprocess.Popen(
