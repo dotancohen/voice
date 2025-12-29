@@ -8,7 +8,7 @@ use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use voicecore_lib::{config, database, error, merge, search, sync_client, validation};
+use voicecore_lib::{config, database, error, merge, search, sync_client, sync_server, validation};
 
 // ============================================================================
 // Error types
@@ -1274,6 +1274,206 @@ fn sync_all_peers<'py>(
 }
 
 // ============================================================================
+// Sync server wrappers
+// ============================================================================
+
+/// Start the sync server (blocking).
+///
+/// This function blocks until the server is stopped (via stop_sync_server or Ctrl+C).
+///
+/// Args:
+///     config_dir: Path to config directory (optional, uses default if None)
+///     port: Port to listen on (optional, uses config default if None)
+#[pyfunction]
+#[pyo3(signature = (config_dir=None, port=None))]
+fn start_sync_server(config_dir: Option<&str>, port: Option<u16>) -> PyResult<()> {
+    // Create Tokio runtime
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    // Create Config and Database from config_dir
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+
+    // Get port from config if not specified
+    let server_port = port.unwrap_or_else(|| cfg.sync_server_port());
+
+    // Print server info
+    println!("Starting Rust sync server...");
+    println!("  Device ID:   {}", cfg.device_id_hex());
+    println!("  Device Name: {}", cfg.device_name());
+    println!("  Listening:   http://0.0.0.0:{}", server_port);
+    println!("  Endpoints:   /sync/status, /sync/changes, /sync/full, /sync/apply");
+    println!();
+
+    // Wrap in Arc<Mutex<>> for sync_server
+    let db_arc = Arc::new(Mutex::new(db));
+    let config_arc = Arc::new(Mutex::new(cfg));
+
+    // Run server (blocking)
+    runtime.block_on(sync_server::start_server(db_arc, config_arc, server_port))
+        .map_err(voice_error_to_pyerr)?;
+
+    Ok(())
+}
+
+/// Stop the sync server.
+///
+/// Call this from another thread or signal handler to gracefully stop the server.
+#[pyfunction]
+fn stop_sync_server() -> PyResult<()> {
+    sync_server::stop_server();
+    Ok(())
+}
+
+/// Apply sync changes from a peer to the local database.
+///
+/// This is the same logic used by the sync server's /sync/apply endpoint.
+///
+/// Args:
+///     db: Database instance
+///     changes: List of change dicts, each with keys:
+///         - entity_type: "note", "tag", "note_tag", "note_attachment", or "audio_file"
+///         - entity_id: UUID hex string
+///         - operation: "create", "update", or "delete"
+///         - timestamp: RFC3339 timestamp string
+///         - device_id: Source device UUID hex string
+///         - device_name: Optional source device name
+///         - data: Dict with entity-specific data
+///     peer_device_id: UUID hex string of the peer device
+///     peer_device_name: Optional name of the peer device
+///
+/// Returns:
+///     Dict with keys: applied, conflicts, errors
+#[pyfunction]
+#[pyo3(signature = (db, changes, peer_device_id, peer_device_name=None))]
+fn apply_sync_changes<'py>(
+    py: Python<'py>,
+    db: &PyDatabase,
+    changes: pyo3::Bound<'py, PyList>,
+    peer_device_id: &str,
+    peer_device_name: Option<&str>,
+) -> PyResult<PyObject> {
+    let db_ref = db.inner_ref()?;
+
+    // Convert Python dicts or dataclass objects to SyncChange structs
+    let mut rust_changes = Vec::new();
+    for change_item in changes.iter() {
+        // Try dict access first, then attribute access (for dataclasses)
+        let (entity_type, entity_id, operation, timestamp, device_id, device_name, data_json) =
+            if let Ok(change_dict) = change_item.downcast::<PyDict>() {
+                // Dict-style access
+                let entity_type: String = change_dict
+                    .get_item("entity_type")?
+                    .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing entity_type"))?
+                    .extract()?;
+                let entity_id: String = change_dict
+                    .get_item("entity_id")?
+                    .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing entity_id"))?
+                    .extract()?;
+                let operation: String = change_dict
+                    .get_item("operation")?
+                    .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing operation"))?
+                    .extract()?;
+                let timestamp: String = change_dict
+                    .get_item("timestamp")?
+                    .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing timestamp"))?
+                    .extract()?;
+                let device_id: String = change_dict
+                    .get_item("device_id")?
+                    .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing device_id"))?
+                    .extract()?;
+                let device_name: Option<String> = change_dict
+                    .get_item("device_name")?
+                    .and_then(|v| v.extract().ok());
+                let data_dict = change_dict
+                    .get_item("data")?
+                    .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing data"))?;
+                let data_json = pydict_to_json_value(py, &data_dict)?;
+                (entity_type, entity_id, operation, timestamp, device_id, device_name, data_json)
+            } else {
+                // Attribute access (for dataclasses like SyncChange)
+                let entity_type: String = change_item.getattr("entity_type")?.extract()?;
+                let entity_id: String = change_item.getattr("entity_id")?.extract()?;
+                let operation: String = change_item.getattr("operation")?.extract()?;
+                let timestamp: String = change_item.getattr("timestamp")?.extract()?;
+                let device_id: String = change_item.getattr("device_id")?.extract()?;
+                let device_name: Option<String> = change_item
+                    .getattr("device_name")
+                    .ok()
+                    .and_then(|v| v.extract().ok());
+                let data_obj = change_item.getattr("data")?;
+                let data_json = pydict_to_json_value(py, &data_obj)?;
+                (entity_type, entity_id, operation, timestamp, device_id, device_name, data_json)
+            };
+
+        rust_changes.push(sync_client::SyncChange {
+            entity_type,
+            entity_id,
+            operation,
+            timestamp,
+            device_id,
+            device_name,
+            data: data_json,
+        });
+    }
+
+    // Apply changes
+    let (applied, conflicts, errors) = sync_server::apply_changes_from_peer(
+        db_ref,
+        &rust_changes,
+        peer_device_id,
+        peer_device_name,
+    )
+    .map_err(voice_error_to_pyerr)?;
+
+    // Return result dict
+    let result = PyDict::new(py);
+    result.set_item("applied", applied)?;
+    result.set_item("conflicts", conflicts)?;
+    let errors_list = PyList::new(py, &errors)?;
+    result.set_item("errors", errors_list)?;
+    Ok(result.into_any().unbind())
+}
+
+/// Convert a Python object to serde_json::Value
+fn pydict_to_json_value(py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> PyResult<serde_json::Value> {
+    if obj.is_none() {
+        return Ok(serde_json::Value::Null);
+    }
+    if let Ok(b) = obj.extract::<bool>() {
+        return Ok(serde_json::Value::Bool(b));
+    }
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(serde_json::json!(i));
+    }
+    if let Ok(f) = obj.extract::<f64>() {
+        return Ok(serde_json::json!(f));
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(serde_json::Value::String(s));
+    }
+    if let Ok(list) = obj.downcast::<PyList>() {
+        let mut arr = Vec::new();
+        for item in list.iter() {
+            arr.push(pydict_to_json_value(py, &item)?);
+        }
+        return Ok(serde_json::Value::Array(arr));
+    }
+    if let Ok(dict) = obj.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (key, value) in dict.iter() {
+            let key_str: String = key.extract()?;
+            map.insert(key_str, pydict_to_json_value(py, &value)?);
+        }
+        return Ok(serde_json::Value::Object(map));
+    }
+    // Fallback: try to convert to string
+    Ok(serde_json::Value::String(obj.str()?.to_string()))
+}
+
+// ============================================================================
 // Merge wrapper
 // ============================================================================
 
@@ -1506,6 +1706,11 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySyncResult>()?;
     m.add_class::<PySyncClient>()?;
     m.add_function(wrap_pyfunction!(sync_all_peers, m)?)?;
+
+    // Register sync server functions
+    m.add_function(wrap_pyfunction!(start_sync_server, m)?)?;
+    m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_sync_changes, m)?)?;
 
     // Register search classes and functions
     m.add_class::<PySearchResult>()?;

@@ -27,8 +27,7 @@ from src.core.conflicts import ConflictManager, ResolutionChoice
 from src.core.database import Database
 from src.core.models import AUDIO_FILE_FORMATS
 from src.core.search import resolve_tag_term
-from src.core.sync import create_sync_server
-from voicecore import SyncClient, sync_all_peers
+from voicecore import SyncClient, sync_all_peers, start_sync_server
 from src.core.validation import ValidationError
 
 
@@ -864,24 +863,14 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
     Returns:
         Exit code (0 for success)
     """
-    host = getattr(args, 'host', '0.0.0.0')
     port = getattr(args, 'port', None) or config.get_sync_server_port()
 
-    device_id = config.get_device_id_hex()
-    device_name = config.get_device_name()
-
-    print(f"Starting sync server...")
-    print(f"  Device ID:   {device_id}")
-    print(f"  Device Name: {device_name}")
-    print(f"  Listening:   http://{host}:{port}")
-    print(f"  Endpoints:   /sync/status, /sync/changes, /sync/full, /sync/apply")
-    print()
     print("Press Ctrl+C to stop.")
     print()
 
-    app = create_sync_server(db, config, host=host, port=port)
-    # Run single-threaded because PyDatabase is not thread-safe
-    app.run(host=host, port=port, debug=False, threaded=False)
+    # Use Rust sync server via voicecore bindings
+    # The server handles its own startup message
+    start_sync_server(config_dir=config.get_config_dir(), port=port)
 
     return 0
 
