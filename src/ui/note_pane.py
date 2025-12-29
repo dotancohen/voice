@@ -7,6 +7,7 @@ including timestamps, tags, and full content with editing capability.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Signal
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from src.core.database import Database
 from src.core.note_editor import NoteEditorMixin
+from src.ui.audio_player_widget import AudioPlayerWidget
 from src.ui.styles import BUTTON_STYLE
 
 logger = logging.getLogger(__name__)
@@ -58,15 +60,22 @@ class NotePane(QWidget, NoteEditorMixin):
 
     note_saved = Signal(str)  # Emits note_id when saved
 
-    def __init__(self, db: Database, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        db: Database,
+        audiofile_directory: Optional[Path | str] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         """Initialize the note pane.
 
         Args:
             db: Database connection
+            audiofile_directory: Path to audiofile directory for playback
             parent: Parent widget (default None)
         """
         super().__init__(parent)
         self.db = db
+        self.audiofile_directory = Path(audiofile_directory) if audiofile_directory else None
         self.init_editor_state()  # Initialize mixin state
 
         self.setup_ui()
@@ -95,10 +104,16 @@ class NotePane(QWidget, NoteEditorMixin):
         self.content_text.setTabChangesFocus(True)  # Tab moves to next widget
         layout.addWidget(self.content_text)
 
-        # Attachments - BELOW content per requirements
+        # Attachments label
         self.attachments_label = QLabel("Attachments:")
         layout.addWidget(self.attachments_label)
 
+        # Audio player widget (replaces simple list when audio files present)
+        self.audio_player = AudioPlayerWidget()
+        self.audio_player.hide()  # Hidden until audio files are loaded
+        layout.addWidget(self.audio_player)
+
+        # Simple attachments list (fallback for non-audio)
         self.attachments_list = QListWidget()
         self.attachments_list.setMaximumHeight(100)  # Compact display
         layout.addWidget(self.attachments_list)
@@ -159,20 +174,31 @@ class NotePane(QWidget, NoteEditorMixin):
 
         # Update attachments - display BELOW content
         self.attachments_list.clear()
+        self.audio_player.hide()
+        self.attachments_list.hide()
         try:
             audio_files = self.db.get_audio_files_for_note(note_id)
             if audio_files:
-                self.attachments_label.setText(f"Attachments ({len(audio_files)}):")
-                for af in audio_files:
-                    # Display: id (8 chars) | filename | imported_at | file_created_at
-                    id_short = af.get("id", "")[:8]
-                    filename = af.get("filename", "unknown")
-                    imported_at = af.get("imported_at", "unknown")
-                    file_created_at = af.get("file_created_at", "unknown")
+                self.attachments_label.setText(f"Audio Files ({len(audio_files)}):")
+                # Use audio player widget if audiofile directory is configured
+                if self.audiofile_directory:
+                    self.audio_player.set_audio_files(
+                        audio_files,
+                        get_file_path=self._get_audio_file_path,
+                    )
+                    self.audio_player.show()
+                else:
+                    # Fallback to simple list
+                    for af in audio_files:
+                        id_short = af.get("id", "")[:8]
+                        filename = af.get("filename", "unknown")
+                        imported_at = af.get("imported_at", "unknown")
+                        file_created_at = af.get("file_created_at", "unknown")
 
-                    item_text = f"{id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
-                    item = QListWidgetItem(item_text)
-                    self.attachments_list.addItem(item)
+                        item_text = f"{id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
+                        item = QListWidgetItem(item_text)
+                        self.attachments_list.addItem(item)
+                    self.attachments_list.show()
             else:
                 self.attachments_label.setText("Attachments: None")
         except Exception as e:
@@ -185,6 +211,31 @@ class NotePane(QWidget, NoteEditorMixin):
 
         logger.info(f"Loaded note {note_id}")
 
+    def _get_audio_file_path(self, audio_id: str) -> Optional[str]:
+        """Get the file path for an audio file.
+
+        Args:
+            audio_id: UUID of the audio file.
+
+        Returns:
+            Path to the audio file, or None if not found.
+        """
+        if not self.audiofile_directory:
+            return None
+
+        # Get the audio file record to find the extension
+        audio_file = self.db.get_audio_file(audio_id)
+        if not audio_file:
+            return None
+
+        filename = audio_file.get("filename", "")
+        if "." not in filename:
+            return None
+
+        ext = filename.rsplit(".", 1)[-1].lower()
+        path = self.audiofile_directory / f"{audio_id}.{ext}"
+        return str(path) if path.exists() else None
+
     def clear(self) -> None:
         """Clear all fields."""
         self.created_label.setText("Created: ")
@@ -192,6 +243,7 @@ class NotePane(QWidget, NoteEditorMixin):
         self.tags_label.setText("Tags: ")
         self.attachments_label.setText("Attachments:")
         self.attachments_list.clear()
+        self.audio_player.hide()
         self.clear_editor()  # Handles content and state via mixin
 
     # ===== NoteEditorMixin abstract method implementations =====

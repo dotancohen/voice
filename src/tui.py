@@ -62,10 +62,12 @@ from textual.widgets import (
 )
 from textual.widgets.tree import TreeNode
 
+from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mpv_available
 from src.core.config import Config
 from src.core.database import Database
 from src.core.note_editor import NoteEditorMixin
 from src.core.search import build_tag_search_term, execute_search
+from src.core.waveform import extract_waveform, waveform_with_progress, WAVEFORM_BAR_COUNT
 
 # Re-export for tests
 __all__ = ["VoiceTUI", "run", "add_tui_subparser", "TagsTree", "NotesList", "NotesListView", "NoteDetail", "SearchInput"]
@@ -214,6 +216,146 @@ class SearchInput(Input):
     def on_blur(self) -> None:
         """Disable focus again when leaving the search input."""
         self.can_focus = False
+
+
+class TUIAudioPlayer(Container):
+    """TUI audio player widget with ASCII waveform and controls.
+
+    Features:
+    - ASCII waveform display that shows playback progress
+    - Play/pause button
+    - Skip back 3s and 10s buttons
+    - Time display (MM:SS or HH:MM:SS)
+    - File list with selection
+    """
+
+    def __init__(self, audiofile_directory: Optional[Path] = None) -> None:
+        super().__init__(id="tui-audio-player")
+        self.audiofile_directory = audiofile_directory
+        self._player = AudioPlayer()
+        self._audio_files: List[Dict[str, Any]] = []
+        self._file_paths: List[Path] = []
+        self._waveforms: Dict[int, List[float]] = {}
+        self._update_interval: float = 0.1
+
+    def compose(self) -> ComposeResult:
+        yield Static("No audio files", id="audio-waveform")
+        yield Static("00:00 / 00:00", id="audio-time")
+        yield Horizontal(
+            Button("⏪10", id="skip-10-btn"),
+            Button("⏪3", id="skip-3-btn"),
+            Button("▶", id="play-btn"),
+            Button("1x", id="speed-btn", disabled=True),
+            id="audio-controls"
+        )
+        yield Static("", id="audio-files-label")
+
+    def on_mount(self) -> None:
+        """Start update timer when mounted."""
+        self.set_interval(self._update_interval, self._update_display)
+
+    def set_audio_files(
+        self,
+        audio_files: List[Dict[str, Any]],
+        db: Database,
+    ) -> None:
+        """Set the audio files to display.
+
+        Args:
+            audio_files: List of audio file dicts.
+            db: Database for getting file paths.
+        """
+        self._audio_files = audio_files
+        self._file_paths = []
+        self._waveforms = {}
+
+        if not audio_files or not self.audiofile_directory:
+            self.query_one("#audio-files-label", Static).update("No audio files")
+            return
+
+        # Build file paths
+        file_names = []
+        for af in audio_files:
+            audio_id = af.get("id", "")
+            filename = af.get("filename", "")
+            file_names.append(filename)
+
+            if "." in filename:
+                ext = filename.rsplit(".", 1)[-1].lower()
+                path = self.audiofile_directory / f"{audio_id}.{ext}"
+                self._file_paths.append(path)
+            else:
+                self._file_paths.append(Path())
+
+        # Set files in player
+        self._player.set_audio_files(self._file_paths)
+
+        # Extract waveforms (synchronous for simplicity)
+        for i, path in enumerate(self._file_paths):
+            if path.exists():
+                waveform = extract_waveform(path, WAVEFORM_BAR_COUNT)
+                self._waveforms[i] = waveform
+
+        # Update files label
+        files_text = ", ".join(file_names[:3])
+        if len(file_names) > 3:
+            files_text += f" (+{len(file_names) - 3} more)"
+        self.query_one("#audio-files-label", Static).update(f"Files: {files_text}")
+
+        # Update waveform display
+        self._update_display()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        button_id = event.button.id
+        if button_id == "play-btn":
+            self._on_play_pause()
+        elif button_id == "skip-10-btn":
+            self._player.skip_back(10)
+        elif button_id == "skip-3-btn":
+            self._player.skip_back(3)
+
+    def _on_play_pause(self) -> None:
+        """Handle play/pause."""
+        state = self._player.state
+        if state.current_file_index < 0 and self._file_paths:
+            self._player.play_file(0)
+        else:
+            self._player.toggle_play_pause()
+        self._update_display()
+
+    def _update_display(self) -> None:
+        """Update the waveform and time display."""
+        state = self._player.state
+
+        # Update play button
+        play_btn = self.query_one("#play-btn", Button)
+        play_btn.label = "⏸" if state.is_playing else "▶"
+
+        # Update time
+        time_label = self.query_one("#audio-time", Static)
+        current = format_time(state.current_position)
+        total = format_time(state.duration)
+        time_label.update(f"{current} / {total}")
+
+        # Update waveform
+        waveform_widget = self.query_one("#audio-waveform", Static)
+        if state.current_file_index >= 0:
+            waveform = self._waveforms.get(state.current_file_index, [])
+            progress = state.current_position / state.duration if state.duration > 0 else 0
+            # Use terminal width - some margin
+            width = 60
+            ascii_waveform = waveform_with_progress(waveform, progress, width)
+            waveform_widget.update(ascii_waveform)
+        elif self._waveforms:
+            # Show first file's waveform
+            waveform = self._waveforms.get(0, [])
+            ascii_waveform = waveform_with_progress(waveform, 0.0, 60)
+            waveform_widget.update(ascii_waveform)
+
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        self._player.release()
 
 
 class NotesListView(ListView):
@@ -369,11 +511,13 @@ class NoteDetail(Container, NoteEditorMixin):
     Inherits from NoteEditorMixin to share editing state logic with GUI.
     """
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, audiofile_directory: Optional[Path] = None) -> None:
         super().__init__(id="note-detail")
         self.db = db
+        self.audiofile_directory = audiofile_directory
         self.init_editor_state()  # Initialize mixin state
         self.is_rtl: bool = False
+        self._audio_player: Optional[TUIAudioPlayer] = None
 
     def compose(self) -> ComposeResult:
         yield Label("Select a note to view", id="note-header")
@@ -381,7 +525,10 @@ class NoteDetail(Container, NoteEditorMixin):
         yield Static("", id="note-view")
         # Edit mode: TextArea (hidden initially)
         yield TextArea(id="note-edit", language=None)
-        # Attachments displayed BELOW content per requirements
+        # Audio player (hidden initially, shown when audio files present)
+        self._audio_player = TUIAudioPlayer(audiofile_directory=self.audiofile_directory)
+        yield self._audio_player
+        # Attachments text (for non-audio or when player not available)
         yield Label("", id="note-attachments")
         yield Horizontal(
             Button("Edit", id="edit-btn", variant="primary"),
@@ -391,10 +538,11 @@ class NoteDetail(Container, NoteEditorMixin):
         )
 
     def on_mount(self) -> None:
-        """Hide edit mode initially."""
+        """Hide edit mode and audio player initially."""
         self.query_one("#note-edit", TextArea).display = False
         self.query_one("#save-btn", Button).display = False
         self.query_one("#cancel-btn", Button).display = False
+        self.query_one("#tui-audio-player").display = False
 
     def load_note(self, note_id: str) -> None:
         """Load and display note details.
@@ -419,25 +567,35 @@ class NoteDetail(Container, NoteEditorMixin):
 
             # Update attachments - displayed BELOW content per requirements
             attachments_label = self.query_one("#note-attachments", Label)
+            audio_player = self.query_one("#tui-audio-player")
             try:
                 audio_files = self.db.get_audio_files_for_note(note_id)
                 if audio_files:
-                    # Display: id (8 chars) | filename | imported_at | file_created_at
-                    attachment_lines = []
-                    for af in audio_files:
-                        id_short = af.get("id", "")[:8]
-                        filename = af.get("filename", "unknown")
-                        imported_at = af.get("imported_at", "unknown")
-                        file_created_at = af.get("file_created_at", "unknown")
-                        attachment_lines.append(
-                            f"  {id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
-                        )
-                    attachments_text = f"Attachments ({len(audio_files)}):\n" + "\n".join(attachment_lines)
-                    attachments_label.update(attachments_text)
+                    # Use audio player if audiofile directory is configured and MPV available
+                    if self.audiofile_directory and is_mpv_available():
+                        self._audio_player.set_audio_files(audio_files, self.db)
+                        audio_player.display = True
+                        attachments_label.update("")
+                    else:
+                        # Fallback to text display
+                        audio_player.display = False
+                        attachment_lines = []
+                        for af in audio_files:
+                            id_short = af.get("id", "")[:8]
+                            filename = af.get("filename", "unknown")
+                            imported_at = af.get("imported_at", "unknown")
+                            file_created_at = af.get("file_created_at", "unknown")
+                            attachment_lines.append(
+                                f"  {id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
+                            )
+                        attachments_text = f"Attachments ({len(audio_files)}):\n" + "\n".join(attachment_lines)
+                        attachments_label.update(attachments_text)
                 else:
+                    audio_player.display = False
                     attachments_label.update("Attachments: None")
             except Exception as e:
                 logger.warning(f"Error loading attachments for note {note_id}: {e}")
+                audio_player.display = False
                 attachments_label.update("Attachments: None")
 
             # Use mixin to handle content and state
@@ -584,6 +742,38 @@ class VoiceTUI(App):
         padding: 0 1;
     }}
 
+    #tui-audio-player {{
+        height: auto;
+        max-height: 10;
+        padding: 1;
+        background: $surface;
+        border: solid $primary;
+    }}
+
+    #audio-waveform {{
+        height: 1;
+        padding: 0 1;
+    }}
+
+    #audio-time {{
+        height: 1;
+        text-align: center;
+    }}
+
+    #audio-controls {{
+        height: 3;
+        align: center middle;
+    }}
+
+    #audio-controls Button {{
+        margin: 0 1;
+    }}
+
+    #audio-files-label {{
+        height: 1;
+        color: $text-muted;
+    }}
+
     .rtl {{
         text-align: right;
         width: 100%;
@@ -625,7 +815,8 @@ class VoiceTUI(App):
     def compose(self) -> ComposeResult:
         yield TagsTree(self.db)
         yield NotesList(self.db)
-        yield NoteDetail(self.db)
+        audiofile_directory = self.config.get("audiofile_directory")
+        yield NoteDetail(self.db, audiofile_directory=Path(audiofile_directory) if audiofile_directory else None)
         footer = Footer()
         footer.command_palette_key_display = "● ^p"
         yield footer
