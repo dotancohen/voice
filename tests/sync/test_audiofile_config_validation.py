@@ -139,8 +139,8 @@ class TestSyncRejectsWithoutAudiofileDirectory:
             # Client's audiofile_directory is not configured
             assert client_cfg.get_audiofile_directory() is None
 
-            # Create sync client
-            sync_client = SyncClient(client_db, client_cfg)
+            # Create sync client with config_dir (Rust binding API)
+            sync_client = SyncClient(str(client_dir))
 
             # Attempt download - client should check if it can store the file
             # This currently downloads but has nowhere to save
@@ -221,7 +221,6 @@ class TestSyncRejectsWithoutAudiofileDirectory:
 class TestSyncConfigValidationDuringHandshake:
     """Test that config validation happens during sync handshake."""
 
-    @pytest.mark.xfail(reason="Handshake capability advertisement not yet implemented")
     def test_handshake_includes_audiofile_capability(
         self,
         server_with_audiofiles: SyncNode,
@@ -245,7 +244,6 @@ class TestSyncConfigValidationDuringHandshake:
             "Status should advertise audiofile capability"
         )
 
-    @pytest.mark.xfail(reason="Handshake capability advertisement not yet implemented")
     def test_client_knows_server_audiofile_capability_after_handshake(
         self,
         server_without_audiofiles: SyncNode,
@@ -258,11 +256,16 @@ class TestSyncConfigValidationDuringHandshake:
         if not server.wait_for_server():
             pytest.fail("Failed to start sync server")
 
-        # After handshake, client should know server doesn't support audiofiles
-        # This requires protocol enhancement
+        # Check status endpoint - should indicate no audiofile support
+        url = f"{server.url}/sync/status"
+        request = urllib.request.Request(url)
+        response = urllib.request.urlopen(request, timeout=10)
+        data = json.loads(response.read().decode())
 
-        # Future: SyncClient would have:
-        # client.connect(server.url)
-        # assert client.peer_supports_audiofiles == False
-
-        pytest.fail("Client should learn server's audiofile capability from handshake")
+        # Server without audiofile_directory should report False
+        assert "supports_audiofiles" in data, (
+            "Status should include supports_audiofiles field"
+        )
+        assert data["supports_audiofiles"] is False, (
+            "Server without audiofile_directory should not support audiofiles"
+        )

@@ -76,6 +76,7 @@ class HandshakeResponse:
     protocol_version: str = "1.0"
     last_sync_timestamp: Optional[str] = None
     server_timestamp: Optional[str] = None  # For clock skew detection
+    supports_audiofiles: bool = False  # Whether server supports audiofile sync
 
 
 def create_sync_blueprint(
@@ -153,6 +154,7 @@ def create_sync_blueprint(
                 protocol_version="1.0",
                 last_sync_timestamp=last_sync,
                 server_timestamp=datetime.now().isoformat(),
+                supports_audiofiles=audiofile_directory is not None,
             )
 
             return jsonify(asdict(response)), 200
@@ -354,7 +356,8 @@ def create_sync_blueprint(
                 "status": "ok",
                 "device_id": "...",
                 "device_name": "...",
-                "protocol_version": "1.0"
+                "protocol_version": "1.0",
+                "supports_audiofiles": true/false
             }
         """
         return jsonify({
@@ -362,6 +365,7 @@ def create_sync_blueprint(
             "device_id": device_id,
             "device_name": device_name,
             "protocol_version": "1.0",
+            "supports_audiofiles": audiofile_directory is not None,
         }), 200
 
     @sync_bp.route("/audio/<audio_id>/file", methods=["GET"])
