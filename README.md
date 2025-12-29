@@ -217,9 +217,7 @@ curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work" # Combined text an
 
 ### Pre-Installation
 
-- Ensure that tooling is installed.
-- Log out and log back in to ensure that environment is set properly.
-
+Ensure that tooling is installed:
 ```bash
 sudo apt update && sudo apt install build-essential  # Debian family
 sudo apt install pkg-config libssl-dev                              # Debian family
@@ -230,6 +228,7 @@ sudo dnf install pkg-config openssl-devel                    # Redhat family
 which rustc
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y  # Only if rustc is not installed.
 ```
+Then log out and log back in to ensure that environment is set properly.
 
 ### Installation
 
@@ -278,8 +277,13 @@ python -m src.main tui # Force TUI even if GUI is available
 
 ### Running as a Service
 
-Create a systemd service file at `/etc/systemd/system/voice-sync.service`:
+Create user:
+```bash
+sudo useradd --system --create-home --home-dir /var/www/voice --shell /bin/bash voicesync
+sudo chown -R voicesync:voicesync /var/www/voice
+```
 
+Create a systemd service file at `/etc/systemd/system/voicesync.service`:
 ```ini
 [Unit]
 Description=Voice Sync Server
@@ -287,7 +291,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=voice
+User=voicesync
 WorkingDirectory=/var/www/voice
 ExecStart=/var/www/voice/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384
 Restart=on-failure
@@ -299,17 +303,31 @@ WantedBy=multi-user.target
 
 Enable and start:
 ```bash
-sudo systemctl enable voice-sync
-sudo systemctl start voice-sync
+sudo systemctl enable voicesync
+sudo systemctl start voicesync
 ```
 
 Manage the service:
 ```bash
-sudo systemctl start voice # Start the service
-sudo systemctl stop voice # Stop the service
-sudo systemctl restart voice # Restart systemd service, e.g. after updating
-sudo systemctl status voice # Check status
-journalctl -u voice -f  # Follow logs
+sudo systemctl start voicesync # Start the service
+sudo systemctl stop voicesync # Stop the service
+sudo systemctl restart voicesync # Restart systemd service, e.g. after updating
+sudo systemctl status voicesync # Check status
+journalctl -u voicesync -f  # Follow logs
+```
+
+Access Voice data with sudo:
+```bash
+sudo -u voicesync vim /var/www/voice/.config/voice/config.json
+sudo -u voicesync sqlite3 /var/www/voice/.config/voice/voice.db
+```
+
+Access Voice data as the logged-in user without sudo:
+```bash
+sudo usermod -aG voicesync $USER
+sudo chmod -R g+rw /var/www/voice/.config/voice/
+vim /var/www/voice/.config/voice/config.json
+sqlite3 /var/www/voice/.config/voice/voice.db
 ```
 
 ## Syncing between installations
