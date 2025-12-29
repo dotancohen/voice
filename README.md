@@ -177,6 +177,11 @@ python -m src.main cli search --tag Work --tag Projects  # Multiple tags (AND lo
 python -m src.main cli search --text "meeting" --tag Work        # Combined text and tags
 ```
 
+Import directory of audio files as new notes:
+```
+python -m src.main cli import-audiofiles /path/to/files/
+```
+
 #### Output formatting
 
 ```bash

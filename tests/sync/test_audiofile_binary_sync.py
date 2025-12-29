@@ -363,3 +363,136 @@ class TestBinarySyncRoundTrip:
         assert downloaded_file.read_bytes() == test_audio_content, (
             "Round-trip sync should preserve exact binary content"
         )
+
+
+class TestMissingAudioFileDownload:
+    """Test that missing audio files are downloaded on subsequent syncs.
+
+    This handles the case where audio file metadata was synced but the binary
+    download failed (e.g., due to permission issues). On subsequent syncs,
+    the metadata won't be in pulled_changes (since it hasn't changed), so we
+    need to check for missing files and download them.
+    """
+
+    def test_missing_audio_file_downloaded_on_second_sync(
+        self,
+        server_node_with_audiofiles: SyncNode,
+        client_node_with_audiofiles: SyncNode,
+        test_audio_content: bytes,
+    ) -> None:
+        """Test that a missing audio file is downloaded on subsequent sync.
+
+        Scenario:
+        1. Server has audio file (metadata + binary)
+        2. Client syncs - metadata is applied but binary file NOT stored locally
+           (simulating a failed download due to permission issues)
+        3. Client syncs again - should detect missing file and download it
+        """
+        from voicecore import SyncClient
+
+        server = server_node_with_audiofiles
+        client = client_node_with_audiofiles
+
+        # 1. Server has audio file with binary
+        audio_id = server.db.create_audio_file("server-file.ogg")
+        server_audiofile_dir = Path(server.config.get_audiofile_directory())
+        server_file = server_audiofile_dir / f"{audio_id}.ogg"
+        server_file.write_bytes(test_audio_content)
+
+        # 2. Simulate first sync: metadata synced but binary not stored
+        # Apply metadata to client database
+        raw = server.db.get_audio_file_raw(audio_id)
+        client.db.apply_sync_audio_file(
+            raw["id"],
+            raw["imported_at"],
+            raw["filename"],
+        )
+
+        # Verify client has metadata but no binary file
+        client_audiofile_dir = Path(client.config.get_audiofile_directory())
+        client_file = client_audiofile_dir / f"{audio_id}.ogg"
+        assert not client_file.exists(), (
+            "Client should NOT have the binary file yet (simulating failed download)"
+        )
+
+        # Start sync server
+        start_sync_server(server)
+        if not server.wait_for_server():
+            pytest.fail("Failed to start sync server")
+
+        # Configure client to sync with server
+        server_peer_id = server.device_id_hex
+        client.config.add_peer(server_peer_id, "Server", server.url, allow_update=True)
+        client.config.set_sync_enabled(True)
+
+        # 3. Second sync - should download the missing file
+        sync_client = SyncClient(str(client.config_dir))
+        result = sync_client.sync_with_peer(server_peer_id)
+
+        # The sync should succeed
+        assert result.success, f"Sync failed: {result.errors}"
+
+        # The missing file should now exist
+        assert client_file.exists(), (
+            "Missing audio file should be downloaded on second sync. "
+            f"Expected file at: {client_file}"
+        )
+
+        # Content should match
+        assert client_file.read_bytes() == test_audio_content, (
+            "Downloaded file content should match server content"
+        )
+
+    def test_already_existing_file_not_redownloaded(
+        self,
+        server_node_with_audiofiles: SyncNode,
+        client_node_with_audiofiles: SyncNode,
+        test_audio_content: bytes,
+    ) -> None:
+        """Test that existing audio files are not re-downloaded."""
+        from voicecore import SyncClient
+
+        server = server_node_with_audiofiles
+        client = client_node_with_audiofiles
+
+        # Server has audio file
+        audio_id = server.db.create_audio_file("existing-file.ogg")
+        server_audiofile_dir = Path(server.config.get_audiofile_directory())
+        server_file = server_audiofile_dir / f"{audio_id}.ogg"
+        server_file.write_bytes(test_audio_content)
+
+        # Client has metadata AND binary file already
+        raw = server.db.get_audio_file_raw(audio_id)
+        client.db.apply_sync_audio_file(
+            raw["id"],
+            raw["imported_at"],
+            raw["filename"],
+        )
+
+        client_audiofile_dir = Path(client.config.get_audiofile_directory())
+        client_file = client_audiofile_dir / f"{audio_id}.ogg"
+        client_file.write_bytes(test_audio_content)
+
+        # Record file modification time
+        original_mtime = client_file.stat().st_mtime
+
+        # Start sync server
+        start_sync_server(server)
+        if not server.wait_for_server():
+            pytest.fail("Failed to start sync server")
+
+        # Configure client and sync
+        server_peer_id = server.device_id_hex
+        client.config.add_peer(server_peer_id, "Server", server.url, allow_update=True)
+        client.config.set_sync_enabled(True)
+
+        sync_client = SyncClient(str(client.config_dir))
+        result = sync_client.sync_with_peer(server_peer_id)
+
+        assert result.success, f"Sync failed: {result.errors}"
+
+        # File should still exist with same mtime (not redownloaded)
+        assert client_file.exists()
+        assert client_file.stat().st_mtime == original_mtime, (
+            "Existing file should not be redownloaded"
+        )
