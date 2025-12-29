@@ -5,5 +5,3 @@ textual>=0.50.0
 Flask>=3.0.0
 Flask-CORS>=4.0.0
 uuid6>=2024.1.12
-diff-match-patch>=20230430
-merge3>=0.0.15
