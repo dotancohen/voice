@@ -867,6 +867,23 @@ impl PyDatabase {
             .apply_sync_audio_file(id, imported_at, filename, file_created_at, summary, modified_at, deleted_at)
             .map_err(voice_error_to_pyerr)
     }
+
+    // ========================================================================
+    // Maintenance methods
+    // ========================================================================
+
+    /// Normalize database data for consistency.
+    ///
+    /// This runs various normalization passes:
+    /// - Timestamp normalization (ISO 8601 -> SQLite format)
+    /// - (Future: Unicode normalization, etc.)
+    fn normalize_database(&mut self) -> PyResult<()> {
+        self.inner
+            .as_mut()
+            .ok_or_else(|| DatabaseError::new_err("Database has been closed"))?
+            .normalize_database()
+            .map_err(voice_error_to_pyerr)
+    }
 }
 
 // ============================================================================

@@ -31,6 +31,48 @@ from voicecore import SyncClient, sync_all_peers, start_sync_server
 from src.core.validation import ValidationError
 
 
+def resolve_uuid_prefix(
+    db: Database,
+    prefix: str,
+    entity_type: str,
+) -> str:
+    """Resolve a UUID prefix to a full UUID.
+
+    Similar to how Git resolves short commit hashes.
+
+    Args:
+        db: Database instance
+        prefix: UUID prefix (e.g., "57c28")
+        entity_type: "note" or "tag" for error messages and lookups
+
+    Returns:
+        Full UUID hex string
+
+    Raises:
+        ValueError: If prefix matches 0 or >1 UUIDs
+    """
+    prefix_lower = prefix.lower()
+
+    if entity_type == "note":
+        all_items = db.get_all_notes()
+    elif entity_type == "tag":
+        all_items = db.get_all_tags()
+    else:
+        raise ValueError(f"Unknown entity type: {entity_type}")
+
+    matches = [item for item in all_items if item["id"].lower().startswith(prefix_lower)]
+
+    if len(matches) == 0:
+        raise ValueError(f"No {entity_type} found matching prefix '{prefix}'")
+    elif len(matches) > 1:
+        match_ids = ", ".join(m["id"][:12] + "..." for m in matches[:5])
+        if len(matches) > 5:
+            match_ids += f" (and {len(matches) - 5} more)"
+        raise ValueError(f"Ambiguous {entity_type} prefix '{prefix}' matches: {match_ids}")
+
+    return matches[0]["id"]
+
+
 def format_tag_hierarchy(tags: List[Dict[str, Any]], indent: int = 0) -> str:
     """Format tags as indented hierarchy.
 
@@ -875,6 +917,129 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
     return 0
 
 
+def cmd_maintenance_database_normalize(db: Database, args: argparse.Namespace) -> int:
+    """Normalize database data for consistency.
+
+    This includes:
+    - Timestamp normalization (ISO 8601 to SQLite format)
+    - Future: Unicode normalization
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print("Normalizing database...")
+        db.normalize_database()
+        print("Database normalization complete.")
+        return 0
+    except Exception as e:
+        print(f"Error normalizing database: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_new_tag(db: Database, args: argparse.Namespace) -> int:
+    """Create a new tag.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    name = args.name
+    parent_prefix = getattr(args, 'parent', None)
+
+    try:
+        parent_id = None
+        if parent_prefix:
+            parent_id = resolve_uuid_prefix(db, parent_prefix, "tag")
+
+        tag_id = db.create_tag(name, parent_id)
+
+        if args.format == "json":
+            result = {"id": tag_id, "name": name}
+            if parent_id:
+                result["parent_id"] = parent_id
+            print(json.dumps(result))
+        else:
+            if parent_id:
+                parent_tag = db.get_tag(parent_id)
+                parent_name = parent_tag["name"] if parent_tag else parent_id[:8]
+                print(f"Created tag '{name}' (ID: {tag_id[:8]}...) under '{parent_name}'")
+            else:
+                print(f"Created tag '{name}' (ID: {tag_id[:8]}...)")
+        return 0
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error creating tag: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_tag_notes(db: Database, args: argparse.Namespace) -> int:
+    """Attach tags to notes.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    tag_prefixes = args.tags
+    note_prefixes = args.notes
+
+    if not tag_prefixes:
+        print("Error: At least one tag is required (--tags)", file=sys.stderr)
+        return 1
+
+    if not note_prefixes:
+        print("Error: At least one note is required (--notes)", file=sys.stderr)
+        return 1
+
+    try:
+        # Resolve all tag prefixes
+        tag_ids = []
+        for prefix in tag_prefixes:
+            tag_id = resolve_uuid_prefix(db, prefix, "tag")
+            tag_ids.append(tag_id)
+
+        # Resolve all note prefixes
+        note_ids = []
+        for prefix in note_prefixes:
+            note_id = resolve_uuid_prefix(db, prefix, "note")
+            note_ids.append(note_id)
+
+        # Attach each tag to each note
+        attached = 0
+        for note_id in note_ids:
+            for tag_id in tag_ids:
+                if db.add_tag_to_note(note_id, tag_id):
+                    attached += 1
+
+        if args.format == "json":
+            print(json.dumps({
+                "attached": attached,
+                "tags": len(tag_ids),
+                "notes": len(note_ids),
+            }))
+        else:
+            print(f"Attached {len(tag_ids)} tag(s) to {len(note_ids)} note(s) ({attached} new associations)")
+        return 0
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error tagging notes: {e}", file=sys.stderr)
+        return 1
+
+
 def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add CLI subparser and its nested subcommands.
 
@@ -947,6 +1112,40 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     cli_subparsers.add_parser(
         "list-tags",
         help="List all tags in hierarchy"
+    )
+
+    # new-tag command
+    new_tag_parser = cli_subparsers.add_parser(
+        "new-tag",
+        help="Create a new tag"
+    )
+    new_tag_parser.add_argument(
+        "name",
+        type=str,
+        help="Name of the tag to create"
+    )
+    new_tag_parser.add_argument(
+        "--parent",
+        type=str,
+        help="Parent tag ID or prefix (e.g., '57c28')"
+    )
+
+    # tag-notes command
+    tag_notes_parser = cli_subparsers.add_parser(
+        "tag-notes",
+        help="Attach tags to notes"
+    )
+    tag_notes_parser.add_argument(
+        "--tags",
+        nargs="+",
+        required=True,
+        help="Tag ID(s) or prefix(es) to attach"
+    )
+    tag_notes_parser.add_argument(
+        "--notes",
+        nargs="+",
+        required=True,
+        help="Note ID(s) or prefix(es) to tag"
     )
 
     # search command
@@ -1074,6 +1273,21 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Port to bind to (default: 8384 or from config)"
     )
 
+    # maintenance command with subcommands
+    maintenance_parser = cli_subparsers.add_parser(
+        "maintenance",
+        help="Database maintenance operations"
+    )
+    maintenance_subparsers = maintenance_parser.add_subparsers(
+        dest="maintenance_command", help="Maintenance commands"
+    )
+
+    # maintenance database-normalize
+    maintenance_subparsers.add_parser(
+        "database-normalize",
+        help="Normalize database data (timestamps, unicode, etc.)"
+    )
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -1109,6 +1323,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_edit_note(db, args)
         elif args.cli_command == "list-tags":
             return cmd_list_tags(db, args)
+        elif args.cli_command == "new-tag":
+            return cmd_new_tag(db, args)
+        elif args.cli_command == "tag-notes":
+            return cmd_tag_notes(db, args)
         elif args.cli_command == "search":
             return cmd_search(db, args)
         elif args.cli_command == "import-audiofiles":
@@ -1141,6 +1359,17 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_sync_serve(db, config, args)
             else:
                 print(f"Error: Unknown sync command '{sync_cmd}'", file=sys.stderr)
+                return 1
+        elif args.cli_command == "maintenance":
+            # Handle maintenance subcommands
+            maint_cmd = getattr(args, 'maintenance_command', None)
+            if not maint_cmd:
+                print("Error: No maintenance command specified. Use 'maintenance --help'.", file=sys.stderr)
+                return 1
+            if maint_cmd == "database-normalize":
+                return cmd_maintenance_database_normalize(db, args)
+            else:
+                print(f"Error: Unknown maintenance command '{maint_cmd}'", file=sys.stderr)
                 return 1
         else:
             print(f"Error: Unknown command '{args.cli_command}'", file=sys.stderr)

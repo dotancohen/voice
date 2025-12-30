@@ -147,6 +147,8 @@ python -m src.main tui
 
 ### CLI Mode
 
+- Allow specifying the first few UUID characters only, like Git does
+
 Create notes:
 ```bash
 python -m src.main cli new-note "Hello, world!"
@@ -157,12 +159,6 @@ Show specific note:
 ```bash
 python -m src.main cli show-note <note-uuid>
 ```
-
-List tags (hierarchical):
-```bash
-python -m src.main cli list-tags
-```
-
 List all notes:
 ```bash
 python -m src.main cli list-notes
@@ -177,9 +173,30 @@ python -m src.main cli search --tag Work --tag Projects  # Multiple tags (AND lo
 python -m src.main cli search --text "meeting" --tag Work        # Combined text and tags
 ```
 
+#### Tag management
+
+```bash
+python -m src.main cli list-tags                                                          # List tags (hierarchical)
+python -m src.main cli new-tag "Foobar"                                      # Add root-level tag
+python -m src.main cli new-tag "Foobar" --parent <tag-uuid>       # Add a tag with a parent
+python -m src.main cli tag-notes --tags <tag-uuid> <tag-uuid> --notes <note-uuid> <note-uuid>    # Attach tags to notes
+```
+
+#### Import files
+
 Import directory of audio files as new notes:
 ```
 python -m src.main cli import-audiofiles /path/to/files/
+```
+
+#### Database maintenance
+
+- Normalizes timestamps from ISO 8601 format (2025-12-29T23:22:13.462391) to SQLite format (2025-12-29 23:22:13)
+- Uses PRAGMA user_version to track migration status (only runs once)
+- Is extensible - future normalizations (like unicode normalization) can be added to the normalize_database() method
+
+```
+python -m src.main cli maintenance database-normalize
 ```
 
 #### Output formatting
@@ -358,7 +375,10 @@ python -m src.main cli sync add-peer <peer-device-id> "PeerName" http://<peer-ip
 # Trigger sync
 python -m src.main cli sync now                                              # Sync with all configured peers
 python -m src.main cli sync now --peer <peer-device-id> # Sync with a specific peer only
+```
 
+Resolve edit conflicts from multiple devices:
+```bash
 # Check for conflicts
 python -m src.main cli sync conflicts
 
@@ -382,26 +402,26 @@ python -m src.main cli sync remove-peer <peer-device-id>
 
 Open the sync server port (default 8384) in your firewall.
 
-**UFW (Ubuntu/Debian):**
+UFW (Ubuntu/Debian):
 ```bash
 sudo ufw allow 8384/tcp comment "Voice Sync"
 sudo ufw reload
-sudo ufw status
+    sudo ufw status
 ```
 
-**firewalld (RHEL/CentOS/Fedora):**
+firewalld (RHEL/CentOS/Fedora):
 ```bash
 sudo firewall-cmd --permanent --add-port=8384/tcp
 sudo firewall-cmd --reload
 sudo firewall-cmd --list-ports
 ```
 
-**iptables:**
+iptables:
 ```bash
 sudo iptables -A INPUT -p tcp --dport 8384 -j ACCEPT
 sudo iptables-save | sudo tee /etc/iptables/rules.v4
 ```
-
+    
 ### Reverse Proxy with SSL (Recommended)
 
 For production deployments, use a reverse proxy with SSL termination. The sync protocol transmits data in plain text, so HTTPS is strongly recommended.

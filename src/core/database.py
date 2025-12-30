@@ -626,3 +626,16 @@ class Database:
             association_id, note_id, attachment_id, attachment_type,
             created_at, modified_at, deleted_at
         )
+
+    # ============================================================================
+    # Maintenance methods
+    # ============================================================================
+
+    def normalize_database(self) -> None:
+        """Normalize database data for consistency.
+
+        This includes:
+        - Timestamp normalization (ISO 8601 to SQLite format)
+        - Future: Unicode normalization
+        """
+        self._rust_db.normalize_database()
