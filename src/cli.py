@@ -31,48 +31,6 @@ from voicecore import SyncClient, sync_all_peers, start_sync_server
 from src.core.validation import ValidationError
 
 
-def resolve_uuid_prefix(
-    db: Database,
-    prefix: str,
-    entity_type: str,
-) -> str:
-    """Resolve a UUID prefix to a full UUID.
-
-    Similar to how Git resolves short commit hashes.
-
-    Args:
-        db: Database instance
-        prefix: UUID prefix (e.g., "57c28")
-        entity_type: "note" or "tag" for error messages and lookups
-
-    Returns:
-        Full UUID hex string
-
-    Raises:
-        ValueError: If prefix matches 0 or >1 UUIDs
-    """
-    prefix_lower = prefix.lower()
-
-    if entity_type == "note":
-        all_items = db.get_all_notes()
-    elif entity_type == "tag":
-        all_items = db.get_all_tags()
-    else:
-        raise ValueError(f"Unknown entity type: {entity_type}")
-
-    matches = [item for item in all_items if item["id"].lower().startswith(prefix_lower)]
-
-    if len(matches) == 0:
-        raise ValueError(f"No {entity_type} found matching prefix '{prefix}'")
-    elif len(matches) > 1:
-        match_ids = ", ".join(m["id"][:12] + "..." for m in matches[:5])
-        if len(matches) > 5:
-            match_ids += f" (and {len(matches) - 5} more)"
-        raise ValueError(f"Ambiguous {entity_type} prefix '{prefix}' matches: {match_ids}")
-
-    return matches[0]["id"]
-
-
 def format_tag_hierarchy(tags: List[Dict[str, Any]], indent: int = 0) -> str:
     """Format tags as indented hierarchy.
 
@@ -188,10 +146,17 @@ def cmd_show_note(db: Database, args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, 1 for not found)
     """
-    note = db.get_note(args.note_id)
+    note_id = args.note_id
+
+    # VoiceCore handles UUID prefix resolution internally
+    try:
+        note = db.get_note(note_id)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     if not note:
-        print(f"Error: Note with ID {args.note_id} not found.", file=sys.stderr)
+        print(f"Error: Note with ID {note_id} not found.", file=sys.stderr)
         return 1
 
     print(format_note(note, args.format))
@@ -959,24 +924,21 @@ def cmd_new_tag(db: Database, args: argparse.Namespace) -> int:
     parent_prefix = getattr(args, 'parent', None)
 
     try:
-        parent_id = None
-        if parent_prefix:
-            parent_id = resolve_uuid_prefix(db, parent_prefix, "tag")
-
-        tag_id = db.create_tag(name, parent_id)
+        # VoiceCore handles UUID prefix resolution internally
+        tag_id = db.create_tag(name, parent_prefix)
 
         if args.format == "json":
             result = {"id": tag_id, "name": name}
-            if parent_id:
-                result["parent_id"] = parent_id
+            if parent_prefix:
+                result["parent_id"] = parent_prefix
             print(json.dumps(result))
         else:
-            if parent_id:
-                parent_tag = db.get_tag(parent_id)
-                parent_name = parent_tag["name"] if parent_tag else parent_id[:8]
-                print(f"Created tag '{name}' (ID: {tag_id[:8]}...) under '{parent_name}'")
+            if parent_prefix:
+                parent_tag = db.get_tag(parent_prefix)
+                parent_name = parent_tag["name"] if parent_tag else parent_prefix
+                print(f"Created tag '{name}' (ID: {tag_id}) under '{parent_name}'")
             else:
-                print(f"Created tag '{name}' (ID: {tag_id[:8]}...)")
+                print(f"Created tag '{name}' (ID: {tag_id})")
         return 0
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1008,33 +970,22 @@ def cmd_tag_notes(db: Database, args: argparse.Namespace) -> int:
         return 1
 
     try:
-        # Resolve all tag prefixes
-        tag_ids = []
-        for prefix in tag_prefixes:
-            tag_id = resolve_uuid_prefix(db, prefix, "tag")
-            tag_ids.append(tag_id)
-
-        # Resolve all note prefixes
-        note_ids = []
-        for prefix in note_prefixes:
-            note_id = resolve_uuid_prefix(db, prefix, "note")
-            note_ids.append(note_id)
-
+        # VoiceCore handles UUID prefix resolution internally
         # Attach each tag to each note
         attached = 0
-        for note_id in note_ids:
-            for tag_id in tag_ids:
-                if db.add_tag_to_note(note_id, tag_id):
+        for note_prefix in note_prefixes:
+            for tag_prefix in tag_prefixes:
+                if db.add_tag_to_note(note_prefix, tag_prefix):
                     attached += 1
 
         if args.format == "json":
             print(json.dumps({
                 "attached": attached,
-                "tags": len(tag_ids),
-                "notes": len(note_ids),
+                "tags": len(tag_prefixes),
+                "notes": len(note_prefixes),
             }))
         else:
-            print(f"Attached {len(tag_ids)} tag(s) to {len(note_ids)} note(s) ({attached} new associations)")
+            print(f"Attached {len(tag_prefixes)} tag(s) to {len(note_prefixes)} note(s) ({attached} new associations)")
         return 0
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
