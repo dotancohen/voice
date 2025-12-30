@@ -122,17 +122,17 @@ def cmd_list_notes(db: Database, args: argparse.Namespace) -> int:
             print("No notes found.")
             return 0
 
-        for i, note in enumerate(notes):
-            if i > 0:
-                print("\n" + "=" * 60 + "\n")
-            # Show truncated version in list
+        for note in notes:
+            # Get first non-blank line of content, up to 100 chars
             content = note["content"]
-            if len(content) > 100:
-                content = content[:100] + "..."
-            print(f"ID: {note['id']} | Created: {note['created_at']}")
-            if note.get("tag_names"):
-                print(f"Tags: {note['tag_names']}")
-            print(content)
+            # Remove blank lines and get first line
+            lines = [line.strip() for line in content.split('\n') if line.strip()]
+            first_line = lines[0] if lines else ""
+            if len(first_line) > 100:
+                first_line = first_line[:100] + "..."
+
+            # Format: ID | Created | Content
+            print(f"{note['id']} | {note['created_at']} | {first_line}")
 
     return 0
 
