@@ -8,6 +8,7 @@
 - Note-taking application with hierarchical tags.
 - Sync notes between instances - fully decentralized self-hosted service.
 - GUI, TUI, CLI, and Web API interfaces.
+- Voice note transcription using local Whisper AI models.
 
 ### GUI
 
@@ -32,12 +33,10 @@
 
 ## Roadmap
 
-- Features for working with voice notes specifically - the original inspiration for this project.
 - Add UI for Tag management (create, rename, delete).
 - Add UI for sync conflict management.
 - Web UI that uses Web API.
 - Multiple user accounts per server.
-- Text-To-Speech transcription of voice notes, using either local Whisper AI or Google Cloud Speech.
 - Automatic content summary of voice notes, using AI installed locally.
 - Detect file timestamps from filesystem metadata or filenames, import as new notes.
 
@@ -48,6 +47,7 @@
 - maturin (for building Python bindings)
 - PySide6 + pyqtdarktheme (for GUI mode)
 - Flask + Flask-CORS (for Web API mode)
+- Whisper GGML model files (for transcription) - see [Transcription](#transcription) section
 
 ## Architecture
 
@@ -187,6 +187,108 @@ python -m src.main cli tag-notes --tags <tag-uuid> <tag-uuid> --notes <note-uuid
 Import directory of audio files as new notes:
 ```
 python -m src.main cli import-audiofiles /path/to/files/
+```
+
+#### Transcription
+
+Transcribe audio files attached to notes using local Whisper AI:
+
+```bash
+# Transcribe all audio files for a specific note
+python -m src.main cli transcribe-note <note-uuid>
+
+# Transcribe a specific audio file
+python -m src.main cli transcribe-audiofile <audiofile-uuid>
+
+# Specify model (name or full path)
+python -m src.main cli transcribe-note <note-uuid> --model small
+python -m src.main cli transcribe-note <note-uuid> --model large-v3
+python -m src.main cli transcribe-audiofile <audiofile-uuid> --model /path/to/ggml-model.bin
+
+# Specify language hint (see "Language hints" below)
+python -m src.main cli transcribe-note <note-uuid> --language he
+python -m src.main cli transcribe-audiofile <audiofile-uuid> --language en
+
+# Specify expected number of speakers
+python -m src.main cli transcribe-note <note-uuid> --speaker-count 2
+```
+
+**Language hints:**
+
+Providing a language hint improves transcription accuracy, especially for non-English audio. Languages are specified using [ISO 639-1 two-letter codes](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes).
+
+Common language codes:
+| Code | Language |
+|------|----------|
+| `en` | English |
+| `he` | Hebrew |
+| `ar` | Arabic |
+| `es` | Spanish |
+| `fr` | French |
+| `de` | German |
+| `zh` | Chinese |
+| `ja` | Japanese |
+| `ru` | Russian |
+
+You can set default preferred languages in `config.json`:
+```json
+{
+  "transcription": {
+    "preferred_languages": ["he", "en", "ar"]
+  }
+}
+```
+
+When transcribing, the language is determined by (in order of priority):
+1. The `--language` CLI argument
+2. The first language in `transcription.preferred_languages` config
+3. Auto-detection by Whisper (if no hint provided)
+
+**Model selection:**
+- The `--model` flag accepts either a model name (e.g., `small`, `large-v3`) or a full path to a GGML model file
+- Model names are resolved from `~/.local/share/whisper/ggml-<name>.bin`
+- If no model is specified, the largest available model is automatically selected
+- When multiple versions of the same size exist (e.g., `large-v2`, `large-v3`), the highest version is preferred
+
+**Available model sizes** (in order of quality/size):
+- `tiny` - Fastest, lowest quality (~75 MB)
+- `base` - Fast, basic quality (~142 MB)
+- `small` - Good balance of speed/quality (~487 MB)
+- `medium` - High quality (~1.5 GB)
+- `large`, `large-v2`, `large-v3` - Highest quality (~3 GB)
+
+**Downloading models:**
+
+GGML Whisper models can be downloaded from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main):
+```bash
+mkdir -p ~/.local/share/whisper
+cd ~/.local/share/whisper
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
+```
+
+**Transcription providers:**
+
+The following transcription providers are supported. Configure them in `config.json` under `transcription.providers`:
+
+| Provider | Description | Configuration |
+|----------|-------------|---------------|
+| `whisper` | Local Whisper AI (default) | `model_path`: Path to GGML model file |
+| `google` | Google Cloud Speech-to-Text | `credentials_path`, `project_id`, `speech_model`, `speech_location`, `sample_rate`, `batch_timeout` |
+| `assemblyai` | AssemblyAI API | `api_key` |
+| `huggingface` | HuggingFace (for diarization) | `token` |
+
+Example provider configuration:
+```json
+{
+  "transcription": {
+    "preferred_languages": ["en", "he"],
+    "providers": {
+      "whisper": {
+        "model_path": "/home/user/.local/share/whisper/ggml-large-v3.bin"
+      }
+    }
+  }
+}
 ```
 
 #### Database maintenance
@@ -565,6 +667,14 @@ black src/
       "tui_border_focused": "green",
       "tui_border_unfocused": "blue"
     }
+  },
+  "transcription": {
+    "preferred_languages": ["en"],
+    "providers": {
+      "whisper": {
+        "model_path": "/home/user/.local/share/whisper/ggml-large-v3.bin"
+      }
+    }
   }
 }
 ```
@@ -590,6 +700,8 @@ black src/
 | sync.peers.peer_name                                                 | string |           | Human readable name of the server. |
 | sync.peers.peer_url                                                 | string |           | URL of the server. |
 | sync.peers.peer_certificate_fingerprint         | string/null | null      | Stored after Trust On First Use TLS certificate verification  |
+| transcription.preferred_languages               | array       | []        | List of [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) language codes for transcription hints (e.g., ["en", "he"]) |
+| transcription.providers.whisper.model_path      | string/null | null      | Path to GGML Whisper model file. If not set, auto-selects from ~/.local/share/whisper/ |
 
 ### Sync configuration
 
@@ -628,10 +740,14 @@ Theme-specific colors take precedence:
       }
     ]
   },
-  "server_certificate_fingerprint": null
-
-
-
+  "transcription": {
+    "preferred_languages": ["en", "he"],
+    "providers": {
+      "whisper": {
+        "model_path": "/home/user/.local/share/whisper/ggml-large-v3.bin"
+      }
+    }
+  }
 }
 ```
 

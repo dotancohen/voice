@@ -165,6 +165,29 @@ class Config:
         """
         self._rust_config.set_audiofile_directory(path)
 
+    # ===== Transcription Configuration =====
+    #
+    # Transcription config is stored as generic JSON in voicecore.
+    # Voicecore doesn't interpret the structure - that's the responsibility
+    # of the transcription module.
+
+    def get_transcription_config(self) -> Dict[str, Any]:
+        """Get the full transcription configuration.
+
+        Returns:
+            Dict containing transcription settings (structure defined by
+            transcription module, not voicecore).
+        """
+        return self._rust_config.get_transcription_config()
+
+    def set_transcription_config(self, config: Dict[str, Any]) -> None:
+        """Set the full transcription configuration.
+
+        Args:
+            config: Dict containing transcription settings
+        """
+        self._rust_config.set_transcription_config(config)
+
     # ===== Backward Compatibility =====
 
     @property

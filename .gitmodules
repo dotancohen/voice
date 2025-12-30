@@ -1,3 +1,6 @@
 [submodule "submodules/voicecore"]
 	path = submodules/voicecore
 	url = https://github.com/dotancohen/voicecore.git
+[submodule "submodules/voicetranscription"]
+	path = submodules/voicetranscription
+	url = /home/dotancohen/Projects/VoiceTranscription

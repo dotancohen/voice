@@ -639,3 +639,69 @@ class Database:
         - Future: Unicode normalization
         """
         self._rust_db.normalize_database()
+
+    # ============================================================================
+    # Transcription methods
+    # ============================================================================
+
+    def create_transcription(
+        self,
+        audio_file_id: str,
+        content: str,
+        service: str,
+        content_segments: Optional[str] = None,
+        service_arguments: Optional[str] = None,
+        service_response: Optional[str] = None,
+    ) -> str:
+        """Create a new transcription record.
+
+        Args:
+            audio_file_id: Audio file UUID hex string
+            content: Full transcribed text
+            service: Transcription service used (e.g., "whisper", "google")
+            content_segments: Optional JSON string with segment-level data
+            service_arguments: Optional JSON string with service arguments
+            service_response: Optional JSON string with service response metadata
+
+        Returns:
+            Transcription ID (hex string)
+        """
+        return self._rust_db.create_transcription(
+            audio_file_id, content, service,
+            content_segments, service_arguments, service_response
+        )
+
+    def get_transcription(self, transcription_id: str) -> Optional[Dict[str, Any]]:
+        """Get a transcription by ID.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+
+        Returns:
+            Transcription dict or None if not found
+        """
+        return self._rust_db.get_transcription(transcription_id)
+
+    def get_transcriptions_for_audio_file(
+        self, audio_file_id: str
+    ) -> List[Dict[str, Any]]:
+        """Get all transcriptions for an audio file.
+
+        Args:
+            audio_file_id: Audio file UUID hex string
+
+        Returns:
+            List of transcription dicts
+        """
+        return self._rust_db.get_transcriptions_for_audio_file(audio_file_id)
+
+    def delete_transcription(self, transcription_id: str) -> bool:
+        """Soft delete a transcription.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return self._rust_db.delete_transcription(transcription_id)

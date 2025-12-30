@@ -89,6 +89,22 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     Ok(dict)
 }
 
+fn transcription_row_to_dict<'py>(py: Python<'py>, transcription: &database::TranscriptionRow) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("id", &transcription.id)?;
+    dict.set_item("audio_file_id", &transcription.audio_file_id)?;
+    dict.set_item("content", &transcription.content)?;
+    dict.set_item("content_segments", &transcription.content_segments)?;
+    dict.set_item("service", &transcription.service)?;
+    dict.set_item("service_arguments", &transcription.service_arguments)?;
+    dict.set_item("service_response", &transcription.service_response)?;
+    dict.set_item("device_id", &transcription.device_id)?;
+    dict.set_item("created_at", &transcription.created_at)?;
+    dict.set_item("modified_at", &transcription.modified_at)?;
+    dict.set_item("deleted_at", &transcription.deleted_at)?;
+    Ok(dict)
+}
+
 fn hashmap_to_pydict<'py>(
     py: Python<'py>,
     map: &HashMap<String, serde_json::Value>,
@@ -869,6 +885,59 @@ impl PyDatabase {
     }
 
     // ========================================================================
+    // Transcription methods
+    // ========================================================================
+
+    #[pyo3(signature = (audio_file_id, content, service, content_segments=None, service_arguments=None, service_response=None))]
+    fn create_transcription(
+        &self,
+        audio_file_id: &str,
+        content: &str,
+        service: &str,
+        content_segments: Option<&str>,
+        service_arguments: Option<&str>,
+        service_response: Option<&str>,
+    ) -> PyResult<String> {
+        self.inner_ref()?
+            .create_transcription(
+                audio_file_id,
+                content,
+                content_segments,
+                service,
+                service_arguments,
+                service_response,
+            )
+            .map_err(voice_error_to_pyerr)
+    }
+
+    fn get_transcription<'py>(&self, py: Python<'py>, transcription_id: &str) -> PyResult<Option<PyObject>> {
+        let transcription = self.inner_ref()?
+            .get_transcription(transcription_id)
+            .map_err(voice_error_to_pyerr)?;
+        match transcription {
+            Some(t) => Ok(Some(transcription_row_to_dict(py, &t)?.into_any().unbind())),
+            None => Ok(None),
+        }
+    }
+
+    fn get_transcriptions_for_audio_file<'py>(&self, py: Python<'py>, audio_file_id: &str) -> PyResult<PyObject> {
+        let transcriptions = self.inner_ref()?
+            .get_transcriptions_for_audio_file(audio_file_id)
+            .map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for transcription in &transcriptions {
+            list.append(transcription_row_to_dict(py, transcription)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn delete_transcription(&self, transcription_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .delete_transcription(transcription_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    // ========================================================================
     // Maintenance methods
     // ========================================================================
 
@@ -1080,6 +1149,26 @@ impl PyConfig {
         }
         dict.set_item("peers", peers_list)?;
         Ok(dict.into_any().unbind())
+    }
+
+    // ========================================================================
+    // Transcription config methods (generic JSON access)
+    // ========================================================================
+
+    /// Get transcription configuration as a Python dict.
+    /// Voicecore stores this data but doesn't interpret it - the transcription
+    /// module is responsible for understanding the structure.
+    fn get_transcription_config<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let cfg = self.inner.lock().unwrap();
+        let json_value = cfg.transcription_json();
+        json_value_to_pyobject(py, json_value)
+    }
+
+    /// Set transcription configuration from a Python dict.
+    fn set_transcription_config(&self, py: Python<'_>, value: PyObject) -> PyResult<()> {
+        let json_value = pyobject_to_json_value(py, &value)?;
+        let mut cfg = self.inner.lock().unwrap();
+        cfg.set_transcription_json(json_value).map_err(voice_error_to_pyerr)
     }
 }
 
@@ -1488,6 +1577,11 @@ fn pydict_to_json_value(py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> P
     }
     // Fallback: try to convert to string
     Ok(serde_json::Value::String(obj.str()?.to_string()))
+}
+
+/// Convert a PyObject to serde_json::Value
+fn pyobject_to_json_value(py: Python<'_>, obj: &PyObject) -> PyResult<serde_json::Value> {
+    pydict_to_json_value(py, obj.bind(py))
 }
 
 // ============================================================================

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -500,6 +501,321 @@ def cmd_show_audiofile(db: Database, config: Config, args: argparse.Namespace) -
                 print("File path: (file not found on disk)")
 
     return 0
+
+
+def _transcribe_audio_file(
+    db: Database,
+    config: Config,
+    audio_file_id: str,
+    language: Optional[str] = None,
+    speaker_count: Optional[int] = None,
+    model: Optional[str] = None,
+    service: str = "whisper",
+) -> Optional[Dict[str, Any]]:
+    """Transcribe a single audio file.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        audio_file_id: Audio file ID to transcribe
+        language: Language hint (ISO 639-1 code)
+        speaker_count: Expected number of speakers
+        model: Model name (e.g., "small", "large-v3") or full path to model file
+        service: Transcription service to use
+
+    Returns:
+        Transcription result dict or None on failure
+    """
+    try:
+        from voice_transcription import TranscriptionClient, TranscriptionConfig
+    except ImportError:
+        print("Error: voice_transcription module not installed.", file=sys.stderr)
+        print("Build it with: cd submodules/voicetranscription/bindings/python && maturin develop", file=sys.stderr)
+        return None
+
+    # Get audio file from database
+    audio_file = db.get_audio_file(audio_file_id)
+    if not audio_file:
+        print(f"Audio file not found: {audio_file_id}", file=sys.stderr)
+        return None
+
+    # Get audio file path
+    audiofile_dir = config.get_audiofile_directory()
+    if not audiofile_dir:
+        print("Error: audiofile_directory not configured.", file=sys.stderr)
+        return None
+
+    manager = AudioFileManager(audiofile_dir)
+    ext = manager.get_extension_from_filename(audio_file['filename'])
+    if not ext:
+        print(f"Error: Cannot determine extension for {audio_file['filename']}", file=sys.stderr)
+        return None
+
+    file_path = manager.get_file_path(audio_file_id, ext)
+    if not file_path:
+        print(f"Error: Audio file not found on disk: {audio_file_id}", file=sys.stderr)
+        return None
+
+    # Get transcription config
+    transcription_cfg = config.get_transcription_config()
+
+    # Determine language
+    if not language:
+        preferred_langs = transcription_cfg.get("preferred_languages", [])
+        if preferred_langs:
+            language = preferred_langs[0]
+
+    # Determine model path
+    # Priority: 1) --model argument, 2) config, 3) auto-select
+    model_path = None
+    if model:
+        # Check if it's a path or a model name
+        if '/' in model or model.endswith('.bin'):
+            model_path = model
+        else:
+            # It's a model name like "small" or "large-v3"
+            # Look for it in the whisper directory
+            from pathlib import Path
+            whisper_dir = Path.home() / ".local" / "share" / "whisper"
+            # Try with and without ggml- prefix
+            candidates = [
+                whisper_dir / f"ggml-{model}.bin",
+                whisper_dir / f"{model}.bin",
+            ]
+            for candidate in candidates:
+                if candidate.exists():
+                    model_path = str(candidate)
+                    break
+            if not model_path:
+                print(f"Error: Model '{model}' not found in {whisper_dir}", file=sys.stderr)
+                print(f"Available models: {[f.name for f in whisper_dir.glob('ggml-*.bin')]}", file=sys.stderr)
+                return None
+
+    if not model_path:
+        # Try config
+        whisper_cfg = transcription_cfg.get("providers", {}).get("whisper", {})
+        model_path = whisper_cfg.get("model_path")
+
+    if not model_path:
+        # Try to find a model in the default location
+        from pathlib import Path
+        import re
+        whisper_dir = Path.home() / ".local" / "share" / "whisper"
+        if whisper_dir.exists():
+            # Model size priority (larger = better for multilingual)
+            SIZE_PRIORITY = {
+                'large': 5,
+                'medium': 4,
+                'small': 3,
+                'base': 2,
+                'tiny': 1,
+            }
+
+            def parse_model_name(path: Path) -> tuple:
+                """Parse model name into (size_priority, version) for sorting.
+
+                Examples:
+                    ggml-large-v3.bin -> (5, 3)
+                    ggml-large.bin -> (5, 0)
+                    ggml-small.bin -> (3, 0)
+                """
+                name = path.stem.replace('ggml-', '')
+                # Extract version if present (e.g., "large-v3" -> "large", 3)
+                version_match = re.search(r'-v(\d+)$', name)
+                if version_match:
+                    version = int(version_match.group(1))
+                    size = name[:version_match.start()]
+                else:
+                    version = 0
+                    size = name
+                size_priority = SIZE_PRIORITY.get(size, 0)
+                return (size_priority, version)
+
+            models = sorted(whisper_dir.glob("ggml-*.bin"), key=parse_model_name, reverse=True)
+            if models:
+                model_path = str(models[0])
+            else:
+                print("Error: No Whisper model found. Download one with:", file=sys.stderr)
+                print("  wget -P ~/.local/share/whisper/ https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin", file=sys.stderr)
+                return None
+        else:
+            print("Error: No Whisper model configured and no models found.", file=sys.stderr)
+            return None
+
+    # Expand ~ in model path
+    model_path = str(Path(model_path).expanduser())
+
+    # Create transcription client
+    try:
+        client = TranscriptionClient.with_local_whisper(model_path)
+    except Exception as e:
+        print(f"Error creating transcription client: {e}", file=sys.stderr)
+        return None
+
+    # Create transcription config
+    transcribe_config = TranscriptionConfig(
+        language=language,
+        speaker_count=speaker_count or 1,
+        word_timestamps=False,
+    )
+
+    # Transcribe
+    start_time = time.time()
+    try:
+        result = client.transcribe(str(file_path), transcribe_config)
+    except Exception as e:
+        print(f"Error transcribing {audio_file['filename']}: {e}", file=sys.stderr)
+        return None
+    elapsed_time = time.time() - start_time
+
+    # Build service arguments JSON
+    service_arguments = json.dumps({
+        "language": language,
+        "speaker_count": speaker_count or 1,
+        "model_path": model_path,
+    })
+
+    # Build service response JSON
+    service_response = json.dumps({
+        "elapsed_time": round(elapsed_time, 3),
+        "duration_seconds": result.duration_seconds,
+        "confidence": result.confidence,
+        "languages": result.languages,
+        "speaker_count": result.speaker_count,
+    })
+
+    # Build content segments JSON
+    content_segments = json.dumps([
+        {
+            "text": seg.text,
+            "start_seconds": seg.start_seconds,
+            "end_seconds": seg.end_seconds,
+            "speaker": seg.speaker,
+            "confidence": seg.confidence,
+        }
+        for seg in result.segments
+    ])
+
+    # Save to database
+    transcription_id = db.create_transcription(
+        audio_file_id=audio_file_id,
+        content=result.content,
+        service=service,
+        content_segments=content_segments,
+        service_arguments=service_arguments,
+        service_response=service_response,
+    )
+
+    return {
+        "transcription_id": transcription_id,
+        "audio_file_id": audio_file_id,
+        "content": result.content,
+        "duration_seconds": result.duration_seconds,
+        "languages": result.languages,
+    }
+
+
+def cmd_transcribe_audiofile(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Transcribe a single audio file.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    audio_file_id = args.audio_id
+    language = getattr(args, 'language', None)
+    speaker_count = getattr(args, 'speaker_count', None)
+    model = getattr(args, 'model', None)
+
+    result = _transcribe_audio_file(
+        db, config, audio_file_id,
+        language=language,
+        speaker_count=speaker_count,
+        model=model,
+    )
+
+    if not result:
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Transcription ID: {result['transcription_id']}")
+        print(f"Audio File: {audio_file_id[:8]}...")
+        if result.get('duration_seconds'):
+            print(f"Duration: {result['duration_seconds']:.1f}s")
+        if result.get('languages'):
+            print(f"Languages: {', '.join(result['languages'])}")
+        print(f"\n{result['content']}")
+
+    return 0
+
+
+def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Transcribe all audio files for a note.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    note_id = args.note_id
+    language = getattr(args, 'language', None)
+    speaker_count = getattr(args, 'speaker_count', None)
+    model = getattr(args, 'model', None)
+
+    # Get note to verify it exists
+    note = db.get_note(note_id)
+    if not note:
+        print(f"Note not found: {note_id}", file=sys.stderr)
+        return 1
+
+    # Get audio files for note
+    audio_files = db.get_audio_files_for_note(note_id)
+    if not audio_files:
+        print(f"No audio files attached to note {note_id}")
+        return 0
+
+    results = []
+    errors = 0
+
+    for audio_file in audio_files:
+        print(f"Transcribing: {audio_file['filename']}...")
+        result = _transcribe_audio_file(
+            db, config, audio_file['id'],
+            language=language,
+            speaker_count=speaker_count,
+            model=model,
+        )
+
+        if result:
+            results.append(result)
+        else:
+            errors += 1
+
+    if args.format == "json":
+        print(json.dumps({
+            "note_id": note_id,
+            "transcriptions": results,
+            "errors": errors,
+        }, indent=2))
+    else:
+        print(f"\nTranscribed {len(results)} of {len(audio_files)} audio file(s)")
+        if errors > 0:
+            print(f"Errors: {errors}")
+
+        for result in results:
+            print(f"\n--- {result['audio_file_id'][:8]}... ---")
+            print(result['content'])
+
+    return 0 if errors == 0 else 1
 
 
 def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> int:
@@ -1159,6 +1475,60 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Audio file ID to show"
     )
 
+    # transcribe-audiofile command
+    transcribe_audio_parser = cli_subparsers.add_parser(
+        "transcribe-audiofile",
+        help="Transcribe a single audio file"
+    )
+    transcribe_audio_parser.add_argument(
+        "audio_id",
+        type=str,
+        help="Audio file ID to transcribe"
+    )
+    transcribe_audio_parser.add_argument(
+        "--language",
+        type=str,
+        help="Language hint (ISO 639-1 code, e.g., 'en', 'he')"
+    )
+    transcribe_audio_parser.add_argument(
+        "--speaker-count",
+        dest="speaker_count",
+        type=int,
+        help="Expected number of speakers (for diarization)"
+    )
+    transcribe_audio_parser.add_argument(
+        "--model",
+        type=str,
+        help="Model name (e.g., 'small', 'large-v3') or path to model file"
+    )
+
+    # transcribe-note command
+    transcribe_note_parser = cli_subparsers.add_parser(
+        "transcribe-note",
+        help="Transcribe all audio files attached to a note"
+    )
+    transcribe_note_parser.add_argument(
+        "note_id",
+        type=str,
+        help="Note ID to transcribe audio files for"
+    )
+    transcribe_note_parser.add_argument(
+        "--language",
+        type=str,
+        help="Language hint (ISO 639-1 code, e.g., 'en', 'he')"
+    )
+    transcribe_note_parser.add_argument(
+        "--speaker-count",
+        dest="speaker_count",
+        type=int,
+        help="Expected number of speakers (for diarization)"
+    )
+    transcribe_note_parser.add_argument(
+        "--model",
+        type=str,
+        help="Model name (e.g., 'small', 'large-v3') or path to model file"
+    )
+
     # sync command with subcommands
     sync_parser = cli_subparsers.add_parser(
         "sync",
@@ -1290,6 +1660,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_list_audiofiles(db, config, args)
         elif args.cli_command == "show-audiofile":
             return cmd_show_audiofile(db, config, args)
+        elif args.cli_command == "transcribe-audiofile":
+            return cmd_transcribe_audiofile(db, config, args)
+        elif args.cli_command == "transcribe-note":
+            return cmd_transcribe_note(db, config, args)
         elif args.cli_command == "sync":
             # Handle sync subcommands
             sync_cmd = getattr(args, 'sync_command', None)
