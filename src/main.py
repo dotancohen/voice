@@ -24,12 +24,28 @@ import sys
 from pathlib import Path
 from typing import NoReturn, Optional
 
-# Configure logging
+# Configure console logging (file logging added later when config dir is known)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def setup_file_logging(config_dir: Path) -> None:
+    """Add file handler to root logger.
+
+    Args:
+        config_dir: Configuration directory where voice.log will be created
+    """
+    log_file = config_dir / "voice.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+    logging.getLogger().addHandler(file_handler)
+    logger.info(f"File logging enabled: {log_file}")
 
 
 def add_gui_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -237,6 +253,11 @@ def main() -> NoReturn:
     """
     parser = create_parser()
     args = parser.parse_args()
+
+    # Set up file logging early (for all interfaces)
+    from src.core.config import Config
+    config = Config(config_dir=args.config_dir)
+    setup_file_logging(config.get_config_dir())
 
     # If no interface specified, use default from config
     if not args.interface:

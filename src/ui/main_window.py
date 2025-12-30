@@ -7,17 +7,24 @@ Tags (left), Notes List (center), and Note Detail (right).
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QSplitter,
+    QVBoxLayout,
     QWidget,
 )
 
+from src import __version__
 from src.core.config import Config
 from src.core.database import Database
 from src.ui.note_pane import NotePane
@@ -68,6 +75,9 @@ class MainWindow(QMainWindow):
         self.config = config
         self.db = db
         self.theme = theme
+
+        # User-facing message log: list of (timestamp, level, title, message)
+        self._message_log: List[Tuple[str, str, str, str]] = []
 
         self.setup_ui()
         self.connect_signals()
@@ -143,6 +153,26 @@ class MainWindow(QMainWindow):
         quit_action.setStatusTip("Exit the application")
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
+
+        # Help menu
+        help_menu = menu_bar.addMenu("&Help")
+
+        # Message Log action
+        message_log_action = QAction("&Message Log", self)
+        message_log_action.triggered.connect(self.show_message_log)
+        help_menu.addAction(message_log_action)
+
+        # Application Log action
+        app_log_action = QAction("Application &Log", self)
+        app_log_action.triggered.connect(self.show_application_log)
+        help_menu.addAction(app_log_action)
+
+        help_menu.addSeparator()
+
+        # About action
+        about_action = QAction("&About", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
 
         logger.info("Menu bar created")
 
@@ -232,17 +262,12 @@ class MainWindow(QMainWindow):
     def sync_now(self) -> None:
         """Perform sync with all configured peers."""
         if not SYNC_AVAILABLE:
-            QMessageBox.warning(
-                self,
-                "Sync Unavailable",
-                "Sync functionality is not available.",
-            )
+            self._show_warning("Sync Unavailable", "Sync functionality is not available.")
             return
 
         peers = self.config.get_peers()
         if not peers:
-            QMessageBox.information(
-                self,
+            self._show_info(
                 "No Peers",
                 "No sync peers are configured.\n\n"
                 "Use the CLI to add peers:\n"
@@ -255,11 +280,7 @@ class MainWindow(QMainWindow):
             results: Dict[str, object] = sync_all_peers(config_dir)
 
             if not results:
-                QMessageBox.information(
-                    self,
-                    "Sync Complete",
-                    "No peers to sync with.",
-                )
+                self._show_info("Sync Complete", "No peers to sync with.")
                 return
 
             # Build result summary
@@ -286,25 +307,149 @@ class MainWindow(QMainWindow):
             self._check_unsynced_changes()
 
             # Show result
+            summary = "\n".join(summary_lines)
             if all_success:
-                QMessageBox.information(
-                    self,
-                    "Sync Complete",
-                    "\n".join(summary_lines),
-                )
+                self._show_info("Sync Complete", summary)
             else:
-                QMessageBox.warning(
-                    self,
-                    "Sync Completed with Errors",
-                    "\n".join(summary_lines),
-                )
+                self._show_warning("Sync Completed with Errors", summary)
 
             logger.info(f"Sync completed: {summary_lines}")
 
         except Exception as e:
             logger.error(f"Sync failed: {e}")
-            QMessageBox.critical(
-                self,
-                "Sync Failed",
-                f"An error occurred during sync:\n\n{e}",
-            )
+            self._show_error("Sync Failed", f"An error occurred during sync:\n\n{e}")
+
+    # ===== User-facing message methods =====
+
+    def _log_message(self, level: str, title: str, message: str) -> None:
+        """Add a message to the user-facing log.
+
+        Args:
+            level: Message level (info, warning, error)
+            title: Message title
+            message: Message content
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._message_log.append((timestamp, level, title, message))
+        # Keep only last 100 messages
+        if len(self._message_log) > 100:
+            self._message_log = self._message_log[-100:]
+
+    def _show_info(self, title: str, message: str) -> None:
+        """Show an information message and log it.
+
+        Args:
+            title: Message title
+            message: Message content
+        """
+        self._log_message("info", title, message)
+        QMessageBox.information(self, title, message)
+
+    def _show_warning(self, title: str, message: str) -> None:
+        """Show a warning message and log it.
+
+        Args:
+            title: Message title
+            message: Message content
+        """
+        self._log_message("warning", title, message)
+        QMessageBox.warning(self, title, message)
+
+    def _show_error(self, title: str, message: str) -> None:
+        """Show an error message and log it.
+
+        Args:
+            title: Message title
+            message: Message content
+        """
+        self._log_message("error", title, message)
+        QMessageBox.critical(self, title, message)
+
+    # ===== Help menu handlers =====
+
+    def show_message_log(self) -> None:
+        """Show the user-facing message log dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Message Log")
+        dialog.resize(600, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        if not self._message_log:
+            label = QLabel("No messages yet.")
+            layout.addWidget(label)
+        else:
+            text_edit = QPlainTextEdit()
+            text_edit.setReadOnly(True)
+
+            lines = []
+            for timestamp, level, title, message in self._message_log:
+                level_upper = level.upper()
+                lines.append(f"[{timestamp}] [{level_upper}] {title}")
+                # Indent message lines
+                for line in message.split("\n"):
+                    lines.append(f"    {line}")
+                lines.append("")
+
+            text_edit.setPlainText("\n".join(lines))
+            layout.addWidget(text_edit)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.exec()
+
+    def show_application_log(self) -> None:
+        """Show the application log dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Application Log")
+        dialog.resize(800, 500)
+
+        layout = QVBoxLayout(dialog)
+
+        text_edit = QPlainTextEdit()
+        text_edit.setReadOnly(True)
+
+        # Try to get log file path from config
+        log_file = self.config.get_config_dir() / "voice.log"
+        if log_file.exists():
+            try:
+                # Read last 1000 lines
+                with open(log_file, "r") as f:
+                    lines = f.readlines()
+                    text_edit.setPlainText("".join(lines[-1000:]))
+                    # Scroll to bottom
+                    text_edit.verticalScrollBar().setValue(
+                        text_edit.verticalScrollBar().maximum()
+                    )
+            except Exception as e:
+                text_edit.setPlainText(f"Error reading log file: {e}")
+        else:
+            text_edit.setPlainText(f"Log file not found: {log_file}")
+
+        layout.addWidget(text_edit)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.exec()
+
+    def show_about(self) -> None:
+        """Show the About dialog."""
+        about_text = f"""<h2>Voice</h2>
+<p>Version {__version__}</p>
+
+<p>A note-taking application with audio transcription support
+and peer-to-peer synchronization.</p>
+
+<h3>Credits</h3>
+<p>
+<b>Developer:</b> Dotan Cohen<br>
+<b>Built with:</b> Python, PySide6, Rust, SQLite
+</p>
+
+<p><small>Copyright 2024-2025 Dotan Cohen. All rights reserved.</small></p>
+"""
+        QMessageBox.about(self, "About Voice", about_text)
