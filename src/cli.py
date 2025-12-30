@@ -722,7 +722,9 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
                 print(f"  Pulled: {result.pulled} changes")
                 print(f"  Pushed: {result.pushed} changes")
                 if result.conflicts > 0:
-                    print(f"  Conflicts: {result.conflicts}")
+                    print(f"  Errors: {result.conflicts}")
+                    for error in result.errors:
+                        print(f"    - {error}")
             else:
                 print(f"Sync with {peer_id} failed:")
                 for error in result.errors:
@@ -761,7 +763,9 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
                 if result.success:
                     print(f"  {peer_name}: OK (↓{result.pulled} ↑{result.pushed})")
                     if result.conflicts > 0:
-                        print(f"    Conflicts: {result.conflicts}")
+                        print(f"    Errors: {result.conflicts}")
+                        for error in result.errors:
+                            print(f"      - {error}")
                 else:
                     print(f"  {peer_name}: FAILED")
                     for error in result.errors:
