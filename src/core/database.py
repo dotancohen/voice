@@ -507,6 +507,14 @@ class Database:
         """
         return self._rust_db.get_audio_files_for_note(note_id)
 
+    def get_all_audio_files(self) -> List[Dict[str, Any]]:
+        """Get all audio files in the database.
+
+        Returns:
+            List of audio file dicts
+        """
+        return self._rust_db.get_all_audio_files()
+
     def update_audio_file_summary(self, audio_id: str, summary: str) -> bool:
         """Update an audio file's summary.
 
@@ -705,3 +713,27 @@ class Database:
             True if deleted, False if not found
         """
         return self._rust_db.delete_transcription(transcription_id)
+
+    def update_transcription(
+        self,
+        transcription_id: str,
+        content: str,
+        content_segments: Optional[str] = None,
+        service_response: Optional[str] = None,
+    ) -> bool:
+        """Update a transcription's content and service response.
+
+        Used to update a pending transcription after the transcription completes.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+            content: Full transcribed text
+            content_segments: Optional JSON string with segment-level data
+            service_response: Optional JSON string with service response metadata
+
+        Returns:
+            True if updated, False if not found
+        """
+        return self._rust_db.update_transcription(
+            transcription_id, content, content_segments, service_response
+        )

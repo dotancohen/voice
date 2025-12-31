@@ -27,9 +27,17 @@ from PySide6.QtWidgets import (
 from src import __version__
 from src.core.config import Config
 from src.core.database import Database
+from src.core.transcription_service import TranscriptionService
 from src.ui.note_pane import NotePane
 from src.ui.notes_list_pane import NotesListPane
 from src.ui.tags_pane import TagsPane
+from src.ui.transcription_dialog import TranscriptionDialog
+
+try:
+    from voice_transcription import get_provider_schemas
+    TRANSCRIPTION_AVAILABLE = True
+except ImportError:
+    TRANSCRIPTION_AVAILABLE = False
 
 try:
     from voicecore import sync_all_peers
@@ -78,6 +86,13 @@ class MainWindow(QMainWindow):
 
         # User-facing message log: list of (timestamp, level, title, message)
         self._message_log: List[Tuple[str, str, str, str]] = []
+
+        # Initialize transcription service if available
+        self._transcription_service: Optional[TranscriptionService] = None
+        audiofile_dir = self.config.get("audiofile_directory")
+        if audiofile_dir and TRANSCRIPTION_AVAILABLE:
+            from pathlib import Path
+            self._transcription_service = TranscriptionService(self.db, Path(audiofile_dir))
 
         self.setup_ui()
         self.connect_signals()
@@ -186,6 +201,9 @@ class MainWindow(QMainWindow):
 
         # When a note is saved, refresh the notes list
         self.note_pane.note_saved.connect(self.on_note_saved)
+
+        # When transcription is requested, show dialog
+        self.note_pane.transcribe_requested.connect(self._on_transcribe_requested)
 
         logger.info("Inter-pane signals connected")
 
@@ -453,3 +471,118 @@ and peer-to-peer synchronization.</p>
 <p><small>Copyright 2024-2025 Dotan Cohen. All rights reserved.</small></p>
 """
         QMessageBox.about(self, "About Voice", about_text)
+
+    # ===== Transcription handlers =====
+
+    def _on_transcribe_requested(self, audio_file_id: str) -> None:
+        """Handle transcription request from note pane.
+
+        Args:
+            audio_file_id: Audio file UUID hex string
+        """
+        if not TRANSCRIPTION_AVAILABLE:
+            self._show_warning(
+                "Transcription Unavailable",
+                "VoiceTranscription is not installed.\n\n"
+                "Install it with:\n"
+                "  pip install voice-transcription",
+            )
+            return
+
+        if not self._transcription_service:
+            self._show_warning(
+                "Transcription Unavailable",
+                "Audiofile directory is not configured.\n\n"
+                "Set audiofile_directory in your config.",
+            )
+            return
+
+        # Get audio file info
+        audio_file = self.db.get_audio_file(audio_file_id)
+        if not audio_file:
+            self._show_error("Error", f"Audio file not found: {audio_file_id}")
+            return
+
+        # Get provider schemas
+        schemas = get_provider_schemas()
+        if not schemas:
+            self._show_warning(
+                "No Providers",
+                "No transcription providers are available.",
+            )
+            return
+
+        # Show transcription dialog
+        dialog = TranscriptionDialog(
+            audio_filename=audio_file.get("filename", "Unknown"),
+            provider_schemas=schemas,
+            parent=self,
+        )
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Get selected provider configs
+        configs = dialog.get_provider_configs()
+        if not configs:
+            return
+
+        # Start transcription for each selected provider
+        for provider_config in configs:
+            try:
+                transcription_id = self._transcription_service.transcribe_async(
+                    audio_file_id=audio_file_id,
+                    provider_config=provider_config,
+                    on_complete=self._on_transcription_complete,
+                    on_error=self._on_transcription_error,
+                )
+
+                # Refresh transcriptions display to show pending
+                self.note_pane.refresh_transcriptions(audio_file_id)
+
+                logger.info(
+                    f"Started transcription {transcription_id} for {audio_file_id}"
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to start transcription: {e}")
+                self._show_error("Transcription Error", f"Failed to start transcription:\n\n{e}")
+
+    def _on_transcription_complete(
+        self, transcription_id: str, result: Dict[str, any]
+    ) -> None:
+        """Handle transcription completion.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+            result: Transcription result dict
+        """
+        logger.info(f"Transcription {transcription_id} completed")
+
+        # Update the display (called from background thread, so use Qt's thread-safe method)
+        # For simplicity, refresh the entire transcription display
+        transcription = self.db.get_transcription(transcription_id)
+        if transcription:
+            audio_file_id = transcription.get("audio_file_id")
+            if audio_file_id:
+                # Use QTimer.singleShot to ensure we're on the main thread
+                QTimer.singleShot(0, lambda: self.note_pane.refresh_transcriptions(audio_file_id))
+
+    def _on_transcription_error(self, transcription_id: str, error_message: str) -> None:
+        """Handle transcription error.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+            error_message: Error message
+        """
+        logger.error(f"Transcription {transcription_id} failed: {error_message}")
+
+        # Update the display
+        transcription = self.db.get_transcription(transcription_id)
+        if transcription:
+            audio_file_id = transcription.get("audio_file_id")
+            if audio_file_id:
+                QTimer.singleShot(0, lambda: self.note_pane.refresh_transcriptions(audio_file_id))
+
+        # Show error to user
+        QTimer.singleShot(0, lambda: self._log_message("error", "Transcription Failed", error_message))

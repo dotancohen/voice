@@ -60,7 +60,8 @@ class TestCLIArguments:
         )
 
         assert result.returncode == 0
-        assert "ID:" in result.stdout
+        # New format is: "ID | Created | First line content"
+        assert "|" in result.stdout
 
     def test_invalid_command(self) -> None:
         """Test running invalid command."""

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from src.core.database import Database
 from src.core.note_editor import NoteEditorMixin
 from src.ui.audio_player_widget import AudioPlayerWidget
+from src.ui.transcription_widget import TranscriptionsContainer
 from src.ui.styles import BUTTON_STYLE
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ class NotePane(QWidget, NoteEditorMixin):
     """
 
     note_saved = Signal(str)  # Emits note_id when saved
+    transcribe_requested = Signal(str)  # Emits audio_file_id when transcription requested
 
     def __init__(
         self,
@@ -107,6 +109,14 @@ class NotePane(QWidget, NoteEditorMixin):
         # Attachments label
         self.attachments_label = QLabel("Attachments:")
         layout.addWidget(self.attachments_label)
+
+        # Transcriptions container (above waveform)
+        self.transcriptions_container = TranscriptionsContainer()
+        self.transcriptions_container.transcribe_requested.connect(
+            self._on_transcribe_requested
+        )
+        self.transcriptions_container.hide()  # Hidden until audio files are loaded
+        layout.addWidget(self.transcriptions_container)
 
         # Audio player widget (replaces simple list when audio files present)
         self.audio_player = AudioPlayerWidget()
@@ -176,15 +186,36 @@ class NotePane(QWidget, NoteEditorMixin):
         self.attachments_list.clear()
         self.audio_player.hide()
         self.attachments_list.hide()
+        self.transcriptions_container.hide()
+        self._current_audio_files = []
+
         try:
             audio_files = self.db.get_audio_files_for_note(note_id)
+            self._current_audio_files = audio_files
             if audio_files:
                 self.attachments_label.setText(f"Audio Files ({len(audio_files)}):")
+
+                # Get transcription counts for each audio file
+                transcription_counts = {}
+                for af in audio_files:
+                    audio_id = af.get("id", "")
+                    transcriptions = self.db.get_transcriptions_for_audio_file(audio_id)
+                    transcription_counts[audio_id] = len(transcriptions)
+
+                    # Show transcriptions for the first audio file by default
+                    if af == audio_files[0]:
+                        self.transcriptions_container.set_audio_file(
+                            audio_id, transcriptions
+                        )
+                        if transcriptions or self.audiofile_directory:
+                            self.transcriptions_container.show()
+
                 # Use audio player widget if audiofile directory is configured
                 if self.audiofile_directory:
                     self.audio_player.set_audio_files(
                         audio_files,
                         get_file_path=self._get_audio_file_path,
+                        transcription_counts=transcription_counts,
                     )
                     self.audio_player.show()
                 else:
@@ -194,8 +225,9 @@ class NotePane(QWidget, NoteEditorMixin):
                         filename = af.get("filename", "unknown")
                         imported_at = af.get("imported_at", "unknown")
                         file_created_at = af.get("file_created_at", "unknown")
+                        t_count = transcription_counts.get(af.get("id", ""), 0)
 
-                        item_text = f"{id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
+                        item_text = f"{id_short}... | {filename} | T: {t_count} | Imported: {imported_at}"
                         item = QListWidgetItem(item_text)
                         self.attachments_list.addItem(item)
                     self.attachments_list.show()
@@ -244,7 +276,41 @@ class NotePane(QWidget, NoteEditorMixin):
         self.attachments_label.setText("Attachments:")
         self.attachments_list.clear()
         self.audio_player.hide()
+        self.transcriptions_container.hide()
+        self.transcriptions_container.set_audio_file(None, [])
+        self._current_audio_files = []
         self.clear_editor()  # Handles content and state via mixin
+
+    def _on_transcribe_requested(self, audio_file_id: str) -> None:
+        """Handle transcribe request from transcriptions container.
+
+        Args:
+            audio_file_id: Audio file UUID hex string
+        """
+        self.transcribe_requested.emit(audio_file_id)
+
+    def refresh_transcriptions(self, audio_file_id: str) -> None:
+        """Refresh transcriptions for an audio file after transcription completes.
+
+        Args:
+            audio_file_id: Audio file UUID hex string
+        """
+        # Reload transcriptions
+        transcriptions = self.db.get_transcriptions_for_audio_file(audio_file_id)
+        self.transcriptions_container.set_audio_file(audio_file_id, transcriptions)
+
+        # Update count in audio player
+        self.audio_player.update_transcription_count(audio_file_id, len(transcriptions))
+
+    def update_transcription(self, transcription_id: str) -> None:
+        """Update a specific transcription display.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+        """
+        transcription = self.db.get_transcription(transcription_id)
+        if transcription:
+            self.transcriptions_container.update_transcription(transcription)
 
     # ===== NoteEditorMixin abstract method implementations =====
 

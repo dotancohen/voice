@@ -226,7 +226,7 @@ class TUIAudioPlayer(Container):
     - Play/pause button
     - Skip back 3s and 10s buttons
     - Time display (MM:SS or HH:MM:SS)
-    - File list with selection
+    - File list with selection and transcription count
     """
 
     def __init__(self, audiofile_directory: Optional[Path] = None) -> None:
@@ -236,7 +236,9 @@ class TUIAudioPlayer(Container):
         self._audio_files: List[Dict[str, Any]] = []
         self._file_paths: List[Path] = []
         self._waveforms: Dict[int, List[float]] = {}
+        self._transcription_counts: Dict[str, int] = {}
         self._update_interval: float = 0.1
+        self._db: Optional[Database] = None
 
     def compose(self) -> ComposeResult:
         yield Static("No audio files", id="audio-waveform")
@@ -258,27 +260,32 @@ class TUIAudioPlayer(Container):
         self,
         audio_files: List[Dict[str, Any]],
         db: Database,
+        transcription_counts: Optional[Dict[str, int]] = None,
     ) -> None:
         """Set the audio files to display.
 
         Args:
             audio_files: List of audio file dicts.
             db: Database for getting file paths.
+            transcription_counts: Optional dict mapping audio_file_id to transcription count.
         """
         self._audio_files = audio_files
+        self._db = db
         self._file_paths = []
         self._waveforms = {}
+        self._transcription_counts = transcription_counts or {}
 
         if not audio_files or not self.audiofile_directory:
             self.query_one("#audio-files-label", Static).update("No audio files")
             return
 
-        # Build file paths
-        file_names = []
+        # Build file paths and file display strings
+        file_display = []
         for af in audio_files:
             audio_id = af.get("id", "")
             filename = af.get("filename", "")
-            file_names.append(filename)
+            t_count = self._transcription_counts.get(audio_id, 0)
+            file_display.append(f"{filename} | T:{t_count}")
 
             if "." in filename:
                 ext = filename.rsplit(".", 1)[-1].lower()
@@ -297,9 +304,9 @@ class TUIAudioPlayer(Container):
                 self._waveforms[i] = waveform
 
         # Update files label
-        files_text = ", ".join(file_names[:3])
-        if len(file_names) > 3:
-            files_text += f" (+{len(file_names) - 3} more)"
+        files_text = ", ".join(file_display[:2])
+        if len(file_display) > 2:
+            files_text += f" (+{len(file_display) - 2} more)"
         self.query_one("#audio-files-label", Static).update(f"Files: {files_text}")
 
         # Update waveform display
@@ -571,9 +578,18 @@ class NoteDetail(Container, NoteEditorMixin):
             try:
                 audio_files = self.db.get_audio_files_for_note(note_id)
                 if audio_files:
+                    # Get transcription counts for each audio file
+                    transcription_counts = {}
+                    for af in audio_files:
+                        audio_id = af.get("id", "")
+                        transcriptions = self.db.get_transcriptions_for_audio_file(audio_id)
+                        transcription_counts[audio_id] = len(transcriptions)
+
                     # Use audio player if audiofile directory is configured and MPV available
                     if self.audiofile_directory and is_mpv_available():
-                        self._audio_player.set_audio_files(audio_files, self.db)
+                        self._audio_player.set_audio_files(
+                            audio_files, self.db, transcription_counts
+                        )
                         audio_player.display = True
                         attachments_label.update("")
                     else:
@@ -583,10 +599,11 @@ class NoteDetail(Container, NoteEditorMixin):
                         for af in audio_files:
                             id_short = af.get("id", "")[:8]
                             filename = af.get("filename", "unknown")
+                            t_count = transcription_counts.get(af.get("id", ""), 0)
                             imported_at = af.get("imported_at", "unknown")
                             file_created_at = af.get("file_created_at", "unknown")
                             attachment_lines.append(
-                                f"  {id_short}... | {filename} | Imported: {imported_at} | Created: {file_created_at}"
+                                f"  {id_short}... | {filename} | T:{t_count} | {imported_at} | {file_created_at}"
                             )
                         attachments_text = f"Attachments ({len(audio_files)}):\n" + "\n".join(attachment_lines)
                         attachments_label.update(attachments_text)

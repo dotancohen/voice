@@ -30,10 +30,11 @@ class TestListNotes:
         )
 
         assert result.returncode == 0
-        assert "ID:" in result.stdout
-        assert "Created:" in result.stdout
-        # Should show multiple notes
-        assert result.stdout.count("ID:") == 9
+        # New format: "ID | Created | First line content" - one note per line
+        assert "|" in result.stdout
+        # Should show 9 notes (9 lines)
+        lines = [line for line in result.stdout.strip().split('\n') if line]
+        assert len(lines) == 9
 
     def test_list_notes_json_format(
         self, test_db_path: Path, populated_db: Database

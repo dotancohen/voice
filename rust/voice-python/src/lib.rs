@@ -846,6 +846,17 @@ impl PyDatabase {
         Ok(list.into_any().unbind())
     }
 
+    fn get_all_audio_files<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let audio_files = self.inner_ref()?
+            .get_all_audio_files()
+            .map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for audio_file in &audio_files {
+            list.append(audio_file_row_to_dict(py, audio_file)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
     fn update_audio_file_summary(&self, audio_file_id: &str, summary: &str) -> PyResult<bool> {
         self.inner_ref()?
             .update_audio_file_summary(audio_file_id, summary)
@@ -934,6 +945,18 @@ impl PyDatabase {
     fn delete_transcription(&self, transcription_id: &str) -> PyResult<bool> {
         self.inner_ref()?
             .delete_transcription(transcription_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    fn update_transcription(
+        &self,
+        transcription_id: &str,
+        content: &str,
+        content_segments: Option<&str>,
+        service_response: Option<&str>,
+    ) -> PyResult<bool> {
+        self.inner_ref()?
+            .update_transcription(transcription_id, content, content_segments, service_response)
             .map_err(voice_error_to_pyerr)
     }
 

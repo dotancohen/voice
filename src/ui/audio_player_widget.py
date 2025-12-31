@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
 )
 
 from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mpv_available
@@ -143,8 +145,11 @@ class AudioPlayerWidget(QFrame):
     - Skip back 3s and 10s buttons
     - Speed control button (placeholder)
     - Time display (MM:SS or HH:MM:SS)
-    - Audio file list with selection
+    - Audio file list with selection and transcription count
     """
+
+    # Emitted when user requests transcription of an audio file
+    transcribe_requested = Signal(str)  # audio_file_id
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -154,6 +159,7 @@ class AudioPlayerWidget(QFrame):
         self._waveforms: Dict[int, List[float]] = {}
         self._audio_files: List[Dict] = []
         self._file_paths: List[Path] = []
+        self._transcription_counts: Dict[str, int] = {}
 
         self._setup_ui()
         self._connect_signals()
@@ -237,25 +243,34 @@ class AudioPlayerWidget(QFrame):
         self,
         audio_files: List[Dict],
         get_file_path: callable,
+        transcription_counts: Optional[Dict[str, int]] = None,
     ) -> None:
         """Set the audio files to display.
 
         Args:
             audio_files: List of audio file dicts (with 'id', 'filename' keys).
             get_file_path: Callable that takes audio_id and returns file path.
+            transcription_counts: Optional dict mapping audio_file_id to transcription count.
         """
         self._audio_files = audio_files
+        self._transcription_counts = transcription_counts or {}
         self._file_list.clear()
         self._file_paths = []
         self._waveforms = {}
 
         for af in audio_files:
-            item = QListWidgetItem(af.get("filename", "Unknown"))
-            item.setData(Qt.UserRole, af.get("id"))
+            audio_id = af.get("id", "")
+            filename = af.get("filename", "Unknown")
+            t_count = self._transcription_counts.get(audio_id, 0)
+
+            # Format: "filename | T: N"
+            display_text = f"{filename} | T: {t_count}"
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.UserRole, audio_id)
             self._file_list.addItem(item)
 
             # Get file path
-            path = get_file_path(af.get("id", ""))
+            path = get_file_path(audio_id)
             self._file_paths.append(Path(path) if path else Path())
 
         # Set files in player
@@ -270,6 +285,38 @@ class AudioPlayerWidget(QFrame):
         # Update waveform display if we have files
         if self._waveforms:
             self._waveform_widget.set_waveform(self._waveforms.get(0, []))
+
+    def update_transcription_count(self, audio_file_id: str, count: int) -> None:
+        """Update the transcription count for an audio file.
+
+        Args:
+            audio_file_id: Audio file UUID hex string
+            count: New transcription count
+        """
+        self._transcription_counts[audio_file_id] = count
+
+        # Find and update the list item
+        for i in range(self._file_list.count()):
+            item = self._file_list.item(i)
+            if item.data(Qt.UserRole) == audio_file_id:
+                # Find the audio file dict
+                for af in self._audio_files:
+                    if af.get("id") == audio_file_id:
+                        filename = af.get("filename", "Unknown")
+                        item.setText(f"{filename} | T: {count}")
+                        break
+                break
+
+    def get_selected_audio_file_id(self) -> Optional[str]:
+        """Get the currently selected audio file ID.
+
+        Returns:
+            Audio file UUID hex string, or None if nothing selected
+        """
+        current = self._file_list.currentItem()
+        if current:
+            return current.data(Qt.UserRole)
+        return None
 
     def _on_play_pause(self) -> None:
         """Handle play/pause button click."""
