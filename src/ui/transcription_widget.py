@@ -1,12 +1,11 @@
 """Transcription display widgets for PySide6 GUI.
 
-This module provides widgets for displaying transcription results
+This module provides widgets for displaying and editing transcription results
 with foldable text boxes.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -15,9 +14,9 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -25,15 +24,22 @@ from PySide6.QtWidgets import (
 
 logger = logging.getLogger(__name__)
 
+# Default state for new transcriptions
+DEFAULT_TRANSCRIPTION_STATE = "original !verified !verbatim !cleaned !polished"
+
 
 class TranscriptionTextBox(QFrame):
-    """Foldable text box for displaying a single transcription.
+    """Foldable text box for displaying and editing a single transcription.
 
     Features:
     - Fold/unfold button
     - Header with service name and status
-    - Read-only content area
+    - Editable content area
+    - State field editor
+    - Save/Cancel buttons when editing
     """
+
+    transcription_saved = Signal(str, str, str)  # transcription_id, content, state
 
     def __init__(
         self,
@@ -49,6 +55,9 @@ class TranscriptionTextBox(QFrame):
         super().__init__(parent)
         self._transcription = transcription
         self._is_folded = True
+        self._is_editing = False
+        self._original_content = ""
+        self._original_state = ""
 
         self.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
         self._setup_ui()
@@ -79,14 +88,14 @@ class TranscriptionTextBox(QFrame):
 
         # Status/datetime
         status = self._get_status()
-        status_label = QLabel(status)
-        status_label.setStyleSheet("color: gray;")
-        header_layout.addWidget(status_label)
+        self._status_label = QLabel(status)
+        self._status_label.setStyleSheet("color: gray;")
+        header_layout.addWidget(self._status_label)
 
         header_layout.addStretch()
         layout.addWidget(header)
 
-        # Content preview (always visible)
+        # Content preview (always visible when folded)
         content = self._transcription.get("content", "")
         preview = content[:100].replace("\n", " ")
         if len(content) > 100:
@@ -100,11 +109,48 @@ class TranscriptionTextBox(QFrame):
         # Full content (hidden when folded)
         self._content_edit = QTextEdit()
         self._content_edit.setPlainText(content)
-        self._content_edit.setReadOnly(True)
         self._content_edit.setMinimumHeight(100)
         self._content_edit.setMaximumHeight(300)
         self._content_edit.setVisible(False)
+        self._content_edit.textChanged.connect(self._on_content_changed)
         layout.addWidget(self._content_edit)
+
+        # State field row (hidden when folded)
+        state_row = QWidget()
+        state_layout = QHBoxLayout(state_row)
+        state_layout.setContentsMargins(0, 0, 0, 0)
+
+        state_label = QLabel("State:")
+        state_label.setStyleSheet("color: gray;")
+        state_layout.addWidget(state_label)
+
+        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
+        self._state_edit = QLineEdit(state)
+        self._state_edit.textChanged.connect(self._on_state_changed)
+        state_layout.addWidget(self._state_edit)
+
+        self._state_row = state_row
+        self._state_row.setVisible(False)
+        layout.addWidget(state_row)
+
+        # Button row (hidden until editing)
+        button_row = QWidget()
+        button_layout = QHBoxLayout(button_row)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.addStretch()
+
+        self._save_button = QPushButton("Save")
+        self._save_button.clicked.connect(self._save_changes)
+        self._save_button.setEnabled(False)
+        button_layout.addWidget(self._save_button)
+
+        self._cancel_button = QPushButton("Cancel")
+        self._cancel_button.clicked.connect(self._cancel_changes)
+        button_layout.addWidget(self._cancel_button)
+
+        self._button_row = button_row
+        self._button_row.setVisible(False)
+        layout.addWidget(button_row)
 
     def _get_status(self) -> str:
         """Get status string for display."""
@@ -124,13 +170,83 @@ class TranscriptionTextBox(QFrame):
         self._is_folded = not self._is_folded
 
         if self._is_folded:
+            # If we have unsaved changes, cancel them
+            if self._is_editing:
+                self._cancel_changes()
+
             self._fold_button.setText(">")
             self._preview_label.setVisible(True)
             self._content_edit.setVisible(False)
+            self._state_row.setVisible(False)
+            self._button_row.setVisible(False)
         else:
             self._fold_button.setText("v")
             self._preview_label.setVisible(False)
             self._content_edit.setVisible(True)
+            self._state_row.setVisible(True)
+            self._button_row.setVisible(True)
+
+            # Store original values when unfolding
+            self._original_content = self._content_edit.toPlainText()
+            self._original_state = self._state_edit.text()
+
+    def _on_content_changed(self) -> None:
+        """Handle content text changes."""
+        self._check_for_changes()
+
+    def _on_state_changed(self) -> None:
+        """Handle state text changes."""
+        self._check_for_changes()
+
+    def _check_for_changes(self) -> None:
+        """Check if there are unsaved changes and update button state."""
+        current_content = self._content_edit.toPlainText()
+        current_state = self._state_edit.text()
+
+        has_changes = (
+            current_content != self._original_content or
+            current_state != self._original_state
+        )
+
+        self._is_editing = has_changes
+        self._save_button.setEnabled(has_changes)
+
+    def _save_changes(self) -> None:
+        """Save changes and emit signal."""
+        transcription_id = self._transcription.get("id", "")
+        content = self._content_edit.toPlainText()
+        state = self._state_edit.text()
+
+        # Update internal state
+        self._transcription["content"] = content
+        self._transcription["state"] = state
+        self._original_content = content
+        self._original_state = state
+        self._is_editing = False
+        self._save_button.setEnabled(False)
+
+        # Update preview
+        preview = content[:100].replace("\n", " ")
+        if len(content) > 100:
+            preview += "..."
+        self._preview_label.setText(preview)
+
+        # Emit signal for parent to handle database update
+        self.transcription_saved.emit(transcription_id, content, state)
+
+    def _cancel_changes(self) -> None:
+        """Cancel changes and restore original values."""
+        self._content_edit.blockSignals(True)
+        self._state_edit.blockSignals(True)
+
+        self._content_edit.setPlainText(self._original_content)
+        self._state_edit.setText(self._original_state)
+
+        self._content_edit.blockSignals(False)
+        self._state_edit.blockSignals(False)
+
+        self._is_editing = False
+        self._save_button.setEnabled(False)
 
     def update_transcription(self, transcription: Dict[str, Any]) -> None:
         """Update the displayed transcription.
@@ -140,6 +256,7 @@ class TranscriptionTextBox(QFrame):
         """
         self._transcription = transcription
         content = transcription.get("content", "")
+        state = transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
 
         # Update preview
         preview = content[:100].replace("\n", " ")
@@ -147,8 +264,21 @@ class TranscriptionTextBox(QFrame):
             preview += "..."
         self._preview_label.setText(preview)
 
-        # Update full content
-        self._content_edit.setPlainText(content)
+        # Update full content and state (only if not currently editing)
+        if not self._is_editing:
+            self._content_edit.blockSignals(True)
+            self._state_edit.blockSignals(True)
+
+            self._content_edit.setPlainText(content)
+            self._state_edit.setText(state)
+            self._original_content = content
+            self._original_state = state
+
+            self._content_edit.blockSignals(False)
+            self._state_edit.blockSignals(False)
+
+        # Update status
+        self._status_label.setText(self._get_status())
 
     def is_pending(self) -> bool:
         """Check if this transcription is pending."""
@@ -170,6 +300,7 @@ class TranscriptionsContainer(QWidget):
     """
 
     transcribe_requested = Signal(str)  # audio_file_id
+    transcription_saved = Signal(str, str, str)  # transcription_id, content, state
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """Initialize transcriptions container."""
@@ -251,6 +382,7 @@ class TranscriptionsContainer(QWidget):
         # Add transcription boxes
         for t in transcriptions:
             box = TranscriptionTextBox(t)
+            box.transcription_saved.connect(self._on_transcription_saved)
             self._text_boxes[t["id"]] = box
             self._content_layout.addWidget(box)
 
@@ -259,6 +391,12 @@ class TranscriptionsContainer(QWidget):
 
         # Update count
         self._count_label.setText(f"({len(transcriptions)})")
+
+    def _on_transcription_saved(
+        self, transcription_id: str, content: str, state: str
+    ) -> None:
+        """Handle transcription saved signal from child box."""
+        self.transcription_saved.emit(transcription_id, content, state)
 
     def update_transcription(self, transcription: Dict[str, Any]) -> None:
         """Update a specific transcription.
@@ -285,6 +423,7 @@ class TranscriptionsContainer(QWidget):
             item = self._content_layout.takeAt(self._content_layout.count() - 1)
 
         box = TranscriptionTextBox(transcription)
+        box.transcription_saved.connect(self._on_transcription_saved)
         self._text_boxes[tid] = box
         self._content_layout.addWidget(box)
         self._content_layout.addStretch()

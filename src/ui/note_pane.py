@@ -115,6 +115,9 @@ class NotePane(QWidget, NoteEditorMixin):
         self.transcriptions_container.transcribe_requested.connect(
             self._on_transcribe_requested
         )
+        self.transcriptions_container.transcription_saved.connect(
+            self._on_transcription_saved
+        )
         self.transcriptions_container.hide()  # Hidden until audio files are loaded
         layout.addWidget(self.transcriptions_container)
 
@@ -288,6 +291,27 @@ class NotePane(QWidget, NoteEditorMixin):
             audio_file_id: Audio file UUID hex string
         """
         self.transcribe_requested.emit(audio_file_id)
+
+    def _on_transcription_saved(
+        self, transcription_id: str, content: str, state: str
+    ) -> None:
+        """Handle transcription saved from transcriptions container.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+            content: Updated transcription content
+            state: Updated transcription state
+        """
+        try:
+            success = self.db.update_transcription(
+                transcription_id, content, state=state
+            )
+            if success:
+                logger.info(f"Saved transcription {transcription_id}")
+            else:
+                logger.warning(f"Failed to save transcription {transcription_id}")
+        except Exception as e:
+            logger.error(f"Error saving transcription {transcription_id}: {e}")
 
     def refresh_transcriptions(self, audio_file_id: str) -> None:
         """Refresh transcriptions for an audio file after transcription completes.

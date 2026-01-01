@@ -98,6 +98,7 @@ fn transcription_row_to_dict<'py>(py: Python<'py>, transcription: &database::Tra
     dict.set_item("service", &transcription.service)?;
     dict.set_item("service_arguments", &transcription.service_arguments)?;
     dict.set_item("service_response", &transcription.service_response)?;
+    dict.set_item("state", &transcription.state)?;
     dict.set_item("device_id", &transcription.device_id)?;
     dict.set_item("created_at", &transcription.created_at)?;
     dict.set_item("modified_at", &transcription.modified_at)?;
@@ -899,7 +900,7 @@ impl PyDatabase {
     // Transcription methods
     // ========================================================================
 
-    #[pyo3(signature = (audio_file_id, content, service, content_segments=None, service_arguments=None, service_response=None))]
+    #[pyo3(signature = (audio_file_id, content, service, content_segments=None, service_arguments=None, service_response=None, state=None))]
     fn create_transcription(
         &self,
         audio_file_id: &str,
@@ -908,6 +909,7 @@ impl PyDatabase {
         content_segments: Option<&str>,
         service_arguments: Option<&str>,
         service_response: Option<&str>,
+        state: Option<&str>,
     ) -> PyResult<String> {
         self.inner_ref()?
             .create_transcription(
@@ -917,6 +919,7 @@ impl PyDatabase {
                 service,
                 service_arguments,
                 service_response,
+                state,
             )
             .map_err(voice_error_to_pyerr)
     }
@@ -948,15 +951,17 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
+    #[pyo3(signature = (transcription_id, content, content_segments=None, service_response=None, state=None))]
     fn update_transcription(
         &self,
         transcription_id: &str,
         content: &str,
         content_segments: Option<&str>,
         service_response: Option<&str>,
+        state: Option<&str>,
     ) -> PyResult<bool> {
         self.inner_ref()?
-            .update_transcription(transcription_id, content, content_segments, service_response)
+            .update_transcription(transcription_id, content, content_segments, service_response, state)
             .map_err(voice_error_to_pyerr)
     }
 

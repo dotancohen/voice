@@ -660,6 +660,7 @@ class Database:
         content_segments: Optional[str] = None,
         service_arguments: Optional[str] = None,
         service_response: Optional[str] = None,
+        state: Optional[str] = None,
     ) -> str:
         """Create a new transcription record.
 
@@ -670,13 +671,14 @@ class Database:
             content_segments: Optional JSON string with segment-level data
             service_arguments: Optional JSON string with service arguments
             service_response: Optional JSON string with service response metadata
+            state: Optional state string (default: "original !verified !verbatim !cleaned !polished")
 
         Returns:
             Transcription ID (hex string)
         """
         return self._rust_db.create_transcription(
             audio_file_id, content, service,
-            content_segments, service_arguments, service_response
+            content_segments, service_arguments, service_response, state
         )
 
     def get_transcription(self, transcription_id: str) -> Optional[Dict[str, Any]]:
@@ -720,20 +722,23 @@ class Database:
         content: str,
         content_segments: Optional[str] = None,
         service_response: Optional[str] = None,
+        state: Optional[str] = None,
     ) -> bool:
-        """Update a transcription's content and service response.
+        """Update a transcription's content, state, and service response.
 
-        Used to update a pending transcription after the transcription completes.
+        Used to update a pending transcription after the transcription completes,
+        or when the user edits the transcription content or state.
 
         Args:
             transcription_id: Transcription UUID hex string
             content: Full transcribed text
             content_segments: Optional JSON string with segment-level data
             service_response: Optional JSON string with service response metadata
+            state: Optional state string (e.g., "cleaned verified")
 
         Returns:
             True if updated, False if not found
         """
         return self._rust_db.update_transcription(
-            transcription_id, content, content_segments, service_response
+            transcription_id, content, content_segments, service_response, state
         )

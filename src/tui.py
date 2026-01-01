@@ -51,6 +51,7 @@ from textual.containers import Container, Horizontal
 from textual.events import Key
 from textual.widgets import (
     Button,
+    Collapsible,
     Footer,
     Input,
     Label,
@@ -61,6 +62,9 @@ from textual.widgets import (
     Tree,
 )
 from textual.widgets.tree import TreeNode
+
+# Default transcription state
+DEFAULT_TRANSCRIPTION_STATE = "original !verified !verbatim !cleaned !polished"
 
 from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mpv_available
 from src.core.config import Config
@@ -365,6 +369,185 @@ class TUIAudioPlayer(Container):
         self._player.release()
 
 
+class TUITranscriptionBox(Container):
+    """A single transcription display with edit capability."""
+
+    def __init__(
+        self,
+        transcription: Dict[str, Any],
+        db: Database,
+        index: int,
+    ) -> None:
+        super().__init__(id=f"transcription-box-{index}")
+        self._transcription = transcription
+        self._db = db
+        self._index = index
+        self._is_editing = False
+        self._original_content = ""
+        self._original_state = ""
+
+    def compose(self) -> ComposeResult:
+        service = self._transcription.get("service", "Unknown")
+        content = self._transcription.get("content", "")
+        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
+        created_at = self._transcription.get("created_at", "")
+
+        # Preview text (first 100 chars)
+        preview = content[:100].replace("\n", " ")
+        if len(content) > 100:
+            preview += "..."
+
+        with Collapsible(title=f"{service} - {created_at}", collapsed=True):
+            # View mode widgets
+            yield Static(content, id=f"trans-view-{self._index}", classes="transcription-content")
+            yield Static(f"State: {state}", id=f"trans-state-view-{self._index}", classes="transcription-state")
+
+            # Edit mode widgets (hidden initially)
+            yield TextArea(id=f"trans-edit-{self._index}", language=None)
+            yield Input(value=state, id=f"trans-state-edit-{self._index}", placeholder="State")
+
+            # Buttons
+            yield Horizontal(
+                Button("Edit", id=f"trans-edit-btn-{self._index}", variant="primary"),
+                Button("Save", id=f"trans-save-btn-{self._index}", variant="success"),
+                Button("Cancel", id=f"trans-cancel-btn-{self._index}"),
+                id=f"trans-buttons-{self._index}"
+            )
+
+    def on_mount(self) -> None:
+        """Hide edit widgets initially."""
+        self.query_one(f"#trans-edit-{self._index}", TextArea).display = False
+        self.query_one(f"#trans-state-edit-{self._index}", Input).display = False
+        self.query_one(f"#trans-save-btn-{self._index}", Button).display = False
+        self.query_one(f"#trans-cancel-btn-{self._index}", Button).display = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        button_id = event.button.id or ""
+
+        if button_id == f"trans-edit-btn-{self._index}":
+            self._start_editing()
+            event.stop()
+        elif button_id == f"trans-save-btn-{self._index}":
+            self._save_changes()
+            event.stop()
+        elif button_id == f"trans-cancel-btn-{self._index}":
+            self._cancel_editing()
+            event.stop()
+
+    def _start_editing(self) -> None:
+        """Start editing mode."""
+        content = self._transcription.get("content", "")
+        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
+
+        self._original_content = content
+        self._original_state = state
+        self._is_editing = True
+
+        # Load content into edit widgets
+        self.query_one(f"#trans-edit-{self._index}", TextArea).load_text(content)
+        self.query_one(f"#trans-state-edit-{self._index}", Input).value = state
+
+        # Toggle visibility
+        self.query_one(f"#trans-view-{self._index}", Static).display = False
+        self.query_one(f"#trans-state-view-{self._index}", Static).display = False
+        self.query_one(f"#trans-edit-{self._index}", TextArea).display = True
+        self.query_one(f"#trans-state-edit-{self._index}", Input).display = True
+        self.query_one(f"#trans-edit-btn-{self._index}", Button).display = False
+        self.query_one(f"#trans-save-btn-{self._index}", Button).display = True
+        self.query_one(f"#trans-cancel-btn-{self._index}", Button).display = True
+
+        # Focus the text area
+        self.query_one(f"#trans-edit-{self._index}", TextArea).focus()
+
+    def _save_changes(self) -> None:
+        """Save changes to database."""
+        new_content = self.query_one(f"#trans-edit-{self._index}", TextArea).text
+        new_state = self.query_one(f"#trans-state-edit-{self._index}", Input).value
+
+        transcription_id = self._transcription.get("id", "")
+        try:
+            success = self._db.update_transcription(
+                transcription_id, new_content, state=new_state
+            )
+            if success:
+                # Update internal state
+                self._transcription["content"] = new_content
+                self._transcription["state"] = new_state
+                self._original_content = new_content
+                self._original_state = new_state
+
+                # Update view widgets
+                self.query_one(f"#trans-view-{self._index}", Static).update(new_content)
+                self.query_one(f"#trans-state-view-{self._index}", Static).update(f"State: {new_state}")
+
+                self.app.notify("Transcription saved!")
+                logger.info(f"Saved transcription {transcription_id}")
+            else:
+                self.app.notify("Failed to save transcription", severity="error")
+                logger.warning(f"Failed to save transcription {transcription_id}")
+        except Exception as e:
+            self.app.notify(f"Error: {e}", severity="error")
+            logger.error(f"Error saving transcription {transcription_id}: {e}")
+
+        self._cancel_editing()
+
+    def _cancel_editing(self) -> None:
+        """Cancel editing and restore view mode."""
+        self._is_editing = False
+
+        # Toggle visibility back
+        self.query_one(f"#trans-view-{self._index}", Static).display = True
+        self.query_one(f"#trans-state-view-{self._index}", Static).display = True
+        self.query_one(f"#trans-edit-{self._index}", TextArea).display = False
+        self.query_one(f"#trans-state-edit-{self._index}", Input).display = False
+        self.query_one(f"#trans-edit-btn-{self._index}", Button).display = True
+        self.query_one(f"#trans-save-btn-{self._index}", Button).display = False
+        self.query_one(f"#trans-cancel-btn-{self._index}", Button).display = False
+
+
+class TUITranscriptionsContainer(Container):
+    """Container for displaying and editing transcriptions in TUI."""
+
+    def __init__(self, db: Database) -> None:
+        super().__init__(id="tui-transcriptions")
+        self._db = db
+        self._audio_file_id: Optional[str] = None
+        self._transcription_boxes: List[TUITranscriptionBox] = []
+
+    def compose(self) -> ComposeResult:
+        yield Label("Transcriptions", id="transcriptions-header")
+        yield Container(id="transcriptions-content")
+
+    def set_audio_file(
+        self,
+        audio_file_id: Optional[str],
+        transcriptions: List[Dict[str, Any]],
+    ) -> None:
+        """Set the audio file and its transcriptions.
+
+        Args:
+            audio_file_id: Audio file UUID hex string, or None to clear
+            transcriptions: List of transcription dicts
+        """
+        self._audio_file_id = audio_file_id
+
+        # Update header
+        count = len(transcriptions)
+        self.query_one("#transcriptions-header", Label).update(f"Transcriptions ({count})")
+
+        # Clear existing boxes
+        content = self.query_one("#transcriptions-content", Container)
+        content.remove_children()
+        self._transcription_boxes = []
+
+        # Add new boxes
+        for i, t in enumerate(transcriptions):
+            box = TUITranscriptionBox(t, self._db, i)
+            self._transcription_boxes.append(box)
+            content.mount(box)
+
+
 class NotesListView(ListView):
     """ListView widget for displaying notes."""
 
@@ -525,6 +708,7 @@ class NoteDetail(Container, NoteEditorMixin):
         self.init_editor_state()  # Initialize mixin state
         self.is_rtl: bool = False
         self._audio_player: Optional[TUIAudioPlayer] = None
+        self._transcriptions_container: Optional[TUITranscriptionsContainer] = None
 
     def compose(self) -> ComposeResult:
         yield Label("Select a note to view", id="note-header")
@@ -532,6 +716,9 @@ class NoteDetail(Container, NoteEditorMixin):
         yield Static("", id="note-view")
         # Edit mode: TextArea (hidden initially)
         yield TextArea(id="note-edit", language=None)
+        # Transcriptions container (above waveform, hidden initially)
+        self._transcriptions_container = TUITranscriptionsContainer(self.db)
+        yield self._transcriptions_container
         # Audio player (hidden initially, shown when audio files present)
         self._audio_player = TUIAudioPlayer(audiofile_directory=self.audiofile_directory)
         yield self._audio_player
@@ -545,10 +732,11 @@ class NoteDetail(Container, NoteEditorMixin):
         )
 
     def on_mount(self) -> None:
-        """Hide edit mode and audio player initially."""
+        """Hide edit mode, transcriptions, and audio player initially."""
         self.query_one("#note-edit", TextArea).display = False
         self.query_one("#save-btn", Button).display = False
         self.query_one("#cancel-btn", Button).display = False
+        self.query_one("#tui-transcriptions").display = False
         self.query_one("#tui-audio-player").display = False
 
     def load_note(self, note_id: str) -> None:
@@ -575,15 +763,27 @@ class NoteDetail(Container, NoteEditorMixin):
             # Update attachments - displayed BELOW content per requirements
             attachments_label = self.query_one("#note-attachments", Label)
             audio_player = self.query_one("#tui-audio-player")
+            transcriptions_container = self.query_one("#tui-transcriptions")
             try:
                 audio_files = self.db.get_audio_files_for_note(note_id)
                 if audio_files:
-                    # Get transcription counts for each audio file
+                    # Get transcription counts and transcriptions for each audio file
                     transcription_counts = {}
+                    all_transcriptions: List[Dict[str, Any]] = []
                     for af in audio_files:
                         audio_id = af.get("id", "")
                         transcriptions = self.db.get_transcriptions_for_audio_file(audio_id)
                         transcription_counts[audio_id] = len(transcriptions)
+                        all_transcriptions.extend(transcriptions)
+
+                    # Show transcriptions if any exist
+                    if all_transcriptions:
+                        first_audio_id = audio_files[0].get("id", "")
+                        first_transcriptions = self.db.get_transcriptions_for_audio_file(first_audio_id)
+                        self._transcriptions_container.set_audio_file(first_audio_id, first_transcriptions)
+                        transcriptions_container.display = True
+                    else:
+                        transcriptions_container.display = False
 
                     # Use audio player if audiofile directory is configured and MPV available
                     if self.audiofile_directory and is_mpv_available():
@@ -609,10 +809,12 @@ class NoteDetail(Container, NoteEditorMixin):
                         attachments_label.update(attachments_text)
                 else:
                     audio_player.display = False
+                    transcriptions_container.display = False
                     attachments_label.update("Attachments: None")
             except Exception as e:
                 logger.warning(f"Error loading attachments for note {note_id}: {e}")
                 audio_player.display = False
+                transcriptions_container.display = False
                 attachments_label.update("Attachments: None")
 
             # Use mixin to handle content and state
@@ -789,6 +991,38 @@ class VoiceTUI(App):
     #audio-files-label {{
         height: 1;
         color: $text-muted;
+    }}
+
+    #tui-transcriptions {{
+        height: auto;
+        max-height: 15;
+        padding: 0 1;
+        margin: 1 0;
+        overflow-y: auto;
+    }}
+
+    #transcriptions-header {{
+        height: 1;
+        color: $text;
+        text-style: bold;
+        margin-bottom: 1;
+    }}
+
+    #transcriptions-content {{
+        height: auto;
+    }}
+
+    .transcription-content {{
+        height: auto;
+        max-height: 8;
+        margin: 0 1;
+        overflow-y: auto;
+    }}
+
+    .transcription-state {{
+        height: 1;
+        color: $text-muted;
+        margin: 0 1;
     }}
 
     .rtl {{
