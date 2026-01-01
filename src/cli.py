@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -510,7 +511,9 @@ def _transcribe_audio_file(
     language: Optional[str] = None,
     speaker_count: Optional[int] = None,
     model: Optional[str] = None,
-    service: str = "whisper",
+    backend: str = "local_whisper",
+    api_key: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Transcribe a single audio file.
 
@@ -521,7 +524,9 @@ def _transcribe_audio_file(
         language: Language hint (ISO 639-1 code)
         speaker_count: Expected number of speakers
         model: Model name (e.g., "small", "large-v3") or full path to model file
-        service: Transcription service to use
+        backend: Transcription backend (local_whisper, assemblyai, google_cloud)
+        api_key: API key for cloud backends
+        project_id: Project ID for Google Cloud backend
 
     Returns:
         Transcription result dict or None on failure
@@ -530,7 +535,7 @@ def _transcribe_audio_file(
         from voice_transcription import TranscriptionClient, TranscriptionConfig
     except ImportError:
         print("Error: voice_transcription module not installed.", file=sys.stderr)
-        print("Build it with: cd submodules/voicetranscription/bindings/python && maturin develop", file=sys.stderr)
+        print("Build it with: cd submodules/voicetranscription/bindings/python && maturin develop --features all_backends", file=sys.stderr)
         return None
 
     # Get audio file from database
@@ -642,12 +647,65 @@ def _transcribe_audio_file(
             print("Error: No Whisper model configured and no models found.", file=sys.stderr)
             return None
 
-    # Expand ~ in model path
-    model_path = str(Path(model_path).expanduser())
-
-    # Create transcription client
+    # Create transcription client based on backend
     try:
-        client = TranscriptionClient.with_local_whisper(model_path)
+        if backend == "local_whisper":
+            # Expand ~ in model path
+            model_path = str(Path(model_path).expanduser())
+            client = TranscriptionClient.with_local_whisper(model_path)
+            service = "local_whisper"
+
+        elif backend == "assemblyai":
+            # Get API key from argument, environment, or config
+            key = api_key or os.environ.get("ASSEMBLYAI_API_KEY")
+            if not key:
+                transcription_cfg = config.get_transcription_config()
+                key = transcription_cfg.get("providers", {}).get("assemblyai", {}).get("api_key")
+            if not key:
+                print("Error: AssemblyAI API key required. Use --api-key or set ASSEMBLYAI_API_KEY.", file=sys.stderr)
+                return None
+            client = TranscriptionClient.with_assemblyai(key)
+            service = "assemblyai"
+            model_path = None
+
+        elif backend == "google_cloud":
+            # Get access token from argument, gcloud, or config
+            token = api_key
+            if not token:
+                # Try to get from gcloud
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["gcloud", "auth", "print-access-token"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    token = result.stdout.strip()
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    pass
+            if not token:
+                print("Error: Google Cloud access token required. Run 'gcloud auth login' or use --api-key.", file=sys.stderr)
+                return None
+
+            # Get project ID
+            proj_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT")
+            if not proj_id:
+                transcription_cfg = config.get_transcription_config()
+                proj_id = transcription_cfg.get("providers", {}).get("google_cloud", {}).get("project_id")
+            if not proj_id:
+                print("Error: Google Cloud project ID required. Use --project-id or set GOOGLE_CLOUD_PROJECT.", file=sys.stderr)
+                return None
+
+            client = TranscriptionClient.with_google_cloud(token, proj_id)
+            service = "google_cloud"
+            model_path = None
+
+        else:
+            print(f"Error: Unknown backend '{backend}'", file=sys.stderr)
+            print("Available backends: local_whisper, assemblyai, google_cloud", file=sys.stderr)
+            return None
+
     except Exception as e:
         print(f"Error creating transcription client: {e}", file=sys.stderr)
         return None
@@ -730,12 +788,18 @@ def cmd_transcribe_audiofile(db: Database, config: Config, args: argparse.Namesp
     language = getattr(args, 'language', None)
     speaker_count = getattr(args, 'speaker_count', None)
     model = getattr(args, 'model', None)
+    backend = getattr(args, 'backend', 'local_whisper')
+    api_key = getattr(args, 'api_key', None)
+    project_id = getattr(args, 'project_id', None)
 
     result = _transcribe_audio_file(
         db, config, audio_file_id,
         language=language,
         speaker_count=speaker_count,
         model=model,
+        backend=backend,
+        api_key=api_key,
+        project_id=project_id,
     )
 
     if not result:
@@ -770,6 +834,9 @@ def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) 
     language = getattr(args, 'language', None)
     speaker_count = getattr(args, 'speaker_count', None)
     model = getattr(args, 'model', None)
+    backend = getattr(args, 'backend', 'local_whisper')
+    api_key = getattr(args, 'api_key', None)
+    project_id = getattr(args, 'project_id', None)
 
     # Get note to verify it exists
     note = db.get_note(note_id)
@@ -793,6 +860,9 @@ def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) 
             language=language,
             speaker_count=speaker_count,
             model=model,
+            backend=backend,
+            api_key=api_key,
+            project_id=project_id,
         )
 
         if result:
@@ -1501,6 +1571,25 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         type=str,
         help="Model name (e.g., 'small', 'large-v3') or path to model file"
     )
+    transcribe_audio_parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["local_whisper", "assemblyai", "google_cloud"],
+        default="local_whisper",
+        help="Transcription backend (default: local_whisper)"
+    )
+    transcribe_audio_parser.add_argument(
+        "--api-key",
+        dest="api_key",
+        type=str,
+        help="API key for cloud backends (AssemblyAI, Google Cloud)"
+    )
+    transcribe_audio_parser.add_argument(
+        "--project-id",
+        dest="project_id",
+        type=str,
+        help="Google Cloud project ID (for google_cloud backend)"
+    )
 
     # transcribe-note command
     transcribe_note_parser = cli_subparsers.add_parser(
@@ -1527,6 +1616,25 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "--model",
         type=str,
         help="Model name (e.g., 'small', 'large-v3') or path to model file"
+    )
+    transcribe_note_parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["local_whisper", "assemblyai", "google_cloud"],
+        default="local_whisper",
+        help="Transcription backend (default: local_whisper)"
+    )
+    transcribe_note_parser.add_argument(
+        "--api-key",
+        dest="api_key",
+        type=str,
+        help="API key for cloud backends (AssemblyAI, Google Cloud)"
+    )
+    transcribe_note_parser.add_argument(
+        "--project-id",
+        dest="project_id",
+        type=str,
+        help="Google Cloud project ID (for google_cloud backend)"
     )
 
     # sync command with subcommands
