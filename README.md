@@ -381,10 +381,21 @@ cd rust/voice-python && ../../.venv/bin/maturin develop --release && cd ../..
 - The default config directory is at `~/.config/voice/notes.db`, use the -d flag to set a custom directory.
 
 ```bash
-python -m src.main cli sync serve                                                     # Start with defaults (0.0.0.0:8384)
-python -m src.main cli sync serve --host 0.0.0.0 --port 8384  # Custom host/port
-python -m src.main -d /path/to/config cli sync serve               # With custom config directory
+python -m src.main cli sync serve                              # Start with defaults (0.0.0.0:8384)
+python -m src.main cli sync serve --host 0.0.0.0 --port 8384   # Custom host/port
+python -m src.main cli sync serve --verbose                    # Enable logging to stdout
+python -m src.main cli sync serve --verbose --no-color         # Logging without ANSI colors
+python -m src.main -d /path/to/config cli sync serve           # With custom config directory
 ```
+
+#### Sync Server Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--host` | | Host to bind to (default: 0.0.0.0) |
+| `--port` | | Port to bind to (default: 8384 or from config) |
+| `--verbose` | `-v` | Enable verbose logging to stdout (shows sync requests and operations) |
+| `--no-color` | | Disable ANSI color codes in log output (useful for log files or non-terminal output) |
 
 ### Using the TUI via SSH
 
@@ -417,13 +428,19 @@ After=network.target
 Type=simple
 User=voicesync
 WorkingDirectory=/var/www/voice
-ExecStart=/var/www/voice/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384
+ExecStart=/var/www/voice/.venv/bin/python -m src.main cli sync serve --host 0.0.0.0 --port 8384 --verbose --no-color
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+The `--verbose --no-color` flags are optional but recommended for production:
+- `--verbose` logs sync requests and operations to stdout, which systemd captures to journald
+- `--no-color` disables ANSI codes that would clutter the journal
+- View logs with `journalctl -u voicesync -f` to monitor sync activity or debug issues
+- Omit both flags if you don't need to monitor sync operations
 
 Enable and start:
 ```bash

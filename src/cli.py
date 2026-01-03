@@ -1261,11 +1261,18 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
         Exit code (0 for success)
     """
     port = getattr(args, 'port', None) or config.get_sync_server_port()
+    verbose = getattr(args, 'verbose', False)
+    no_color = getattr(args, 'no_color', False)
 
     # Use Rust sync server via voicecore bindings
     # The server handles its own startup message and Ctrl-C
     try:
-        start_sync_server(config_dir=str(config.get_config_dir()), port=port)
+        start_sync_server(
+            config_dir=str(config.get_config_dir()),
+            port=port,
+            verbose=verbose,
+            ansi_colors=not no_color
+        )
     except KeyboardInterrupt:
         # Rust already handled the shutdown, just exit cleanly
         pass
@@ -1705,6 +1712,16 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         type=int,
         default=None,
         help="Port to bind to (default: 8384 or from config)"
+    )
+    serve_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging to stdout (shows sync requests and operations)"
+    )
+    serve_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI color codes in log output"
     )
 
     # maintenance command with subcommands

@@ -1418,15 +1418,25 @@ fn sync_all_peers<'py>(
 /// Args:
 ///     config_dir: Path to config directory (optional, uses default if None)
 ///     port: Port to listen on (optional, uses config default if None)
+///     verbose: Enable verbose logging to stdout (default: False)
+///     ansi_colors: Enable ANSI color codes in log output (default: True)
 #[pyfunction]
-#[pyo3(signature = (config_dir=None, port=None))]
-fn start_sync_server(config_dir: Option<&str>, port: Option<u16>) -> PyResult<()> {
-    // Initialize tracing subscriber for logging output
-    use tracing_subscriber::{fmt, EnvFilter};
-    let _ = fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("voicecore=info".parse().unwrap()))
-        .with_target(false)
-        .try_init();
+#[pyo3(signature = (config_dir=None, port=None, verbose=false, ansi_colors=true))]
+fn start_sync_server(
+    config_dir: Option<&str>,
+    port: Option<u16>,
+    verbose: bool,
+    ansi_colors: bool,
+) -> PyResult<()> {
+    // Initialize tracing subscriber for logging output only if verbose is enabled
+    if verbose {
+        use tracing_subscriber::fmt;
+        let builder = fmt()
+            .with_max_level(tracing_subscriber::filter::LevelFilter::INFO)
+            .with_target(false)
+            .with_ansi(ansi_colors);
+        let _ = builder.try_init();
+    }
 
     // Create Tokio runtime
     let runtime = tokio::runtime::Runtime::new()
@@ -1446,6 +1456,9 @@ fn start_sync_server(config_dir: Option<&str>, port: Option<u16>) -> PyResult<()
     println!("  Device Name: {}", cfg.device_name());
     println!("  Listening:   http://0.0.0.0:{}", server_port);
     println!("  Endpoints:   /sync/status, /sync/changes, /sync/full, /sync/apply");
+    if verbose {
+        println!("  Logging:     enabled (verbose mode)");
+    }
     println!("  Press Ctrl-C to stop");
     println!();
 
