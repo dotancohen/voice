@@ -1262,12 +1262,13 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
     """
     port = getattr(args, 'port', None) or config.get_sync_server_port()
 
-    print("Press Ctrl+C to stop.")
-    print()
-
     # Use Rust sync server via voicecore bindings
-    # The server handles its own startup message
-    start_sync_server(config_dir=str(config.get_config_dir()), port=port)
+    # The server handles its own startup message and Ctrl-C
+    try:
+        start_sync_server(config_dir=str(config.get_config_dir()), port=port)
+    except KeyboardInterrupt:
+        # Rust already handled the shutdown, just exit cleanly
+        pass
 
     return 0
 

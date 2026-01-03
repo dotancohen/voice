@@ -1421,6 +1421,13 @@ fn sync_all_peers<'py>(
 #[pyfunction]
 #[pyo3(signature = (config_dir=None, port=None))]
 fn start_sync_server(config_dir: Option<&str>, port: Option<u16>) -> PyResult<()> {
+    // Initialize tracing subscriber for logging output
+    use tracing_subscriber::{fmt, EnvFilter};
+    let _ = fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive("voicecore=info".parse().unwrap()))
+        .with_target(false)
+        .try_init();
+
     // Create Tokio runtime
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
@@ -1439,15 +1446,26 @@ fn start_sync_server(config_dir: Option<&str>, port: Option<u16>) -> PyResult<()
     println!("  Device Name: {}", cfg.device_name());
     println!("  Listening:   http://0.0.0.0:{}", server_port);
     println!("  Endpoints:   /sync/status, /sync/changes, /sync/full, /sync/apply");
+    println!("  Press Ctrl-C to stop");
     println!();
 
     // Wrap in Arc<Mutex<>> for sync_server
     let db_arc = Arc::new(Mutex::new(db));
     let config_arc = Arc::new(Mutex::new(cfg));
 
-    // Run server (blocking)
-    runtime.block_on(sync_server::start_server(db_arc, config_arc, server_port))
-        .map_err(voice_error_to_pyerr)?;
+    // Run server with Ctrl-C handler
+    runtime.block_on(async {
+        // Spawn task to handle Ctrl-C
+        tokio::spawn(async {
+            if let Ok(()) = tokio::signal::ctrl_c().await {
+                println!("\nReceived Ctrl-C, shutting down...");
+                sync_server::stop_server();
+            }
+        });
+
+        // Run the server
+        sync_server::start_server(db_arc, config_arc, server_port).await
+    }).map_err(voice_error_to_pyerr)?;
 
     Ok(())
 }
