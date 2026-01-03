@@ -411,6 +411,14 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
             # Attach audio file to note
             db.attach_to_note(note_id, audio_file_id, "audio_file")
 
+            # Attach tags if specified
+            if args.tags:
+                for tag_id in args.tags:
+                    try:
+                        db.add_tag_to_note(note_id, tag_id)
+                    except Exception as tag_error:
+                        print(f"  Warning: Could not attach tag {tag_id}: {tag_error}")
+
             print(f"  Imported: {audio_path.name} -> {audio_file_id[:8]}...")
             imported += 1
 
@@ -1529,6 +1537,12 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "-r",
         action="store_true",
         help="Recursively search subdirectories"
+    )
+    import_audio_parser.add_argument(
+        "--tags",
+        nargs="+",
+        metavar="TAG_UUID",
+        help="Tag UUID(s) to attach to imported notes (can specify multiple)"
     )
 
     # list-audiofiles command

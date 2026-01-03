@@ -185,8 +185,11 @@ python -m src.main cli tag-notes --tags <tag-uuid> <tag-uuid> --notes <note-uuid
 #### Import files
 
 Import directory of audio files as new notes:
-```
+```bash
 python -m src.main cli import-audiofiles /path/to/files/
+python -m src.main cli import-audiofiles /path/to/files/ --recursive      # Include subdirectories
+python -m src.main cli import-audiofiles /path/to/files/ --tags <tag-uuid> # Tag imported notes
+python -m src.main cli import-audiofiles /path/to/files/ --tags <uuid1> <uuid2>  # Multiple tags
 ```
 
 #### Transcription
