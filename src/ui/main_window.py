@@ -94,6 +94,9 @@ class MainWindow(QMainWindow):
             from pathlib import Path
             self._transcription_service = TranscriptionService(self.db, Path(audiofile_dir))
 
+        # Track currently selected note for delete action
+        self._current_note_id: Optional[str] = None
+
         self.setup_ui()
         self.connect_signals()
 
@@ -169,6 +172,17 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        # Note menu
+        note_menu = menu_bar.addMenu("&Note")
+
+        # Delete Note action
+        self.delete_note_action = QAction("&Delete Note", self)
+        self.delete_note_action.setShortcut(QKeySequence.StandardKey.Delete)
+        self.delete_note_action.setStatusTip("Delete the selected note")
+        self.delete_note_action.triggered.connect(self.delete_current_note)
+        self.delete_note_action.setEnabled(False)  # Disabled until a note is selected
+        note_menu.addAction(self.delete_note_action)
+
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
 
@@ -196,8 +210,9 @@ class MainWindow(QMainWindow):
         # When a tag is selected, filter notes list
         self.tags_pane.tag_selected.connect(self.notes_list_pane.filter_by_tag)
 
-        # When a note is selected, show note detail
+        # When a note is selected, show note detail and enable Delete action
         self.notes_list_pane.note_selected.connect(self.note_pane.load_note)
+        self.notes_list_pane.note_selected.connect(self._on_note_selected)
 
         # When a note is saved, refresh the notes list
         self.note_pane.note_saved.connect(self.on_note_saved)
@@ -206,6 +221,15 @@ class MainWindow(QMainWindow):
         self.note_pane.transcribe_requested.connect(self._on_transcribe_requested)
 
         logger.info("Inter-pane signals connected")
+
+    def _on_note_selected(self, note_id: str) -> None:
+        """Handle note selection - enable Delete action.
+
+        Args:
+            note_id: ID of the selected note (hex string)
+        """
+        self._current_note_id = note_id
+        self.delete_note_action.setEnabled(True)
 
     def on_note_saved(self, note_id: int) -> None:
         """Handle note saved event - refresh notes list and mark unsynced.
@@ -240,6 +264,59 @@ class MainWindow(QMainWindow):
         if not self._has_unsynced_changes:
             self._has_unsynced_changes = True
             self._update_sync_action_style()
+
+    def delete_current_note(self) -> None:
+        """Delete the currently selected note after confirmation."""
+        if not self._current_note_id:
+            return
+
+        # Get note content for confirmation message
+        note = self.db.get_note(self._current_note_id)
+        if not note:
+            return
+
+        # Show preview in confirmation
+        content_preview = note.get("content", "")[:100]
+        if len(note.get("content", "")) > 100:
+            content_preview += "..."
+
+        # Confirmation dialog
+        reply = QMessageBox.question(
+            self,
+            "Delete Note",
+            f"Are you sure you want to delete this note?\n\n{content_preview}\n\nThis action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Perform soft delete
+        try:
+            success = self.db.delete_note(self._current_note_id)
+            if success:
+                logger.info(f"Deleted note {self._current_note_id}")
+
+                # Clear the note pane
+                self.note_pane.clear()
+
+                # Disable delete action
+                self.delete_note_action.setEnabled(False)
+                self._current_note_id = None
+
+                # Refresh notes list
+                self.notes_list_pane.load_notes()
+
+                # Mark as having unsynced changes
+                if not self._has_unsynced_changes:
+                    self._has_unsynced_changes = True
+                    self._update_sync_action_style()
+            else:
+                self._show_error("Delete Failed", "Failed to delete the note.")
+        except Exception as e:
+            logger.error(f"Failed to delete note: {e}")
+            self._show_error("Delete Failed", f"An error occurred:\n\n{e}")
 
     def _check_unsynced_changes(self) -> None:
         """Check if there are unsynced changes and update menu styling."""
