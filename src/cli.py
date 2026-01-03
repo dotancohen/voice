@@ -1267,7 +1267,7 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
 
     # Use Rust sync server via voicecore bindings
     # The server handles its own startup message
-    start_sync_server(config_dir=config.get_config_dir(), port=port)
+    start_sync_server(config_dir=str(config.get_config_dir()), port=port)
 
     return 0
 
