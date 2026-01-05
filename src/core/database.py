@@ -167,6 +167,20 @@ class Database:
             tag_id = uuid.UUID(bytes=tag_id).hex
         return self._rust_db.rename_tag(tag_id, new_name)
 
+    def delete_tag(self, tag_id: Union[bytes, str]) -> bool:
+        """Soft delete a tag.
+
+        Args:
+            tag_id: UUID of the tag to delete (bytes or hex string)
+
+        Returns:
+            True if a tag was deleted, False if not found
+        """
+        if isinstance(tag_id, bytes):
+            import uuid
+            tag_id = uuid.UUID(bytes=tag_id).hex
+        return self._rust_db.delete_tag(tag_id)
+
     def add_tag_to_note(
         self, note_id: Union[bytes, str], tag_id: Union[bytes, str]
     ) -> bool:
