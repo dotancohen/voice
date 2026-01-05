@@ -205,6 +205,10 @@ impl PyDatabase {
         self.inner_ref()?.delete_note(note_id).map_err(voice_error_to_pyerr)
     }
 
+    fn merge_notes(&self, note_id_1: &str, note_id_2: &str) -> PyResult<String> {
+        self.inner_ref()?.merge_notes(note_id_1, note_id_2).map_err(voice_error_to_pyerr)
+    }
+
     fn get_all_notes<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let notes = self.inner_ref()?.get_all_notes().map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);

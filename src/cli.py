@@ -9,6 +9,7 @@ Commands:
     show-note <id>          Show details of a specific note
     new-note [content]      Create a new note
     edit-note <id> [content] Edit an existing note
+    merge-notes <id1> <id2> Merge two notes into one
     list-tags               List all tags in hierarchy
     search                  Search notes by text and/or tags
 """
@@ -233,6 +234,51 @@ def cmd_edit_note(db: Database, args: argparse.Namespace) -> int:
             print(json.dumps({"id": args.note_id, "content": content, "updated": True}))
         else:
             print(f"Updated note #{args.note_id}")
+        return 0
+    except ValidationError as e:
+        print(f"Error: {e.message}", file=sys.stderr)
+        return 1
+
+
+def cmd_merge_notes(db: Database, args: argparse.Namespace) -> int:
+    """Merge two notes into one.
+
+    The note with the earlier created_at timestamp survives.
+    Content is concatenated with a separator line.
+    Tags and attachments are moved from the deleted note.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        survivor_id = db.merge_notes(args.note_id_1, args.note_id_2)
+
+        # Get the merged note to display
+        merged_note = db.get_note(survivor_id)
+        if not merged_note:
+            print(f"Error: Could not retrieve merged note.", file=sys.stderr)
+            return 1
+
+        if args.format == "json":
+            print(json.dumps({
+                "survivor_id": survivor_id,
+                "deleted_id": args.note_id_2 if survivor_id == args.note_id_1 else args.note_id_1,
+                "content": merged_note.get("content", ""),
+                "tags": merged_note.get("tag_names", ""),
+            }))
+        else:
+            deleted_id = args.note_id_2 if survivor_id == args.note_id_1 else args.note_id_1
+            print(f"Merged notes into #{survivor_id[:8]}...")
+            print(f"Deleted note #{deleted_id[:8]}...")
+            print()
+            content = merged_note.get("content", "")
+            if content:
+                print("Content:")
+                print(content[:500] + ("..." if len(content) > 500 else ""))
         return 0
     except ValidationError as e:
         print(f"Error: {e.message}", file=sys.stderr)
@@ -1465,6 +1511,22 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="New content (reads from stdin if not provided)"
     )
 
+    # merge-notes command
+    merge_notes_parser = cli_subparsers.add_parser(
+        "merge-notes",
+        help="Merge two notes into one"
+    )
+    merge_notes_parser.add_argument(
+        "note_id_1",
+        type=str,
+        help="ID of the first note (UUID hex string)"
+    )
+    merge_notes_parser.add_argument(
+        "note_id_2",
+        type=str,
+        help="ID of the second note (UUID hex string)"
+    )
+
     # list-tags command
     cli_subparsers.add_parser(
         "list-tags",
@@ -1786,6 +1848,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_new_note(db, args)
         elif args.cli_command == "edit-note":
             return cmd_edit_note(db, args)
+        elif args.cli_command == "merge-notes":
+            return cmd_merge_notes(db, args)
         elif args.cli_command == "list-tags":
             return cmd_list_tags(db, args)
         elif args.cli_command == "new-tag":

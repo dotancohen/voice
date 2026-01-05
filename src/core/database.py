@@ -83,6 +83,25 @@ class Database:
             note_id = uuid.UUID(bytes=note_id).hex
         return self._rust_db.delete_note(note_id)
 
+    def merge_notes(self, note_id_1: Union[bytes, str], note_id_2: Union[bytes, str]) -> str:
+        """Merge two notes into one.
+
+        - Keeps the note with the earliest created_at timestamp
+        - Concatenates content with separator (if both non-empty)
+        - Moves tags from victim to survivor (deduplicates)
+        - Moves attachments from victim to survivor
+        - Soft-deletes the victim note
+
+        Returns the surviving note ID (hex string).
+        """
+        if isinstance(note_id_1, bytes):
+            import uuid
+            note_id_1 = uuid.UUID(bytes=note_id_1).hex
+        if isinstance(note_id_2, bytes):
+            import uuid
+            note_id_2 = uuid.UUID(bytes=note_id_2).hex
+        return self._rust_db.merge_notes(note_id_1, note_id_2)
+
     def get_all_tags(self) -> List[Dict[str, Any]]:
         """Get all non-deleted tags."""
         return self._rust_db.get_all_tags()

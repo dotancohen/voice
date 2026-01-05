@@ -522,3 +522,215 @@ class TestDeleteNote:
         fake_id = "00000000000070008000999999999999"
         result = populated_db.delete_note(fake_id)
         assert result is False
+
+
+class TestMergeNotes:
+    """Test merge_notes method."""
+
+    def test_merges_content_with_separator(self, empty_db: Database) -> None:
+        """Test that content is merged with separator."""
+        import time
+        note1_id = empty_db.create_note("First note content")
+        time.sleep(0.01)  # Ensure different timestamps
+        note2_id = empty_db.create_note("Second note content")
+
+        survivor_id = empty_db.merge_notes(note1_id, note2_id)
+
+        # First note (earlier) should survive
+        assert survivor_id == note1_id
+
+        note = empty_db.get_note(survivor_id)
+        assert note is not None
+        assert "First note content" in note["content"]
+        assert "----------------" in note["content"]
+        assert "Second note content" in note["content"]
+
+    def test_preserves_earlier_note(self, empty_db: Database) -> None:
+        """Test that note with earlier created_at survives."""
+        import time
+        note1_id = empty_db.create_note("First")
+        time.sleep(1.1)  # Sleep > 1s to ensure different second-precision timestamps
+        note2_id = empty_db.create_note("Second")
+
+        # Merge with second note first in args - should still keep first
+        survivor_id = empty_db.merge_notes(note2_id, note1_id)
+        assert survivor_id == note1_id
+
+    def test_soft_deletes_later_note(self, empty_db: Database) -> None:
+        """Test that later note is soft-deleted."""
+        import time
+        note1_id = empty_db.create_note("First")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Second")
+
+        empty_db.merge_notes(note1_id, note2_id)
+
+        # Second note should be deleted
+        note = empty_db.get_note(note2_id)
+        assert note is None
+
+        # All notes should only include first
+        notes = empty_db.get_all_notes()
+        assert len(notes) == 1
+        assert notes[0]["id"] == note1_id
+
+    def test_no_separator_when_survivor_empty(self, empty_db: Database) -> None:
+        """Test no separator when survivor content is empty."""
+        import time
+        note1_id = empty_db.create_note("")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Content from second")
+
+        survivor_id = empty_db.merge_notes(note1_id, note2_id)
+        note = empty_db.get_note(survivor_id)
+
+        assert note["content"] == "Content from second"
+        assert "----------------" not in note["content"]
+
+    def test_no_separator_when_victim_empty(self, empty_db: Database) -> None:
+        """Test no separator when victim content is empty."""
+        import time
+        note1_id = empty_db.create_note("Content from first")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("")
+
+        survivor_id = empty_db.merge_notes(note1_id, note2_id)
+        note = empty_db.get_note(survivor_id)
+
+        assert note["content"] == "Content from first"
+        assert "----------------" not in note["content"]
+
+    def test_both_contents_empty(self, empty_db: Database) -> None:
+        """Test merging two notes with empty content."""
+        import time
+        note1_id = empty_db.create_note("")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("")
+
+        survivor_id = empty_db.merge_notes(note1_id, note2_id)
+        note = empty_db.get_note(survivor_id)
+
+        assert note["content"] == ""
+
+    def test_moves_tags_from_victim(self, empty_db: Database) -> None:
+        """Test that tags are moved from victim to survivor."""
+        import time
+        note1_id = empty_db.create_note("First")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Second")
+
+        tag_id = empty_db.create_tag("TestTag")
+        empty_db.add_tag_to_note(note2_id, tag_id)
+
+        empty_db.merge_notes(note1_id, note2_id)
+
+        # Survivor should have the tag
+        note = empty_db.get_note(note1_id)
+        assert "TestTag" in note["tag_names"]
+
+    def test_deduplicates_tags(self, empty_db: Database) -> None:
+        """Test that duplicate tags are not created."""
+        import time
+        note1_id = empty_db.create_note("First")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Second")
+
+        tag_id = empty_db.create_tag("SharedTag")
+        empty_db.add_tag_to_note(note1_id, tag_id)
+        empty_db.add_tag_to_note(note2_id, tag_id)
+
+        empty_db.merge_notes(note1_id, note2_id)
+
+        # Survivor should have tag only once
+        note = empty_db.get_note(note1_id)
+        assert note["tag_names"].count("SharedTag") == 1
+
+    def test_moves_multiple_tags(self, empty_db: Database) -> None:
+        """Test moving multiple tags from victim."""
+        import time
+        note1_id = empty_db.create_note("First")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Second")
+
+        tag1_id = empty_db.create_tag("Tag1")
+        tag2_id = empty_db.create_tag("Tag2")
+        tag3_id = empty_db.create_tag("Tag3")
+
+        empty_db.add_tag_to_note(note1_id, tag1_id)
+        empty_db.add_tag_to_note(note2_id, tag2_id)
+        empty_db.add_tag_to_note(note2_id, tag3_id)
+
+        empty_db.merge_notes(note1_id, note2_id)
+
+        note = empty_db.get_note(note1_id)
+        assert "Tag1" in note["tag_names"]
+        assert "Tag2" in note["tag_names"]
+        assert "Tag3" in note["tag_names"]
+
+    def test_moves_attachments(self, empty_db: Database) -> None:
+        """Test that attachments are moved from victim to survivor."""
+        import time
+        note1_id = empty_db.create_note("First")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Second")
+
+        # Create an audio file and attach to note2
+        audio_id = empty_db.create_audio_file("test.wav")
+        empty_db.attach_to_note(note2_id, audio_id, "audio_file")
+
+        empty_db.merge_notes(note1_id, note2_id)
+
+        # Survivor should have the attachment
+        attachments = empty_db.get_attachments_for_note(note1_id)
+        assert len(attachments) == 1
+        assert attachments[0]["attachment_id"] == audio_id
+
+    def test_error_same_note_id(self, empty_db: Database) -> None:
+        """Test error when merging note with itself."""
+        note_id = empty_db.create_note("Test")
+
+        with pytest.raises(Exception) as exc_info:
+            empty_db.merge_notes(note_id, note_id)
+        assert "itself" in str(exc_info.value).lower()
+
+    def test_error_nonexistent_note(self, empty_db: Database) -> None:
+        """Test error when note doesn't exist."""
+        note_id = empty_db.create_note("Test")
+        fake_id = "00000000000070008000999999999999"
+
+        with pytest.raises(Exception) as exc_info:
+            empty_db.merge_notes(note_id, fake_id)
+        assert "not found" in str(exc_info.value).lower()
+
+    def test_error_deleted_note(self, empty_db: Database) -> None:
+        """Test error when merging with deleted note."""
+        import time
+        note1_id = empty_db.create_note("First")
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Second")
+
+        empty_db.delete_note(note2_id)
+
+        with pytest.raises(Exception) as exc_info:
+            empty_db.merge_notes(note1_id, note2_id)
+        assert "deleted" in str(exc_info.value).lower()
+
+    def test_updates_modified_at(self, empty_db: Database) -> None:
+        """Test that survivor's modified_at is updated."""
+        import time
+        note1_id = empty_db.create_note("First")
+
+        # Get initial modified_at (should be None)
+        note_before = empty_db.get_note(note1_id)
+        initial_modified = note_before.get("modified_at")
+
+        time.sleep(0.01)
+        note2_id = empty_db.create_note("Second")
+
+        time.sleep(0.01)
+        empty_db.merge_notes(note1_id, note2_id)
+
+        note_after = empty_db.get_note(note1_id)
+        assert note_after["modified_at"] is not None
+        if initial_modified:
+            assert note_after["modified_at"] > initial_modified
