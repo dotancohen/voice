@@ -185,9 +185,14 @@ class TestEditDeleteConflicts:
         node_b.reload_db()
 
         # B should have the note deleted
+        # get_note filters deleted notes, so it should return None
         note_b = node_b.db.get_note(note_id)
-        assert note_b is not None
-        assert note_b.get("deleted_at") is not None, "Note should be deleted on B"
+        assert note_b is None, "Deleted note should not be returned by get_note"
+
+        # Verify note is not in get_all_notes
+        notes_b = node_b.db.get_all_notes()
+        note_ids_b = [n["id"] for n in notes_b]
+        assert note_id not in note_ids_b, "Note should be deleted on B"
 
     def test_delete_creates_conflict_when_local_edited(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]

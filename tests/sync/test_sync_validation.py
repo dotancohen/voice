@@ -293,9 +293,9 @@ class TestVeryLongContent:
                 data={
                     "id": "00000000000070008000000000000099",
                     "content": long_content,
-                    "created_at": "2024-01-01T00:00:00",
+                    "created_at": "2024-01-01 00:00:00",  # Must use space, not T
                 },
-                timestamp="2024-01-01T00:00:00",
+                timestamp="2024-01-01 00:00:00",  # Must use space, not T
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -306,8 +306,9 @@ class TestVeryLongContent:
             "00000000000070008000000000000001",
         )
 
-        assert applied == 1
+        assert applied == 1, f"Expected 1 applied, got {applied}. Errors: {errors}"
         note = sync_node_a.db.get_note("00000000000070008000000000000099")
+        assert note is not None, "Note should exist"
         assert len(note["content"]) == len(long_content)
 
 

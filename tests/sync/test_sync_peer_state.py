@@ -293,10 +293,12 @@ class TestPeerHandshakeTimestamps:
             json={
                 "device_id": node_a.device_id_hex,
                 "device_name": "NodeA",
+                "protocol_version": "1.0",
             },
             timeout=5,
         )
 
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         data = response.json()
         # May or may not have last_sync depending on implementation
         assert "last_sync_timestamp" in data or data.get("device_id") is not None
@@ -310,10 +312,12 @@ class TestPeerHandshakeTimestamps:
             json={
                 "device_id": "00000000000070008000000099999999",
                 "device_name": "NewPeer",
+                "protocol_version": "1.0",
             },
             timeout=5,
         )
 
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         data = response.json()
         # New peer should have null last_sync
         assert data.get("last_sync_timestamp") is None

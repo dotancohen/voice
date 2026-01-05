@@ -513,6 +513,11 @@ class TestSyncClientDeletes:
         node_b.reload_db()
 
         # B's note is now deleted (delete propagates when unedited)
+        # get_note filters deleted notes, so it should return None
         note_b = node_b.db.get_note(note_id)
-        assert note_b is not None  # Note still exists (soft delete)
-        assert note_b.get("deleted_at") is not None  # But is deleted
+        assert note_b is None, "Deleted note should not be returned by get_note"
+
+        # Verify note is not in get_all_notes either
+        notes_b = node_b.db.get_all_notes()
+        note_ids_b = [n["id"] for n in notes_b]
+        assert note_id not in note_ids_b

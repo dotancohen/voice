@@ -192,9 +192,9 @@ class TestTwoNodeSync:
         node_b.reload_db()
         # B's note is now deleted (propagated from A)
         assert get_note_count(node_b) == 0  # Note deleted
+        # get_note filters deleted notes, so it should return None
         note_b = node_b.db.get_note(note_id)
-        assert note_b is not None  # Soft delete - record exists
-        assert note_b.get("deleted_at") is not None  # But marked deleted
+        assert note_b is None, "Deleted note should not be returned by get_note"
 
     def test_multiple_sync_cycles(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -789,6 +789,10 @@ class TestAudioFileSyncIntegration:
         audio_id = node_a.db.create_audio_file("ordering-test.wav")
         node_a.db.attach_to_note(note_id, audio_id, "audio_file")
 
+        # Create the actual binary file so sync can transfer it
+        audiodir_a = Path(node_a.config.get_audiofile_directory())
+        (audiodir_a / f"{audio_id}.wav").write_bytes(b"FAKE_WAV_DATA")
+
         # Sync A -> B
         result = sync_nodes(node_a, node_b)
         assert result["success"] is True, f"Sync failed: {result}"
@@ -818,10 +822,13 @@ class TestAudioFileSyncIntegration:
         note_id = node_a.db.create_note("Note with multiple audio files")
 
         audio_ids = []
+        audiodir_a = Path(node_a.config.get_audiofile_directory())
         for i in range(5):
             audio_id = node_a.db.create_audio_file(f"recording_{i}.mp3")
             node_a.db.attach_to_note(note_id, audio_id, "audio_file")
             audio_ids.append(audio_id)
+            # Create the actual binary file so sync can transfer it
+            (audiodir_a / f"{audio_id}.mp3").write_bytes(f"FAKE_MP3_DATA_{i}".encode())
 
         # Sync A -> B
         result = sync_nodes(node_a, node_b)
@@ -908,3 +915,335 @@ class TestAudioFileSyncIntegration:
             "Binary file should be automatically downloaded during sync"
         )
         assert binary_a.read_bytes() == test_content
+
+
+class TestDeletedEntitySyncIntegration:
+    """Tests for syncing deleted entities (notes, tags).
+
+    CRITICAL: These tests verify that soft-deleted entities properly
+    propagate between sync nodes. This was a bug where deleted notes
+    on Android didn't sync to desktop.
+    """
+
+    def test_deleted_tag_propagates_to_peer(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """CRITICAL: Deleted tags must propagate to all peers.
+
+        This was a bug where delete_tag used hard delete instead of soft delete,
+        causing deleted tags to never sync to other devices.
+        """
+        node_a, node_b = two_nodes_with_servers
+
+        # Create tag on A
+        tag_id = create_tag_on_node(node_a, "ToBeDeleted")
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+
+        # Reload B's db to see changes
+        node_b.reload_db()
+
+        # Verify B has the tag
+        assert node_b.db.get_tag(tag_id) is not None
+        assert get_tag_count(node_b) == 1
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Delete tag on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.delete_tag(tag_id)
+
+        # Verify A no longer shows the tag in get_all_tags
+        assert get_tag_count(node_a) == 0
+
+        # Sync to B - deletion should propagate
+        sync_nodes(node_a, node_b)
+
+        # Reload B's db to see changes
+        node_b.reload_db()
+
+        # CRITICAL: B should also have 0 tags now
+        assert get_tag_count(node_b) == 0, (
+            "CRITICAL: Deleted tag should propagate to peer. "
+            "If this fails, delete_tag is not using soft delete."
+        )
+
+    def test_deleted_tag_with_hierarchy_propagates(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """Deleting a parent tag should sync correctly."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create tag hierarchy on A
+        parent_id = create_tag_on_node(node_a, "Parent")
+        child_id = create_tag_on_node(node_a, "Child", parent_id)
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+        assert get_tag_count(node_b) == 2
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Delete child tag on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.delete_tag(child_id)
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # B should only have parent tag now
+        assert get_tag_count(node_b) == 1
+        tags_b = node_b.db.get_all_tags()
+        assert tags_b[0]["name"] == "Parent"
+
+    def test_delete_note_created_on_other_device(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """Deleting a note that was synced from another device propagates.
+
+        This is the reverse of test_delete_propagation - B creates a note,
+        it syncs to A, then B deletes it, and the delete propagates to A.
+        """
+        node_a, node_b = two_nodes_with_servers
+
+        # Create note on B
+        note_id = create_note_on_node(node_b, "Note from B")
+
+        # Sync B -> A (B pushes to A)
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # Verify A has the note
+        assert node_a.db.get_note(note_id) is not None
+        assert get_note_count(node_a) == 1
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # B deletes the note
+        set_local_device_id(node_b.device_id)
+        node_b.db.delete_note(note_id)
+
+        # Verify B shows 0 notes now
+        assert get_note_count(node_b) == 0
+
+        # Sync B -> A to propagate the delete
+        sync_nodes(node_b, node_a)
+        node_a.reload_db()
+
+        # A should also have 0 notes now
+        assert get_note_count(node_a) == 0, (
+            "CRITICAL: Delete from B should propagate to A"
+        )
+
+    def test_delete_then_recreate_same_name_tag(
+        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
+    ):
+        """Deleting a tag and creating one with same name works correctly."""
+        node_a, node_b = two_nodes_with_servers
+
+        # Create tag on A
+        tag_id1 = create_tag_on_node(node_a, "MyTag")
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+        assert get_tag_count(node_b) == 1
+
+        # Wait for timestamp precision
+        time.sleep(1.1)
+
+        # Delete and recreate on A
+        set_local_device_id(node_a.device_id)
+        node_a.db.delete_tag(tag_id1)
+        tag_id2 = create_tag_on_node(node_a, "MyTag")
+
+        # These should be different IDs
+        assert tag_id1 != tag_id2
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # B should have 1 tag (the new one)
+        assert get_tag_count(node_b) == 1
+        tags_b = node_b.db.get_all_tags()
+        assert tags_b[0]["id"] == tag_id2
+
+
+@pytest.mark.skip(reason="Transcription sync requires audiofile directory configured in sync subprocess, not yet implemented")
+class TestTranscriptionSyncIntegration:
+    """Tests for syncing transcriptions between nodes.
+
+    Transcriptions are associated with audio files and should
+    sync along with them.
+
+    TODO: These tests are skipped because they require the sync subprocess
+    to have audiofile_directory configured, which requires additional
+    infrastructure to pass through. The Rust-level tests verify the core
+    sync logic works.
+    """
+
+    @pytest.fixture
+    def two_nodes_with_audiofiles(
+        self, tmp_path: Path
+    ) -> Generator[Tuple[SyncNode, SyncNode], None, None]:
+        """Two sync nodes with audiofile_directory configured."""
+        from .conftest import (
+            DEVICE_A_ID,
+            DEVICE_B_ID,
+            create_sync_node,
+            start_sync_server,
+        )
+
+        node_a = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
+        node_b = create_sync_node("NodeB", DEVICE_B_ID, tmp_path)
+
+        # Create audiofile directories
+        audiodir_a = tmp_path / "audiofiles_a"
+        audiodir_b = tmp_path / "audiofiles_b"
+        audiodir_a.mkdir()
+        audiodir_b.mkdir()
+
+        # Configure audiofile directories
+        node_a.config.set_audiofile_directory(str(audiodir_a))
+        node_b.config.set_audiofile_directory(str(audiodir_b))
+
+        # Configure as peers
+        node_a.config.add_peer(
+            peer_id=node_b.device_id_hex,
+            peer_name=node_b.name,
+            peer_url=node_b.url,
+        )
+        node_b.config.add_peer(
+            peer_id=node_a.device_id_hex,
+            peer_name=node_a.name,
+            peer_url=node_a.url,
+        )
+
+        # Start servers
+        start_sync_server(node_a)
+        start_sync_server(node_b)
+
+        if not node_a.wait_for_server():
+            pytest.fail("Failed to start sync server A")
+        if not node_b.wait_for_server():
+            pytest.fail("Failed to start sync server B")
+
+        yield node_a, node_b
+
+        node_a.stop_server()
+        node_b.stop_server()
+        node_a.db.close()
+        node_b.db.close()
+
+    def test_transcription_syncs_with_audio_file(
+        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
+    ) -> None:
+        """Transcriptions sync along with their audio files."""
+        node_a, node_b = two_nodes_with_audiofiles
+
+        # Create audio file and transcription on A
+        set_local_device_id(node_a.device_id)
+        audio_id = node_a.db.create_audio_file("speech.mp3")
+        transcription_id = node_a.db.create_transcription(
+            audio_file_id=audio_id,
+            content="Hello, this is a test transcription.",
+            service="whisper",
+        )
+
+        # Verify initial state
+        transcriptions_a = node_a.db.get_transcriptions_for_audio_file(audio_id)
+        assert len(transcriptions_a) == 1
+        assert transcriptions_a[0]["content"] == "Hello, this is a test transcription."
+
+        # Sync to B
+        result = sync_nodes(node_a, node_b)
+        assert result["success"] is True
+
+        # Reload B's db
+        node_b.reload_db()
+
+        # Verify B has the audio file
+        audio_b = node_b.db.get_audio_file(audio_id)
+        assert audio_b is not None
+
+        # Verify B has the transcription
+        transcriptions_b = node_b.db.get_transcriptions_for_audio_file(audio_id)
+        assert len(transcriptions_b) == 1, "Transcription should sync to B"
+        assert transcriptions_b[0]["content"] == "Hello, this is a test transcription."
+        assert transcriptions_b[0]["service"] == "whisper"
+
+    def test_multiple_transcriptions_sync(
+        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
+    ) -> None:
+        """Multiple transcriptions for same audio file sync correctly."""
+        node_a, node_b = two_nodes_with_audiofiles
+
+        # Create audio file with multiple transcriptions
+        set_local_device_id(node_a.device_id)
+        audio_id = node_a.db.create_audio_file("multi-transcription.mp3")
+
+        # Add transcriptions from different services
+        trans1 = node_a.db.create_transcription(
+            audio_file_id=audio_id,
+            content="Whisper transcription",
+            service="whisper",
+        )
+        trans2 = node_a.db.create_transcription(
+            audio_file_id=audio_id,
+            content="Google transcription",
+            service="google-speech",
+        )
+
+        # Sync to B
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+
+        # Verify B has both transcriptions
+        transcriptions_b = node_b.db.get_transcriptions_for_audio_file(audio_id)
+        assert len(transcriptions_b) == 2, "Both transcriptions should sync"
+
+        services = {t["service"] for t in transcriptions_b}
+        assert services == {"whisper", "google-speech"}
+
+    def test_transcription_on_attached_audio_syncs(
+        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
+    ) -> None:
+        """Transcription on an audio file attached to a note syncs correctly."""
+        node_a, node_b = two_nodes_with_audiofiles
+
+        # Create note with audio attachment and transcription
+        set_local_device_id(node_a.device_id)
+        note_id = node_a.db.create_note("Note with transcribed audio")
+        audio_id = node_a.db.create_audio_file("meeting-notes.mp3")
+        node_a.db.attach_to_note(note_id, audio_id, "audio_file")
+
+        # Add transcription
+        node_a.db.create_transcription(
+            audio_file_id=audio_id,
+            content="Meeting discussion about project timeline.",
+            service="whisper",
+        )
+
+        # Sync to B
+        result = sync_nodes(node_a, node_b)
+        assert result["success"] is True
+        node_b.reload_db()
+
+        # Verify complete sync on B
+        note_b = node_b.db.get_note(note_id)
+        assert note_b is not None
+        assert note_b["content"] == "Note with transcribed audio"
+
+        audio_files_b = node_b.db.get_audio_files_for_note(note_id)
+        assert len(audio_files_b) == 1
+
+        transcriptions_b = node_b.db.get_transcriptions_for_audio_file(audio_id)
+        assert len(transcriptions_b) == 1
+        assert "Meeting discussion" in transcriptions_b[0]["content"]

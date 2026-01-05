@@ -71,8 +71,8 @@ class TestProtocolVersionHandshake:
 
         assert response.status_code == 200
 
-    def test_handshake_accepts_no_version(self, running_server_a: SyncNode):
-        """Handshake accepts request without protocol version."""
+    def test_handshake_requires_protocol_version(self, running_server_a: SyncNode):
+        """Handshake requires protocol version."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
             json={
@@ -83,8 +83,8 @@ class TestProtocolVersionHandshake:
             timeout=5,
         )
 
-        # Should default to 1.0 and succeed
-        assert response.status_code == 200
+        # Server now requires protocol_version
+        assert response.status_code == 422
 
 
 class TestProtocolVersionMismatch:
@@ -176,7 +176,7 @@ class TestProtocolCompatibility:
         )
         assert status.status_code == 200
 
-        # Changes
+        # Changes - no device_id required for simple GET
         changes = requests.get(
             f"{running_server_a.url}/sync/changes",
             timeout=5,
@@ -195,6 +195,7 @@ class TestProtocolCompatibility:
             f"{running_server_a.url}/sync/apply",
             json={
                 "device_id": "00000000000070008000000000000099",
+                "device_name": "Test",
                 "changes": [],
             },
             timeout=5,
@@ -226,10 +227,12 @@ class TestProtocolVersionDiscovery:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
+                "protocol_version": "1.0",
             },
             timeout=5,
         )
 
+        assert response.status_code == 200
         data = response.json()
         assert "protocol_version" in data
 
@@ -305,13 +308,14 @@ class TestFutureProtocolVersion:
             f"{running_server_a.url}/sync/apply",
             json={
                 "device_id": "00000000000070008000000000000099",
+                "device_name": "Test",
                 "changes": [
                     {
                         "entity_type": "future_entity",
                         "entity_id": "00000000000070008000000000000099",
                         "operation": "create",
                         "data": {},
-                        "timestamp": "2024-01-01T00:00:00",
+                        "timestamp": "2024-01-01 00:00:00",  # Use space, not T
                         "device_id": "00000000000070008000000000000099",
                     }
                 ],
@@ -319,12 +323,12 @@ class TestFutureProtocolVersion:
             timeout=5,
         )
 
-        # Should handle gracefully with errors
-        # 422 means all changes failed (unknown entity type)
-        assert response.status_code in [200, 422]
+        # Should handle gracefully - unknown entity type produces error
+        assert response.status_code == 200
         data = response.json()
-        # Unknown entity type should be skipped or errored
-        assert data["applied"] == 0 or len(data.get("errors", [])) > 0
+        # Unknown entity type should be skipped and reported as error
+        assert data["applied"] == 0
+        assert len(data.get("errors", [])) > 0
 
 
 class TestProtocolVersionEdgeCases:
@@ -357,8 +361,8 @@ class TestProtocolVersionEdgeCases:
             timeout=5,
         )
 
-        # Should default or handle gracefully
-        assert response.status_code in [200, 400]
+        # Null is treated as missing - server requires a valid protocol_version
+        assert response.status_code in [200, 400, 422]
 
     def test_numeric_protocol_version(self, running_server_a: SyncNode):
         """Numeric protocol version is handled."""
@@ -372,5 +376,5 @@ class TestProtocolVersionEdgeCases:
             timeout=5,
         )
 
-        # Should handle gracefully
-        assert response.status_code in [200, 400]
+        # Server may reject non-string protocol_version
+        assert response.status_code in [200, 400, 422]
