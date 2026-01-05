@@ -1,4 +1,4 @@
-"""CLI tests for show-note command.
+"""CLI tests for note-show command.
 
 Tests displaying individual note details in various formats.
 """
@@ -19,7 +19,7 @@ from core.database import Database
 
 @pytest.mark.cli
 class TestShowNote:
-    """Test show-note CLI command."""
+    """Test note-show CLI command."""
 
     def test_show_note_text_format(
         self, test_db_path: Path, populated_db: Database
@@ -29,7 +29,7 @@ class TestShowNote:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", note_id
+                "note-show", note_id
             ],
             capture_output=True,
             text=True
@@ -49,7 +49,7 @@ class TestShowNote:
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "--format", "json",
-                "show-note", note_id
+                "note-show", note_id
             ],
             capture_output=True,
             text=True
@@ -70,7 +70,7 @@ class TestShowNote:
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
                 "--format", "csv",
-                "show-note", note_id
+                "note-show", note_id
             ],
             capture_output=True,
             text=True
@@ -89,7 +89,7 @@ class TestShowNote:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", note_id
+                "note-show", note_id
             ],
             capture_output=True,
             text=True
@@ -108,7 +108,7 @@ class TestShowNote:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", nonexistent_id
+                "note-show", nonexistent_id
             ],
             capture_output=True,
             text=True
@@ -125,7 +125,7 @@ class TestShowNote:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
-                "show-note", note_id
+                "note-show", note_id
             ],
             capture_output=True,
             text=True

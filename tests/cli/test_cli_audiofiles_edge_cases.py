@@ -37,7 +37,7 @@ def config_with_audiofiles(test_config_dir: Path, tmp_path: Path) -> Path:
 
 
 class TestImportAudiofilesEdgeCases:
-    """Edge case tests for import-audiofiles command."""
+    """Edge case tests for audiofiles-import command."""
 
     def test_import_empty_directory(
         self, config_with_audiofiles: Path, tmp_path: Path
@@ -50,7 +50,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(empty_dir)
+                "cli", "audiofiles-import", str(empty_dir)
             ],
             capture_output=True,
             text=True
@@ -75,7 +75,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(no_audio_dir)
+                "cli", "audiofiles-import", str(no_audio_dir)
             ],
             capture_output=True,
             text=True
@@ -96,7 +96,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(unicode_dir)
+                "cli", "audiofiles-import", str(unicode_dir)
             ],
             capture_output=True,
             text=True
@@ -125,7 +125,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_dir)
+                "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
             text=True
@@ -154,7 +154,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_dir)
+                "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
             text=True
@@ -177,7 +177,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(many_files_dir)
+                "cli", "audiofiles-import", str(many_files_dir)
             ],
             capture_output=True,
             text=True,
@@ -200,7 +200,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(large_files_dir)
+                "cli", "audiofiles-import", str(large_files_dir)
             ],
             capture_output=True,
             text=True,
@@ -222,7 +222,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(empty_files_dir)
+                "cli", "audiofiles-import", str(empty_files_dir)
             ],
             capture_output=True,
             text=True
@@ -241,7 +241,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(fake_dir)
+                "cli", "audiofiles-import", str(fake_dir)
             ],
             capture_output=True,
             text=True
@@ -261,7 +261,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(file_path)
+                "cli", "audiofiles-import", str(file_path)
             ],
             capture_output=True,
             text=True
@@ -286,7 +286,7 @@ class TestImportAudiofilesEdgeCases:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(all_formats_dir)
+                "cli", "audiofiles-import", str(all_formats_dir)
             ],
             capture_output=True,
             text=True
@@ -296,17 +296,17 @@ class TestImportAudiofilesEdgeCases:
 
 
 class TestShowAudiofileEdgeCases:
-    """Edge case tests for show-audiofile command."""
+    """Edge case tests for audiofile-show command."""
 
     def test_show_invalid_uuid_format(
         self, config_with_audiofiles: Path
     ) -> None:
-        """Test show-audiofile with invalid UUID format."""
+        """Test audiofile-show with invalid UUID format."""
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "show-audiofile", "not-a-valid-uuid"
+                "cli", "audiofile-show", "not-a-valid-uuid"
             ],
             capture_output=True,
             text=True
@@ -317,12 +317,12 @@ class TestShowAudiofileEdgeCases:
     def test_show_empty_id(
         self, config_with_audiofiles: Path
     ) -> None:
-        """Test show-audiofile with empty ID."""
+        """Test audiofile-show with empty ID."""
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "show-audiofile", ""
+                "cli", "audiofile-show", ""
             ],
             capture_output=True,
             text=True
@@ -334,14 +334,14 @@ class TestShowAudiofileEdgeCases:
     def test_show_very_long_id(
         self, config_with_audiofiles: Path
     ) -> None:
-        """Test show-audiofile with very long ID."""
+        """Test audiofile-show with very long ID."""
         long_id = "a" * 1000
 
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "show-audiofile", long_id
+                "cli", "audiofile-show", long_id
             ],
             capture_output=True,
             text=True
@@ -351,17 +351,17 @@ class TestShowAudiofileEdgeCases:
 
 
 class TestListAudiofilesEdgeCases:
-    """Edge case tests for list-audiofiles command."""
+    """Edge case tests for note-audiofiles-list command."""
 
     def test_list_with_invalid_note_id(
         self, config_with_audiofiles: Path
     ) -> None:
-        """Test list-audiofiles with invalid note ID."""
+        """Test note-audiofiles-list with invalid note ID."""
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "list-audiofiles", "--note-id", "invalid"
+                "cli", "note-audiofiles-list", "--note-id", "invalid"
             ],
             capture_output=True,
             text=True
@@ -372,14 +372,14 @@ class TestListAudiofilesEdgeCases:
     def test_list_with_nonexistent_note_id(
         self, config_with_audiofiles: Path
     ) -> None:
-        """Test list-audiofiles with non-existent note ID."""
+        """Test note-audiofiles-list with non-existent note ID."""
         fake_id = "00000000000070008000999999999999"
 
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "list-audiofiles", "--note-id", fake_id
+                "cli", "note-audiofiles-list", "--note-id", fake_id
             ],
             capture_output=True,
             text=True
@@ -414,7 +414,7 @@ class TestRecursiveImport:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(root), "--recursive"
+                "cli", "audiofiles-import", str(root), "--recursive"
             ],
             capture_output=True,
             text=True
@@ -437,7 +437,7 @@ class TestRecursiveImport:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(root)
+                "cli", "audiofiles-import", str(root)
             ],
             capture_output=True,
             text=True

@@ -5,13 +5,13 @@ This module provides CLI commands for interacting with notes and tags.
 Uses only core/ modules - no Qt/PySide6 dependencies.
 
 Commands:
-    list-notes              List all notes
-    show-note <id>          Show details of a specific note
-    new-note [content]      Create a new note
-    edit-note <id> [content] Edit an existing note
-    merge-notes <id1> <id2> Merge two notes into one
-    list-tags               List all tags in hierarchy
-    search                  Search notes by text and/or tags
+    notes-list              List all notes
+    note-show <id>          Show details of a specific note
+    note-create [content]   Create a new note
+    note-edit <id> [content] Edit an existing note
+    notes-merge <id1> <id2> Merge two notes into one
+    tags-list               List all tags in hierarchy
+    notes-search            Search notes by text and/or tags
 """
 
 from __future__ import annotations
@@ -499,7 +499,7 @@ def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) 
         # List all audio files - we need to query all notes and their attachments
         # For now, we'll just say this is not fully implemented
         print("Listing all audio files requires --note-id parameter.")
-        print("Use: voice cli list-audiofiles --note-id <note_id>")
+        print("Use: voice cli note-audiofiles-list --note-id <note_id>")
         return 0
 
     for af in audio_files:
@@ -1465,15 +1465,15 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # Nested subcommands for CLI
     cli_subparsers = cli_parser.add_subparsers(dest="cli_command", help="CLI commands")
 
-    # list-notes command
+    # notes-list command
     cli_subparsers.add_parser(
-        "list-notes",
+        "notes-list",
         help="List all notes"
     )
 
-    # show-note command
+    # note-show command
     show_parser = cli_subparsers.add_parser(
-        "show-note",
+        "note-show",
         help="Show details of a specific note"
     )
     show_parser.add_argument(
@@ -1482,9 +1482,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="ID of the note to show (UUID hex string)"
     )
 
-    # new-note command
+    # note-create command
     new_note_parser = cli_subparsers.add_parser(
-        "new-note",
+        "note-create",
         help="Create a new note"
     )
     new_note_parser.add_argument(
@@ -1494,9 +1494,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Note content (reads from stdin if not provided)"
     )
 
-    # edit-note command
+    # note-edit command
     edit_note_parser = cli_subparsers.add_parser(
-        "edit-note",
+        "note-edit",
         help="Edit an existing note"
     )
     edit_note_parser.add_argument(
@@ -1511,9 +1511,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="New content (reads from stdin if not provided)"
     )
 
-    # merge-notes command
+    # notes-merge command
     merge_notes_parser = cli_subparsers.add_parser(
-        "merge-notes",
+        "notes-merge",
         help="Merge two notes into one"
     )
     merge_notes_parser.add_argument(
@@ -1527,15 +1527,15 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="ID of the second note (UUID hex string)"
     )
 
-    # list-tags command
+    # tags-list command
     cli_subparsers.add_parser(
-        "list-tags",
+        "tags-list",
         help="List all tags in hierarchy"
     )
 
-    # new-tag command
+    # tag-create command
     new_tag_parser = cli_subparsers.add_parser(
-        "new-tag",
+        "tag-create",
         help="Create a new tag"
     )
     new_tag_parser.add_argument(
@@ -1549,9 +1549,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Parent tag ID or prefix (e.g., '57c28')"
     )
 
-    # tag-notes command
+    # notes-tag command
     tag_notes_parser = cli_subparsers.add_parser(
-        "tag-notes",
+        "notes-tag",
         help="Attach tags to notes"
     )
     tag_notes_parser.add_argument(
@@ -1567,9 +1567,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Note ID(s) or prefix(es) to tag"
     )
 
-    # search command
+    # notes-search command
     search_parser = cli_subparsers.add_parser(
-        "search",
+        "notes-search",
         help="Search notes by text and/or tags"
     )
     search_parser.add_argument(
@@ -1584,9 +1584,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Tag path to filter by (can be specified multiple times for AND logic)"
     )
 
-    # import-audiofiles command
+    # audiofiles-import command
     import_audio_parser = cli_subparsers.add_parser(
-        "import-audiofiles",
+        "audiofiles-import",
         help="Import audio files from a directory"
     )
     import_audio_parser.add_argument(
@@ -1607,10 +1607,10 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Tag UUID(s) to attach to imported notes (can specify multiple)"
     )
 
-    # list-audiofiles command
+    # note-audiofiles-list command
     list_audio_parser = cli_subparsers.add_parser(
-        "list-audiofiles",
-        help="List audio files"
+        "note-audiofiles-list",
+        help="List audio files attached to a note"
     )
     list_audio_parser.add_argument(
         "--note-id",
@@ -1618,9 +1618,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="List audio files attached to a specific note"
     )
 
-    # show-audiofile command
+    # audiofile-show command
     show_audio_parser = cli_subparsers.add_parser(
-        "show-audiofile",
+        "audiofile-show",
         help="Show details of an audio file"
     )
     show_audio_parser.add_argument(
@@ -1629,9 +1629,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Audio file ID to show"
     )
 
-    # transcribe-audiofile command
+    # audiofile-transcribe command
     transcribe_audio_parser = cli_subparsers.add_parser(
-        "transcribe-audiofile",
+        "audiofile-transcribe",
         help="Transcribe a single audio file"
     )
     transcribe_audio_parser.add_argument(
@@ -1675,9 +1675,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Google Cloud project ID (for google_cloud backend)"
     )
 
-    # transcribe-note command
+    # note-audiofiles-transcribe command
     transcribe_note_parser = cli_subparsers.add_parser(
-        "transcribe-note",
+        "note-audiofiles-transcribe",
         help="Transcribe all audio files attached to a note"
     )
     transcribe_note_parser.add_argument(
@@ -1800,9 +1800,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Disable ANSI color codes in log output"
     )
 
-    # maintenance command with subcommands
+    # db-maintenance command with subcommands
     maintenance_parser = cli_subparsers.add_parser(
-        "maintenance",
+        "db-maintenance",
         help="Database maintenance operations"
     )
     maintenance_subparsers = maintenance_parser.add_subparsers(
@@ -1840,33 +1840,33 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
 
     # Execute command
     try:
-        if args.cli_command == "list-notes":
+        if args.cli_command == "notes-list":
             return cmd_list_notes(db, args)
-        elif args.cli_command == "show-note":
+        elif args.cli_command == "note-show":
             return cmd_show_note(db, args)
-        elif args.cli_command == "new-note":
+        elif args.cli_command == "note-create":
             return cmd_new_note(db, args)
-        elif args.cli_command == "edit-note":
+        elif args.cli_command == "note-edit":
             return cmd_edit_note(db, args)
-        elif args.cli_command == "merge-notes":
+        elif args.cli_command == "notes-merge":
             return cmd_merge_notes(db, args)
-        elif args.cli_command == "list-tags":
+        elif args.cli_command == "tags-list":
             return cmd_list_tags(db, args)
-        elif args.cli_command == "new-tag":
+        elif args.cli_command == "tag-create":
             return cmd_new_tag(db, args)
-        elif args.cli_command == "tag-notes":
+        elif args.cli_command == "notes-tag":
             return cmd_tag_notes(db, args)
-        elif args.cli_command == "search":
+        elif args.cli_command == "notes-search":
             return cmd_search(db, args)
-        elif args.cli_command == "import-audiofiles":
+        elif args.cli_command == "audiofiles-import":
             return cmd_import_audiofiles(db, config, args)
-        elif args.cli_command == "list-audiofiles":
+        elif args.cli_command == "note-audiofiles-list":
             return cmd_list_audiofiles(db, config, args)
-        elif args.cli_command == "show-audiofile":
+        elif args.cli_command == "audiofile-show":
             return cmd_show_audiofile(db, config, args)
-        elif args.cli_command == "transcribe-audiofile":
+        elif args.cli_command == "audiofile-transcribe":
             return cmd_transcribe_audiofile(db, config, args)
-        elif args.cli_command == "transcribe-note":
+        elif args.cli_command == "note-audiofiles-transcribe":
             return cmd_transcribe_note(db, config, args)
         elif args.cli_command == "sync":
             # Handle sync subcommands
@@ -1893,11 +1893,11 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             else:
                 print(f"Error: Unknown sync command '{sync_cmd}'", file=sys.stderr)
                 return 1
-        elif args.cli_command == "maintenance":
+        elif args.cli_command == "db-maintenance":
             # Handle maintenance subcommands
             maint_cmd = getattr(args, 'maintenance_command', None)
             if not maint_cmd:
-                print("Error: No maintenance command specified. Use 'maintenance --help'.", file=sys.stderr)
+                print("Error: No maintenance command specified. Use 'db-maintenance --help'.", file=sys.stderr)
                 return 1
             if maint_cmd == "database-normalize":
                 return cmd_maintenance_database_normalize(db, args)

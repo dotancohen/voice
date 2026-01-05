@@ -1,6 +1,6 @@
 """CLI tests for audiofile commands.
 
-Tests the CLI import-audiofiles, list-audiofiles, and show-audiofile commands.
+Tests the CLI audiofiles-import, note-audiofiles-list, and audiofile-show commands.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def config_with_audiofiles(test_config_dir: Path, tmp_path: Path) -> Path:
 
 
 class TestImportAudiofiles:
-    """Test import-audiofiles command."""
+    """Test audiofiles-import command."""
 
     def test_imports_audio_files(
         self, config_with_audiofiles: Path, audio_test_dir: Path
@@ -56,7 +56,7 @@ class TestImportAudiofiles:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_test_dir)
+                "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
             text=True
@@ -73,7 +73,7 @@ class TestImportAudiofiles:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_test_dir)
+                "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
             text=True
@@ -97,7 +97,7 @@ class TestImportAudiofiles:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(test_config_dir),
-                "cli", "import-audiofiles", str(audio_test_dir)
+                "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
             text=True
@@ -109,7 +109,7 @@ class TestImportAudiofiles:
 
 
 class TestListAudiofiles:
-    """Test list-audiofiles command."""
+    """Test note-audiofiles-list command."""
 
     def test_lists_imported_audiofiles(
         self, config_with_audiofiles: Path, audio_test_dir: Path
@@ -120,17 +120,17 @@ class TestListAudiofiles:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_test_dir)
+                "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True
         )
 
-        # list-audiofiles without --note-id returns a message about requiring --note-id
+        # note-audiofiles-list without --note-id returns a message about requiring --note-id
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "list-audiofiles"
+                "cli", "note-audiofiles-list"
             ],
             capture_output=True,
             text=True
@@ -147,7 +147,7 @@ class TestListAudiofiles:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "list-audiofiles"
+                "cli", "note-audiofiles-list"
             ],
             capture_output=True,
             text=True
@@ -157,7 +157,7 @@ class TestListAudiofiles:
 
 
 class TestShowAudiofile:
-    """Test show-audiofile command."""
+    """Test audiofile-show command."""
 
     def test_shows_audiofile_details(
         self, config_with_audiofiles: Path, audio_test_dir: Path
@@ -168,14 +168,14 @@ class TestShowAudiofile:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_test_dir)
+                "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
             text=True
         )
 
-        # Get the list to find an ID (list-audiofiles requires --note-id so we skip)
-        # Instead just test that show-audiofile works with a fake ID by checking
+        # Get the list to find an ID (note-audiofiles-list requires --note-id so we skip)
+        # Instead just test that audiofile-show works with a fake ID by checking
         # the command is recognized
         assert import_result.returncode == 0
 
@@ -189,7 +189,7 @@ class TestShowAudiofile:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "show-audiofile", fake_id
+                "cli", "audiofile-show", fake_id
             ],
             capture_output=True,
             text=True

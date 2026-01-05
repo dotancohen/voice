@@ -1,4 +1,4 @@
-"""CLI tests for list commands (list-notes, list-tags).
+"""CLI tests for list commands (notes-list, tags-list).
 
 Tests the CLI commands for listing notes and tags in various formats.
 """
@@ -17,14 +17,14 @@ from core.database import Database
 
 @pytest.mark.cli
 class TestListNotes:
-    """Test list-notes CLI command."""
+    """Test notes-list CLI command."""
 
     def test_list_notes_text_format(
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test listing notes in text format."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-notes"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "notes-list"],
             capture_output=True,
             text=True
         )
@@ -45,7 +45,7 @@ class TestListNotes:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli", "--format", "json",
-                "list-notes"
+                "notes-list"
             ],
             capture_output=True,
             text=True
@@ -67,7 +67,7 @@ class TestListNotes:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli", "--format", "csv",
-                "list-notes"
+                "notes-list"
             ],
             capture_output=True,
             text=True
@@ -86,7 +86,7 @@ class TestListNotes:
         db.close()
 
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-notes"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "notes-list"],
             capture_output=True,
             text=True
         )
@@ -97,14 +97,14 @@ class TestListNotes:
 
 @pytest.mark.cli
 class TestListTags:
-    """Test list-tags CLI command."""
+    """Test tags-list CLI command."""
 
     def test_list_tags_text_format(
         self, test_db_path: Path, populated_db: Database
     ) -> None:
         """Test listing tags in text format with hierarchy."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-tags"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "tags-list"],
             capture_output=True,
             text=True
         )
@@ -127,7 +127,7 @@ class TestListTags:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli", "--format", "json",
-                "list-tags"
+                "tags-list"
             ],
             capture_output=True,
             text=True
@@ -149,7 +149,7 @@ class TestListTags:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli", "--format", "csv",
-                "list-tags"
+                "tags-list"
             ],
             capture_output=True,
             text=True
@@ -165,7 +165,7 @@ class TestListTags:
     ) -> None:
         """Test that tag hierarchy is properly displayed."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "list-tags"],
+            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "tags-list"],
             capture_output=True,
             text=True
         )

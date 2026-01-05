@@ -1095,7 +1095,7 @@ class VoiceTUI(App):
             # Append to search field if not already there
             notes_list.append_search_term(tag_search)
 
-            # Run the search
+            # Execute the search
             search_text = notes_list.get_search_text()
             notes_list.perform_search(search_text)
             self.notify(f"Search: {search_text}")

@@ -151,45 +151,45 @@ python -m src.main tui
 
 Create notes:
 ```bash
-python -m src.main cli new-note "Hello, world!"
-echo "Note from stdin" | python -m src.main cli new-note
+python -m src.main cli note-create "Hello, world!"
+echo "Note from stdin" | python -m src.main cli note-create
 ```
 
 Show specific note:
 ```bash
-python -m src.main cli show-note <note-uuid>
+python -m src.main cli note-show <note-uuid>
 ```
 List all notes:
 ```bash
-python -m src.main cli list-notes
+python -m src.main cli notes-list
 ```
 
 Search notes:
 ```bash
-python -m src.main cli search --text "meeting"                            # Search by text
-python -m src.main cli search --tag Work                                         # Search by tag
-python -m src.main cli search --tag Europe/France/Paris         # Search by hierarchical tag path
-python -m src.main cli search --tag Work --tag Projects  # Multiple tags (AND logic)
-python -m src.main cli search --text "meeting" --tag Work        # Combined text and tags
+python -m src.main cli notes-search --text "meeting"                            # Search by text
+python -m src.main cli notes-search --tag Work                                         # Search by tag
+python -m src.main cli notes-search --tag Europe/France/Paris         # Search by hierarchical tag path
+python -m src.main cli notes-search --tag Work --tag Projects  # Multiple tags (AND logic)
+python -m src.main cli notes-search --text "meeting" --tag Work        # Combined text and tags
 ```
 
 #### Tag management
 
 ```bash
-python -m src.main cli list-tags                                                          # List tags (hierarchical)
-python -m src.main cli new-tag "Foobar"                                      # Add root-level tag
-python -m src.main cli new-tag "Foobar" --parent <tag-uuid>       # Add a tag with a parent
-python -m src.main cli tag-notes --tags <tag-uuid> <tag-uuid> --notes <note-uuid> <note-uuid>    # Attach tags to notes
+python -m src.main cli tags-list                                                          # List tags (hierarchical)
+python -m src.main cli tag-create "Foobar"                                      # Add root-level tag
+python -m src.main cli tag-create "Foobar" --parent <tag-uuid>       # Add a tag with a parent
+python -m src.main cli notes-tag --tags <tag-uuid> <tag-uuid> --notes <note-uuid> <note-uuid>    # Attach tags to notes
 ```
 
 #### Import files
 
 Import directory of audio files as new notes:
 ```bash
-python -m src.main cli import-audiofiles /path/to/files/
-python -m src.main cli import-audiofiles /path/to/files/ --recursive      # Include subdirectories
-python -m src.main cli import-audiofiles /path/to/files/ --tags <tag-uuid> # Tag imported notes
-python -m src.main cli import-audiofiles /path/to/files/ --tags <uuid1> <uuid2>  # Multiple tags
+python -m src.main cli audiofiles-import /path/to/files/
+python -m src.main cli audiofiles-import /path/to/files/ --recursive      # Include subdirectories
+python -m src.main cli audiofiles-import /path/to/files/ --tags <tag-uuid> # Tag imported notes
+python -m src.main cli audiofiles-import /path/to/files/ --tags <uuid1> <uuid2>  # Multiple tags
 ```
 
 #### Transcription
@@ -198,22 +198,22 @@ Transcribe audio files attached to notes using local Whisper AI:
 
 ```bash
 # Transcribe all audio files for a specific note
-python -m src.main cli transcribe-note <note-uuid>
+python -m src.main cli note-audiofiles-transcribe <note-uuid>
 
 # Transcribe a specific audio file
-python -m src.main cli transcribe-audiofile <audiofile-uuid>
+python -m src.main cli audiofile-transcribe <audiofile-uuid>
 
 # Specify model (name or full path)
-python -m src.main cli transcribe-note <note-uuid> --model small
-python -m src.main cli transcribe-note <note-uuid> --model large-v3
-python -m src.main cli transcribe-audiofile <audiofile-uuid> --model /path/to/ggml-model.bin
+python -m src.main cli note-audiofiles-transcribe <note-uuid> --model small
+python -m src.main cli note-audiofiles-transcribe <note-uuid> --model large-v3
+python -m src.main cli audiofile-transcribe <audiofile-uuid> --model /path/to/ggml-model.bin
 
 # Specify language hint (see "Language hints" below)
-python -m src.main cli transcribe-note <note-uuid> --language he
-python -m src.main cli transcribe-audiofile <audiofile-uuid> --language en
+python -m src.main cli note-audiofiles-transcribe <note-uuid> --language he
+python -m src.main cli audiofile-transcribe <audiofile-uuid> --language en
 
 # Specify expected number of speakers
-python -m src.main cli transcribe-note <note-uuid> --speaker-count 2
+python -m src.main cli note-audiofiles-transcribe <note-uuid> --speaker-count 2
 ```
 
 **Language hints:**
@@ -301,7 +301,7 @@ Example provider configuration:
 - Is extensible - future normalizations (like unicode normalization) can be added to the normalize_database() method
 
 ```
-python -m src.main cli maintenance database-normalize
+python -m src.main cli db-maintenance database-normalize
 ```
 
 #### Output formatting

@@ -40,10 +40,10 @@ class TestCLIArguments:
 
         assert result.returncode == 0
         assert "usage:" in result.stdout.lower()
-        assert "list-notes" in result.stdout
-        assert "show-note" in result.stdout
-        assert "list-tags" in result.stdout
-        assert "search" in result.stdout
+        assert "notes-list" in result.stdout
+        assert "note-show" in result.stdout
+        assert "tags-list" in result.stdout
+        assert "notes-search" in result.stdout
 
     def test_custom_config_dir(
         self, tmp_path: Path, populated_db: Database, test_db_path: Path
@@ -53,7 +53,7 @@ class TestCLIArguments:
             [
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "cli", "list-notes"
+                "cli", "notes-list"
             ],
             capture_output=True,
             text=True
@@ -74,12 +74,12 @@ class TestCLIArguments:
         assert result.returncode != 0
 
     def test_show_note_missing_id(self, test_db_path: Path) -> None:
-        """Test show-note without providing note ID."""
+        """Test note-show without providing note ID."""
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
-                "cli", "show-note"
+                "cli", "note-show"
             ],
             capture_output=True,
             text=True
@@ -100,7 +100,7 @@ class TestCLIOutputFormats:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli", "--format", "invalid",
-                "list-notes"
+                "notes-list"
             ],
             capture_output=True,
             text=True
@@ -118,7 +118,7 @@ class TestCLIOutputFormats:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli", "--format", "json",
-                "list-notes"
+                "notes-list"
             ],
             capture_output=True,
             text=True
@@ -133,21 +133,21 @@ class TestCLIOutputFormats:
 class TestCLISubcommandHelp:
     """Test help for individual subcommands."""
 
-    def test_list_notes_help(self) -> None:
-        """Test list-notes help."""
+    def test_notes_list_help(self) -> None:
+        """Test notes-list help."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "cli", "list-notes", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "notes-list", "--help"],
             capture_output=True,
             text=True
         )
 
         assert result.returncode == 0
-        assert "list-notes" in result.stdout.lower()
+        assert "notes-list" in result.stdout.lower()
 
-    def test_show_note_help(self) -> None:
-        """Test show-note help."""
+    def test_note_show_help(self) -> None:
+        """Test note-show help."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "cli", "show-note", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "note-show", "--help"],
             capture_output=True,
             text=True
         )
@@ -155,21 +155,21 @@ class TestCLISubcommandHelp:
         assert result.returncode == 0
         assert "note_id" in result.stdout.lower()
 
-    def test_list_tags_help(self) -> None:
-        """Test list-tags help."""
+    def test_tags_list_help(self) -> None:
+        """Test tags-list help."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "cli", "list-tags", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "tags-list", "--help"],
             capture_output=True,
             text=True
         )
 
         assert result.returncode == 0
-        assert "list-tags" in result.stdout.lower()
+        assert "tags-list" in result.stdout.lower()
 
-    def test_search_help(self) -> None:
-        """Test search help."""
+    def test_notes_search_help(self) -> None:
+        """Test notes-search help."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "cli", "search", "--help"],
+            [sys.executable, "-m", "src.main", "cli", "notes-search", "--help"],
             capture_output=True,
             text=True
         )

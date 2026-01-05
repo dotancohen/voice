@@ -35,7 +35,7 @@ def config_with_audiofiles(test_config_dir: Path, tmp_path: Path) -> Path:
 
 
 class TestImportCreatesNotePerAudioFile:
-    """Test that import-audiofiles creates a Note for each AudioFile."""
+    """Test that audiofiles-import creates a Note for each AudioFile."""
 
     def test_import_single_file_creates_note(
         self, config_with_audiofiles: Path, tmp_path: Path
@@ -50,7 +50,7 @@ class TestImportCreatesNotePerAudioFile:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_dir)
+                "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
             text=True
@@ -62,7 +62,7 @@ class TestImportCreatesNotePerAudioFile:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "list-notes"
+                "cli", "notes-list"
             ],
             capture_output=True,
             text=True
@@ -72,7 +72,7 @@ class TestImportCreatesNotePerAudioFile:
         # Should have exactly one note
         # The output should contain information about one note
         lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
-        # Assuming list-notes outputs one line per note or similar
+        # Assuming notes-list outputs one line per note or similar
         assert len(lines) >= 1, "Expected at least one note to be created"
 
     def test_import_multiple_files_creates_multiple_notes(
@@ -90,7 +90,7 @@ class TestImportCreatesNotePerAudioFile:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_dir)
+                "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
             text=True
@@ -118,7 +118,7 @@ class TestImportCreatesNotePerAudioFile:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_dir)
+                "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
             text=True
@@ -162,7 +162,7 @@ class TestNoteCreatedAtMatchesFileCreatedAt:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_dir)
+                "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
             text=True
@@ -216,7 +216,7 @@ class TestNoteCreatedAtMatchesFileCreatedAt:
             [
                 sys.executable, "-m", "src.main",
                 "--config-dir", str(config_with_audiofiles),
-                "cli", "import-audiofiles", str(audio_dir)
+                "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
             text=True

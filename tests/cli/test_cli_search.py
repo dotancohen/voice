@@ -1,4 +1,4 @@
-"""CLI tests for search command.
+"""CLI tests for notes-search command.
 
 Tests searching notes by text and tags via CLI.
 """
@@ -28,7 +28,7 @@ class TestSearchText:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--text", "meeting"
+                "notes-search", "--text", "meeting"
             ],
             capture_output=True,
             text=True
@@ -47,7 +47,7 @@ class TestSearchText:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--text", "DOCTOR"
+                "notes-search", "--text", "DOCTOR"
             ],
             capture_output=True,
             text=True
@@ -65,7 +65,7 @@ class TestSearchText:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--text", "שלום"
+                "notes-search", "--text", "שלום"
             ],
             capture_output=True,
             text=True
@@ -83,7 +83,7 @@ class TestSearchText:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--text", "nonexistent"
+                "notes-search", "--text", "nonexistent"
             ],
             capture_output=True,
             text=True
@@ -106,7 +106,7 @@ class TestSearchTags:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "Work"
+                "notes-search", "--tag", "Work"
             ],
             capture_output=True,
             text=True
@@ -126,7 +126,7 @@ class TestSearchTags:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "Geography/Europe/France/Paris"
+                "notes-search", "--tag", "Geography/Europe/France/Paris"
             ],
             capture_output=True,
             text=True
@@ -144,7 +144,7 @@ class TestSearchTags:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "Personal"
+                "notes-search", "--tag", "Personal"
             ],
             capture_output=True,
             text=True
@@ -163,7 +163,7 @@ class TestSearchTags:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search",
+                "notes-search",
                 "--tag", "Work",
                 "--tag", "Work/Projects"
             ],
@@ -184,7 +184,7 @@ class TestSearchTags:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "NonExistentTag"
+                "notes-search", "--tag", "NonExistentTag"
             ],
             capture_output=True,
             text=True
@@ -209,7 +209,7 @@ class TestSearchCombined:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search",
+                "notes-search",
                 "--text", "meeting",
                 "--tag", "Work"
             ],
@@ -230,7 +230,7 @@ class TestSearchCombined:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search",
+                "notes-search",
                 "--text", "reunion",
                 "--tag", "Personal",
                 "--tag", "Geography"
@@ -258,7 +258,7 @@ class TestSearchOutputFormats:
                 "-d", str(test_db_path.parent),
                 "cli",
                 "--format", "json",
-                "search", "--tag", "Work"
+                "notes-search", "--tag", "Work"
             ],
             capture_output=True,
             text=True
@@ -279,7 +279,7 @@ class TestSearchOutputFormats:
                 "-d", str(test_db_path.parent),
                 "cli",
                 "--format", "csv",
-                "search", "--text", "Doctor"
+                "notes-search", "--text", "Doctor"
             ],
             capture_output=True,
             text=True
@@ -304,7 +304,7 @@ class TestAmbiguousTagCLISearch:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "Paris"
+                "notes-search", "--tag", "Paris"
             ],
             capture_output=True,
             text=True
@@ -325,7 +325,7 @@ class TestAmbiguousTagCLISearch:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "Geography/Europe/France/Paris"
+                "notes-search", "--tag", "Geography/Europe/France/Paris"
             ],
             capture_output=True,
             text=True
@@ -346,7 +346,7 @@ class TestAmbiguousTagCLISearch:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "Geography/US/Texas/Paris"
+                "notes-search", "--tag", "Geography/US/Texas/Paris"
             ],
             capture_output=True,
             text=True
@@ -367,7 +367,7 @@ class TestAmbiguousTagCLISearch:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search", "--tag", "Bar"
+                "notes-search", "--tag", "Bar"
             ],
             capture_output=True,
             text=True
@@ -388,7 +388,7 @@ class TestAmbiguousTagCLISearch:
                 sys.executable, "-m", "src.main",
                 "-d", str(test_db_path.parent),
                 "cli",
-                "search",
+                "notes-search",
                 "--text", "Cowboys",
                 "--tag", "Paris"
             ],
