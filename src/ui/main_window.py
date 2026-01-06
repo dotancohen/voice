@@ -210,6 +210,9 @@ class MainWindow(QMainWindow):
         # When a tag is selected, filter notes list
         self.tags_pane.tag_selected.connect(self.notes_list_pane.filter_by_tag)
 
+        # When a tag is shift-clicked, add it to the current note
+        self.tags_pane.tag_add_requested.connect(self._on_tag_add_requested)
+
         # When a note is selected, show note detail and enable Delete action
         self.notes_list_pane.note_selected.connect(self.note_pane.load_note)
         self.notes_list_pane.note_selected.connect(self._on_note_selected)
@@ -230,6 +233,28 @@ class MainWindow(QMainWindow):
         """
         self._current_note_id = note_id
         self.delete_note_action.setEnabled(True)
+
+    def _on_tag_add_requested(self, tag_id: str) -> None:
+        """Handle tag add request (shift-click) - add tag to current note.
+
+        Args:
+            tag_id: ID of the tag to add (hex string)
+        """
+        if not self._current_note_id:
+            logger.warning("Cannot add tag: no note selected")
+            return
+
+        # Add tag to note
+        result = self.db.add_tag_to_note(self._current_note_id, tag_id)
+        if result:
+            logger.info(f"Added tag {tag_id} to note {self._current_note_id}")
+            # Refresh the note pane to show updated tags
+            self.note_pane.load_note(self._current_note_id)
+            # Mark as having unsynced changes
+            self._has_unsynced_changes = True
+            self._update_sync_action_text()
+        else:
+            logger.warning(f"Failed to add tag {tag_id} to note {self._current_note_id}")
 
     def on_note_saved(self, note_id: int) -> None:
         """Handle note saved event - refresh notes list and mark unsynced.

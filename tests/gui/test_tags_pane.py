@@ -227,3 +227,86 @@ class TestTagsPaneReadOnly:
 
         edit_triggers = pane.tree_view.editTriggers()
         assert edit_triggers == QTreeView.EditTrigger.NoEditTriggers
+
+
+@pytest.mark.gui
+class TestTagShiftClick:
+    """Test shift-click to add tag functionality."""
+
+    def test_shift_click_emits_tag_add_requested(self, qapp, populated_db: Database) -> None:
+        """Test that shift-clicking a tag emits tag_add_requested signal."""
+        pane = TagsPane(populated_db)
+        spy = QSignalSpy(pane.tag_add_requested)
+
+        # Find Work tag
+        work_item = None
+        for i in range(pane.model.rowCount()):
+            item = pane.model.item(i)
+            if item.text() == "Work":
+                work_item = item
+                break
+
+        assert work_item is not None
+
+        # Simulate shift-click by calling the handler directly
+        index = pane.model.indexFromItem(work_item)
+        pane.on_tag_shift_clicked(index)
+
+        # Check signal was emitted
+        assert spy.count() == 1
+        args = spy.at(0)
+        assert args[0] == get_tag_uuid_hex("Work")
+
+    def test_shift_click_child_tag_emits_signal(self, qapp, populated_db: Database) -> None:
+        """Test that shift-clicking a child tag works."""
+        pane = TagsPane(populated_db)
+        spy = QSignalSpy(pane.tag_add_requested)
+
+        # Find Work -> Projects
+        work_item = None
+        for i in range(pane.model.rowCount()):
+            item = pane.model.item(i)
+            if item.text() == "Work":
+                work_item = item
+                break
+
+        projects_item = None
+        for i in range(work_item.rowCount()):
+            child = work_item.child(i)
+            if child.text() == "Projects":
+                projects_item = child
+                break
+
+        assert projects_item is not None
+
+        # Simulate shift-click
+        index = pane.model.indexFromItem(projects_item)
+        pane.on_tag_shift_clicked(index)
+
+        # Check signal emitted with Projects UUID
+        assert spy.count() == 1
+        args = spy.at(0)
+        assert args[0] == get_tag_uuid_hex("Projects")
+
+    def test_tag_selected_not_emitted_on_shift_click(self, qapp, populated_db: Database) -> None:
+        """Test that tag_selected is NOT emitted on shift-click (only tag_add_requested)."""
+        pane = TagsPane(populated_db)
+        selected_spy = QSignalSpy(pane.tag_selected)
+        add_spy = QSignalSpy(pane.tag_add_requested)
+
+        # Find Work tag
+        work_item = None
+        for i in range(pane.model.rowCount()):
+            item = pane.model.item(i)
+            if item.text() == "Work":
+                work_item = item
+                break
+
+        # Simulate shift-click
+        index = pane.model.indexFromItem(work_item)
+        pane.on_tag_shift_clicked(index)
+
+        # tag_add_requested should be emitted
+        assert add_spy.count() == 1
+        # tag_selected should NOT be emitted
+        assert selected_spy.count() == 0

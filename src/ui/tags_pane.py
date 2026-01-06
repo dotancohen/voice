@@ -10,8 +10,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeyEvent, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QTreeView, QVBoxLayout, QWidget
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QStandardItem, QStandardItemModel
+from PySide6.QtWidgets import QApplication, QTreeView, QVBoxLayout, QWidget
 
 from src.core.database import Database
 
@@ -19,7 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class TagsTreeView(QTreeView):
-    """Custom tree view that emits activated signal on Space key."""
+    """Custom tree view that emits activated signal on Space key.
+
+    Signals:
+        shift_clicked: Emitted when a tag is shift-clicked (index)
+    """
+
+    shift_clicked = Signal(object)  # Emits QModelIndex
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """Handle key press - emit activated on Space."""
@@ -31,15 +37,27 @@ class TagsTreeView(QTreeView):
                 return
         super().keyPressEvent(event)
 
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse press - detect shift-click."""
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                self.shift_clicked.emit(index)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
 
 class TagsPane(QWidget):
     """Pane displaying hierarchical tag tree.
 
     Shows all tags in a tree structure. Clicking a tag emits a signal
     to filter notes by that tag (including descendant tags).
+    Shift-clicking a tag emits a signal to add it to the current note.
 
     Signals:
-        tag_selected: Emitted when a tag is clicked (tag_id: int)
+        tag_selected: Emitted when a tag is clicked (tag_id: str)
+        tag_add_requested: Emitted when a tag is shift-clicked (tag_id: str)
 
     Attributes:
         db: Database connection
@@ -48,6 +66,7 @@ class TagsPane(QWidget):
     """
 
     tag_selected = Signal(str)  # Emits tag_id (UUID hex string)
+    tag_add_requested = Signal(str)  # Emits tag_id when shift-clicked
 
     def __init__(self, db: Database, parent: Optional[QWidget] = None) -> None:
         """Initialize the tags pane.
@@ -75,6 +94,7 @@ class TagsPane(QWidget):
         self.tree_view.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)  # Read-only
         self.tree_view.clicked.connect(self.on_tag_clicked)
         self.tree_view.activated.connect(self.on_tag_clicked)  # Enter/Space keys
+        self.tree_view.shift_clicked.connect(self.on_tag_shift_clicked)  # Shift+click
 
         # Create model
         self.model = QStandardItemModel()
@@ -141,3 +161,15 @@ class TagsPane(QWidget):
             tag_id = item.data(Qt.ItemDataRole.UserRole)
             logger.info(f"Tag selected: {item.text()} (ID: {tag_id})")
             self.tag_selected.emit(tag_id)
+
+    def on_tag_shift_clicked(self, index: Any) -> None:
+        """Handle tag shift-click event (add tag to current note).
+
+        Args:
+            index: QModelIndex of the clicked item
+        """
+        item = self.model.itemFromIndex(index)
+        if item:
+            tag_id = item.data(Qt.ItemDataRole.UserRole)
+            logger.info(f"Tag add requested: {item.text()} (ID: {tag_id})")
+            self.tag_add_requested.emit(tag_id)
