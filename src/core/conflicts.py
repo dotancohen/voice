@@ -15,18 +15,20 @@ CRITICAL: This module must have NO Qt/PySide6 dependencies.
 
 from __future__ import annotations
 
-import difflib
 import logging
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from uuid6 import uuid7
-
 from .database import Database
-from .validation import uuid_to_hex, validate_uuid_hex
+from .validation import uuid_to_hex
+
+# Import merge functions from Rust
+from voicecore import (
+    diff3_merge as _rust_diff3_merge,
+    auto_merge_if_possible as _rust_auto_merge_if_possible,
+    get_diff_preview as _rust_get_diff_preview,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +447,8 @@ def diff3_merge(
 ) -> MergeResult:
     """Perform a diff3-style merge of text content.
 
+    This is a thin wrapper around the Rust implementation.
+
     If both local and remote made the same changes, they're accepted.
     If they made different changes to the same region, conflict markers are added.
 
@@ -456,104 +460,11 @@ def diff3_merge(
     Returns:
         MergeResult with merged content and conflict info
     """
-    # Split into lines for merging
-    base_lines = base.splitlines(keepends=True)
-    local_lines = local.splitlines(keepends=True)
-    remote_lines = remote.splitlines(keepends=True)
-
-    # If no base, try simple merge
-    if not base_lines:
-        return _simple_merge(local_lines, remote_lines)
-
-    # Use difflib to find differences
-    local_diff = list(difflib.unified_diff(base_lines, local_lines, n=0))
-    remote_diff = list(difflib.unified_diff(base_lines, remote_lines, n=0))
-
-    # Simple case: one side has no changes
-    if not local_diff[2:]:  # Skip header lines
-        return MergeResult(merged_content=remote, has_conflicts=False)
-    if not remote_diff[2:]:
-        return MergeResult(merged_content=local, has_conflicts=False)
-
-    # Both sides have changes - use merge3
-    return _merge3(base_lines, local_lines, remote_lines)
-
-
-def _simple_merge(local_lines: List[str], remote_lines: List[str]) -> MergeResult:
-    """Simple merge when there's no base version."""
-    if local_lines == remote_lines:
-        return MergeResult(merged_content="".join(local_lines), has_conflicts=False)
-
-    # Create a merged version with conflict markers
-    merged = []
-    merged.append("<<<<<<< LOCAL\n")
-    merged.extend(local_lines)
-    merged.append("=======\n")
-    merged.extend(remote_lines)
-    merged.append(">>>>>>> REMOTE\n")
-
+    result = _rust_diff3_merge(base, local, remote)
     return MergeResult(
-        merged_content="".join(merged),
-        has_conflicts=True,
-        conflict_markers=[(0, len(merged))],
-    )
-
-
-def _merge3(
-    base_lines: List[str],
-    local_lines: List[str],
-    remote_lines: List[str],
-) -> MergeResult:
-    """Perform 3-way merge using difflib.
-
-    This is a simplified 3-way merge that handles the most common cases.
-    """
-    import difflib
-
-    # Use SequenceMatcher to find matching blocks
-    local_matcher = difflib.SequenceMatcher(None, base_lines, local_lines)
-    remote_matcher = difflib.SequenceMatcher(None, base_lines, remote_lines)
-
-    merged = []
-    has_conflicts = False
-    conflict_markers = []
-
-    # Get all changes from both sides
-    local_ops = local_matcher.get_opcodes()
-    remote_ops = remote_matcher.get_opcodes()
-
-    # Simple merge: take local changes that don't conflict with remote
-    # This is a simplified algorithm that works for non-overlapping edits
-
-    # For now, if both sides changed, use conflict markers
-    local_changed = any(op[0] != "equal" for op in local_ops)
-    remote_changed = any(op[0] != "equal" for op in remote_ops)
-
-    if local_changed and remote_changed:
-        # Check if changes are identical
-        if local_lines == remote_lines:
-            return MergeResult(merged_content="".join(local_lines), has_conflicts=False)
-
-        # Create conflict markers
-        start_line = len(merged)
-        merged.append("<<<<<<< LOCAL\n")
-        merged.extend(local_lines)
-        merged.append("=======\n")
-        merged.extend(remote_lines)
-        merged.append(">>>>>>> REMOTE\n")
-        conflict_markers.append((start_line, len(merged)))
-        has_conflicts = True
-    elif local_changed:
-        merged.extend(local_lines)
-    elif remote_changed:
-        merged.extend(remote_lines)
-    else:
-        merged.extend(base_lines)
-
-    return MergeResult(
-        merged_content="".join(merged),
-        has_conflicts=has_conflicts,
-        conflict_markers=conflict_markers,
+        merged_content=result["content"],
+        has_conflicts=result["has_conflicts"],
+        conflict_markers=[],  # Rust returns conflict_count, not markers
     )
 
 
@@ -563,6 +474,8 @@ def auto_merge_if_possible(
     base_content: Optional[str] = None,
 ) -> Optional[str]:
     """Attempt automatic merge if possible.
+
+    This is a thin wrapper around the Rust implementation.
 
     Returns merged content if successful, None if conflicts exist.
 
@@ -574,19 +487,13 @@ def auto_merge_if_possible(
     Returns:
         Merged content if no conflicts, None otherwise
     """
-    if local_content == remote_content:
-        return local_content
-
-    if base_content:
-        result = diff3_merge(base_content, local_content, remote_content)
-        if not result.has_conflicts:
-            return result.merged_content
-
-    return None
+    return _rust_auto_merge_if_possible(local_content, remote_content, base_content)
 
 
 def get_diff_preview(local: str, remote: str) -> str:
     """Get a human-readable diff between two versions.
+
+    This is a thin wrapper around the Rust implementation.
 
     Args:
         local: Local content
@@ -595,15 +502,4 @@ def get_diff_preview(local: str, remote: str) -> str:
     Returns:
         Unified diff string
     """
-    local_lines = local.splitlines(keepends=True)
-    remote_lines = remote.splitlines(keepends=True)
-
-    diff = difflib.unified_diff(
-        local_lines,
-        remote_lines,
-        fromfile="Local",
-        tofile="Remote",
-        lineterm="",
-    )
-
-    return "".join(diff)
+    return _rust_get_diff_preview(local, remote)

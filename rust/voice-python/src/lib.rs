@@ -1761,6 +1761,66 @@ fn py_execute_search(db: &PyDatabase, search_input: &str) -> PyResult<PySearchRe
     })
 }
 
+#[pyfunction]
+#[pyo3(name = "resolve_tag_term")]
+fn py_resolve_tag_term(db: &PyDatabase, tag_term: &str) -> PyResult<(Vec<String>, bool, bool)> {
+    let db_ref = db.inner_ref()?;
+    let (tag_ids, is_ambiguous, not_found) = search::resolve_tag_term(db_ref, tag_term)
+        .map_err(voice_error_to_pyerr)?;
+    Ok((tag_ids, is_ambiguous, not_found))
+}
+
+#[pyfunction]
+#[pyo3(name = "get_tag_full_path")]
+fn py_get_tag_full_path(db: &PyDatabase, tag_id: &str) -> PyResult<String> {
+    let db_ref = db.inner_ref()?;
+    search::get_tag_full_path(db_ref, tag_id).map_err(voice_error_to_pyerr)
+}
+
+#[pyfunction]
+#[pyo3(name = "find_ambiguous_tags")]
+fn py_find_ambiguous_tags(db: &PyDatabase, tag_terms: Vec<String>) -> PyResult<Vec<String>> {
+    let db_ref = db.inner_ref()?;
+    search::find_ambiguous_tags(db_ref, &tag_terms).map_err(voice_error_to_pyerr)
+}
+
+#[pyfunction]
+#[pyo3(name = "build_tag_search_term")]
+#[pyo3(signature = (db, tag_id, use_full_path=false))]
+fn py_build_tag_search_term(db: &PyDatabase, tag_id: &str, use_full_path: bool) -> PyResult<String> {
+    let db_ref = db.inner_ref()?;
+    search::build_tag_search_term(db_ref, tag_id, use_full_path).map_err(voice_error_to_pyerr)
+}
+
+// ============================================================================
+// Merge/Conflict functions
+// ============================================================================
+
+#[pyfunction]
+#[pyo3(name = "diff3_merge")]
+fn py_diff3_merge(base: &str, local: &str, remote: &str) -> PyResult<PyObject> {
+    let result = merge::diff3_merge(base, local, remote);
+    Python::with_gil(|py| {
+        let dict = PyDict::new(py);
+        dict.set_item("content", &result.content)?;
+        dict.set_item("has_conflicts", result.has_conflicts)?;
+        dict.set_item("conflict_count", result.conflict_count)?;
+        Ok(dict.into_any().unbind())
+    })
+}
+
+#[pyfunction]
+#[pyo3(name = "auto_merge_if_possible")]
+fn py_auto_merge_if_possible(local: &str, remote: &str, base: Option<&str>) -> Option<String> {
+    merge::auto_merge_if_possible(local, remote, base)
+}
+
+#[pyfunction]
+#[pyo3(name = "get_diff_preview")]
+fn py_get_diff_preview(local: &str, remote: &str) -> String {
+    merge::get_diff_preview(local, remote)
+}
+
 // ============================================================================
 // Validation functions
 // ============================================================================
@@ -1891,10 +1951,17 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyParsedSearch>()?;
     m.add_function(wrap_pyfunction!(py_parse_search_input, m)?)?;
     m.add_function(wrap_pyfunction!(py_execute_search, m)?)?;
+    m.add_function(wrap_pyfunction!(py_resolve_tag_term, m)?)?;
+    m.add_function(wrap_pyfunction!(py_get_tag_full_path, m)?)?;
+    m.add_function(wrap_pyfunction!(py_find_ambiguous_tags, m)?)?;
+    m.add_function(wrap_pyfunction!(py_build_tag_search_term, m)?)?;
 
     // Register merge classes and functions
     m.add_class::<PyMergeResult>()?;
     m.add_function(wrap_pyfunction!(py_merge_content, m)?)?;
+    m.add_function(wrap_pyfunction!(py_diff3_merge, m)?)?;
+    m.add_function(wrap_pyfunction!(py_auto_merge_if_possible, m)?)?;
+    m.add_function(wrap_pyfunction!(py_get_diff_preview, m)?)?;
 
     // Register validation functions
     m.add_function(wrap_pyfunction!(py_validate_uuid_hex, m)?)?;

@@ -17,7 +17,13 @@ from typing import Any, Dict, List, Optional, Tuple
 # Import from Rust extension
 from voicecore import (
     ParsedSearch as RustParsedSearch,
+    SearchResult as RustSearchResult,
     parse_search_input as _rust_parse_search_input,
+    execute_search as _rust_execute_search,
+    resolve_tag_term as _rust_resolve_tag_term,
+    get_tag_full_path as _rust_get_tag_full_path,
+    find_ambiguous_tags as _rust_find_ambiguous_tags,
+    build_tag_search_term as _rust_build_tag_search_term,
 )
 
 from .database import Database
@@ -88,6 +94,8 @@ def parse_search_input(search_input: str) -> ParsedSearch:
 def get_tag_full_path(db: Database, tag_id: str) -> str:
     """Get the full hierarchical path for a tag.
 
+    This is a thin wrapper around the Rust implementation.
+
     Args:
         db: Database connection
         tag_id: Tag ID (hex string) to get path for
@@ -95,23 +103,15 @@ def get_tag_full_path(db: Database, tag_id: str) -> str:
     Returns:
         Full path like "Europe/France/Paris" or just "Work" for root tags.
     """
-    path_parts: List[str] = []
-    current_id: Optional[str] = tag_id
-
-    while current_id is not None:
-        tag = db.get_tag(current_id)
-        if not tag:
-            break
-        path_parts.insert(0, tag["name"])
-        current_id = tag.get("parent_id")
-
-    return "/".join(path_parts)
+    return _rust_get_tag_full_path(db._rust_db, tag_id)
 
 
 def resolve_tag_term(
     db: Database, tag_term: str
 ) -> Tuple[List[str], bool, bool]:
     """Resolve a tag search term to tag IDs.
+
+    This is a thin wrapper around the Rust implementation.
 
     Args:
         db: Database connection
@@ -123,34 +123,13 @@ def resolve_tag_term(
         - Boolean indicating if the term was ambiguous (matched multiple tags)
         - Boolean indicating if the term was not found
     """
-    # Get all tags matching this path
-    matching_tags = db.get_all_tags_by_path(tag_term)
-
-    if not matching_tags:
-        return ([], False, True)  # Not found
-
-    # Collect all descendants from all matching tags
-    all_descendants: List[str] = []
-    for tag in matching_tags:
-        descendants = db.get_tag_descendants(tag["id"])
-        # Convert bytes to hex strings
-        for d in descendants:
-            if isinstance(d, bytes):
-                import uuid
-                all_descendants.append(uuid.UUID(bytes=d).hex)
-            else:
-                all_descendants.append(d)
-
-    # Remove duplicates while preserving some order
-    all_descendants = list(dict.fromkeys(all_descendants))
-
-    is_ambiguous = len(matching_tags) > 1
-
-    return (all_descendants, is_ambiguous, False)
+    return _rust_resolve_tag_term(db._rust_db, tag_term)
 
 
 def find_ambiguous_tags(db: Database, tag_terms: List[str]) -> List[str]:
     """Find which tag terms are ambiguous.
+
+    This is a thin wrapper around the Rust implementation.
 
     Args:
         db: Database connection
@@ -159,20 +138,14 @@ def find_ambiguous_tags(db: Database, tag_terms: List[str]) -> List[str]:
     Returns:
         List of tag terms that match multiple tags (formatted as "tag:term")
     """
-    ambiguous: List[str] = []
-
-    for term in tag_terms:
-        matching_tags = db.get_all_tags_by_path(term)
-        if len(matching_tags) > 1:
-            ambiguous.append(f"tag:{term}")
-
-    return ambiguous
+    return _rust_find_ambiguous_tags(db._rust_db, tag_terms)
 
 
 def execute_search(db: Database, search_input: str) -> SearchResult:
     """Execute a full search operation.
 
     Parses the search input, resolves tags, and queries the database.
+    This is a thin wrapper around the Rust implementation.
 
     Args:
         db: Database connection
@@ -181,62 +154,26 @@ def execute_search(db: Database, search_input: str) -> SearchResult:
     Returns:
         SearchResult containing matching notes and metadata about the search.
     """
-    parsed = parse_search_input(search_input)
+    # Call Rust implementation
+    rust_result = _rust_execute_search(db._rust_db, search_input)
 
-    # Resolve tag terms to ID groups
-    tag_id_groups: List[List[str]] = []
-    ambiguous_tags: List[str] = []
-    not_found_tags: List[str] = []
-
-    for tag_term in parsed.tag_terms:
-        tag_ids, is_ambiguous, not_found = resolve_tag_term(db, tag_term)
-
-        if not_found:
-            not_found_tags.append(tag_term)
-            logger.info(f"Tag path '{tag_term}' not found")
-        else:
-            tag_id_groups.append(tag_ids)
-
-            if is_ambiguous:
-                ambiguous_tags.append(f"tag:{tag_term}")
-                logger.info(
-                    f"Tag '{tag_term}' is ambiguous - matched multiple tags, "
-                    f"total {len(tag_ids)} tag IDs with descendants (OR logic)"
-                )
-            else:
-                logger.info(
-                    f"Tag '{tag_term}' matched {len(tag_ids)} tags (including descendants)"
-                )
-
-    # If any tag was not found, return empty results
-    if not_found_tags:
-        return SearchResult(
-            notes=[],
-            ambiguous_tags=ambiguous_tags,
-            not_found_tags=not_found_tags,
-        )
-
-    # Perform search
-    if parsed.free_text or tag_id_groups:
-        notes = db.search_notes(
-            text_query=parsed.free_text if parsed.free_text else None,
-            tag_id_groups=tag_id_groups if tag_id_groups else None,
-        )
-    else:
-        # No search criteria, return all notes
-        notes = db.get_all_notes()
-
-    logger.info(f"Search returned {len(notes)} notes")
+    logger.info(f"Search returned {len(rust_result.notes)} notes")
+    if rust_result.ambiguous_tags:
+        logger.info(f"Ambiguous tags: {rust_result.ambiguous_tags}")
+    if rust_result.not_found_tags:
+        logger.info(f"Tags not found: {rust_result.not_found_tags}")
 
     return SearchResult(
-        notes=notes,
-        ambiguous_tags=ambiguous_tags,
-        not_found_tags=not_found_tags,
+        notes=rust_result.notes,
+        ambiguous_tags=rust_result.ambiguous_tags,
+        not_found_tags=rust_result.not_found_tags,
     )
 
 
 def build_tag_search_term(db: Database, tag_id: str, use_full_path: bool = False) -> str:
     """Build a search term for a tag.
+
+    This is a thin wrapper around the Rust implementation.
 
     Args:
         db: Database connection
@@ -247,23 +184,4 @@ def build_tag_search_term(db: Database, tag_id: str, use_full_path: bool = False
     Returns:
         Search term like "tag:Work" or "tag:Europe/France/Paris"
     """
-    tag = db.get_tag(tag_id)
-    if not tag:
-        return ""
-
-    tag_name = tag["name"]
-
-    # Check if we should use full path
-    if use_full_path:
-        path = get_tag_full_path(db, tag_id)
-        return f"tag:{path}"
-
-    # Check if tag name is ambiguous
-    matching_tags = db.get_tags_by_name(tag_name)
-    if len(matching_tags) > 1:
-        # Ambiguous - use full path
-        path = get_tag_full_path(db, tag_id)
-        return f"tag:{path}"
-    else:
-        # Not ambiguous - use simple name
-        return f"tag:{tag_name}"
+    return _rust_build_tag_search_term(db._rust_db, tag_id, use_full_path)
