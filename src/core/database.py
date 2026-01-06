@@ -251,6 +251,15 @@ class Database:
         """
         return self._rust_db.get_peer_last_sync(peer_device_id)
 
+    def reset_sync_timestamps(self) -> None:
+        """Reset sync timestamps to force re-fetching all data from peers.
+
+        This sets last_sync_at to NULL for all peers, causing the next sync
+        to exchange all data. Unlike clearing sync peers, this preserves
+        peer configuration.
+        """
+        self._rust_db.reset_sync_timestamps()
+
     def update_peer_sync_time(
         self, peer_device_id: str, peer_name: Optional[str] = None
     ) -> None:

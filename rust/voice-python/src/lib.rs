@@ -348,6 +348,14 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
+    /// Reset sync timestamps to NULL to force re-fetching all data from peers.
+    /// Unlike clearing sync peers, this preserves peer configuration.
+    fn reset_sync_timestamps(&self) -> PyResult<()> {
+        self.inner_ref()?
+            .reset_sync_timestamps()
+            .map_err(voice_error_to_pyerr)
+    }
+
     #[pyo3(signature = (peer_device_id, peer_name=None))]
     fn update_peer_sync_time(&self, peer_device_id: &str, peer_name: Option<&str>) -> PyResult<()> {
         self.inner_ref()?

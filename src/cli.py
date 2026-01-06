@@ -1303,6 +1303,134 @@ def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_sync_reset_timestamps(db: Database, args: argparse.Namespace) -> int:
+    """Reset sync timestamps to force re-fetching all data.
+
+    This clears the 'last synced' timestamps, causing the next regular sync
+    to exchange all data with peers. Server configuration is preserved.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        db.reset_sync_timestamps()
+        if args.format == "json":
+            print(json.dumps({"success": True, "message": "Sync timestamps reset"}))
+        else:
+            print("Sync timestamps reset successfully.")
+            print("The next sync will exchange all data with peers.")
+        return 0
+    except Exception as e:
+        if args.format == "json":
+            print(json.dumps({"success": False, "error": str(e)}))
+        else:
+            print(f"Error resetting sync timestamps: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Perform full re-sync with peers (fetches all data).
+
+    This performs an initial sync (full dataset transfer) with each peer,
+    fetching all data regardless of last_sync timestamps. Useful when
+    attachments or transcriptions are missing.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for any failures)
+    """
+    peer_id = getattr(args, 'peer_id', None)
+
+    if peer_id:
+        # Full resync with specific peer
+        client = SyncClient(str(config.get_config_dir()))
+        result = client.initial_sync(peer_id)
+
+        if args.format == "json":
+            print(json.dumps({
+                "peer_id": peer_id,
+                "success": result.success,
+                "pulled": result.pulled,
+                "pushed": result.pushed,
+                "conflicts": result.conflicts,
+                "errors": result.errors,
+            }, indent=2))
+        else:
+            if result.success:
+                print(f"Full re-sync with {peer_id} completed:")
+                print(f"  Pulled: {result.pulled} changes")
+                print(f"  Pushed: {result.pushed} changes")
+                if result.conflicts > 0:
+                    print(f"  Conflicts: {result.conflicts}")
+                    for error in result.errors:
+                        print(f"    - {error}")
+            else:
+                print(f"Full re-sync with {peer_id} failed:")
+                for error in result.errors:
+                    print(f"  - {error}")
+                return 1
+    else:
+        # Full resync with all peers
+        peers = config.get_peers()
+        if not peers:
+            if args.format == "json":
+                print(json.dumps({"message": "No peers configured"}))
+            else:
+                print("No peers configured for sync.")
+            return 0
+
+        client = SyncClient(str(config.get_config_dir()))
+        results = {}
+        all_success = True
+
+        for peer in peers:
+            pid = peer["peer_id"]
+            result = client.initial_sync(pid)
+            results[pid] = result
+            if not result.success:
+                all_success = False
+
+        if args.format == "json":
+            output = {}
+            for pid, result in results.items():
+                output[pid] = {
+                    "success": result.success,
+                    "pulled": result.pulled,
+                    "pushed": result.pushed,
+                    "conflicts": result.conflicts,
+                    "errors": result.errors,
+                }
+            print(json.dumps(output, indent=2))
+        else:
+            print(f"Full re-sync completed with {len(results)} peer(s):\n")
+            for pid, result in results.items():
+                peer = config.get_peer(pid)
+                peer_name = peer.get("peer_name", pid) if peer else pid
+
+                if result.success:
+                    print(f"  {peer_name}: OK (↓{result.pulled} ↑{result.pushed})")
+                    if result.conflicts > 0:
+                        print(f"    Conflicts: {result.conflicts}")
+                        for error in result.errors:
+                            print(f"      - {error}")
+                else:
+                    print(f"  {peer_name}: FAILED")
+                    for error in result.errors:
+                        print(f"    - {error}")
+
+        return 0 if all_success else 1
+
+    return 0
+
+
 def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Start the sync server.
 
@@ -1800,6 +1928,24 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Disable ANSI color codes in log output"
     )
 
+    # sync reset-timestamps
+    sync_subparsers.add_parser(
+        "reset-timestamps",
+        help="Reset sync timestamps to force re-fetching all data from peers"
+    )
+
+    # sync full-resync
+    full_resync_parser = sync_subparsers.add_parser(
+        "full-resync",
+        help="Perform full re-sync (fetches all data regardless of timestamps)"
+    )
+    full_resync_parser.add_argument(
+        "--peer",
+        dest="peer_id",
+        type=str,
+        help="Full re-sync with specific peer ID (default: all peers)"
+    )
+
     # db-maintenance command with subcommands
     maintenance_parser = cli_subparsers.add_parser(
         "db-maintenance",
@@ -1890,6 +2036,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_sync_resolve(db, args)
             elif sync_cmd == "serve":
                 return cmd_sync_serve(db, config, args)
+            elif sync_cmd == "reset-timestamps":
+                return cmd_sync_reset_timestamps(db, args)
+            elif sync_cmd == "full-resync":
+                return cmd_sync_full_resync(db, config, args)
             else:
                 print(f"Error: Unknown sync command '{sync_cmd}'", file=sys.stderr)
                 return 1
