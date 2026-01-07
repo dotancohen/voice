@@ -70,6 +70,7 @@ DEFAULT_TRANSCRIPTION_STATE = "original !verified !verbatim !cleaned !polished"
 
 from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mpv_available
 from src.core.config import Config
+from src.core.conflicts import ConflictManager
 from src.core.database import Database
 from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
@@ -1009,6 +1010,8 @@ class NoteDetail(Container, NoteEditorMixin):
 
     def compose(self) -> ComposeResult:
         yield Label("Select a note to view", id="note-header")
+        # Conflict warning (hidden initially)
+        yield Label("", id="note-conflict-warning", classes="conflict-warning")
         # View mode: Static with RTL support (CONTENT FIRST)
         yield Static("", id="note-view")
         # Edit mode: TextArea (hidden initially)
@@ -1030,12 +1033,13 @@ class NoteDetail(Container, NoteEditorMixin):
         )
 
     def on_mount(self) -> None:
-        """Hide edit mode, transcriptions, and audio player initially."""
+        """Hide edit mode, transcriptions, audio player, and conflict warning initially."""
         self.query_one("#note-edit", TextArea).display = False
         self.query_one("#save-btn", Button).display = False
         self.query_one("#cancel-btn", Button).display = False
         self.query_one("#tui-transcriptions").display = False
         self.query_one("#tui-audio-player").display = False
+        self.query_one("#note-conflict-warning").display = False
 
     def load_note(self, note_id: str) -> None:
         """Load and display note details.
@@ -1057,6 +1061,21 @@ class NoteDetail(Container, NoteEditorMixin):
             else:
                 header.update(header_text)
                 header.remove_class("rtl")
+
+            # Check for conflicts
+            conflict_warning = self.query_one("#note-conflict-warning", Label)
+            try:
+                conflict_mgr = ConflictManager(self.db)
+                conflict_types = conflict_mgr.get_note_conflict_types(note_id)
+                if conflict_types:
+                    types_str = ", ".join(conflict_types)
+                    conflict_warning.update(f"WARNING: This note has unresolved {types_str} conflict(s)")
+                    conflict_warning.display = True
+                else:
+                    conflict_warning.display = False
+            except Exception as e:
+                logger.warning(f"Error checking conflicts for note {note_id}: {e}")
+                conflict_warning.display = False
 
             # Update attachments - displayed BELOW content per requirements
             attachments_label = self.query_one("#note-attachments", Label)
@@ -1251,6 +1270,14 @@ class VoiceTUI(App):
         height: 3;
         background: $surface;
         padding: 1;
+    }}
+
+    #note-conflict-warning {{
+        height: 2;
+        color: red;
+        text-style: bold;
+        padding: 0 1;
+        background: $error 20%;
     }}
 
     #note-attachments {{

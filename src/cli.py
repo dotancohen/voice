@@ -162,6 +162,13 @@ def cmd_show_note(db: Database, args: argparse.Namespace) -> int:
         print(f"Error: Note with ID {note_id} not found.", file=sys.stderr)
         return 1
 
+    # Check for conflicts
+    conflict_mgr = ConflictManager(db)
+    conflict_types = conflict_mgr.get_note_conflict_types(note["id"])
+    if conflict_types:
+        types_str = ", ".join(conflict_types)
+        print(f"WARNING: This note has unresolved {types_str} conflict(s)", file=sys.stderr)
+
     print(format_note(note, args.format))
     return 0
 
@@ -1326,7 +1333,34 @@ def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
     )
 
     if success:
-        print(f"Resolved {conflict_type} conflict with {choice_str}")
+        # Build descriptive message based on conflict type and choice
+        if conflict_type == "note_content":
+            if choice_str == "local":
+                action = "Kept local version, discarded remote changes"
+            elif choice_str == "remote":
+                action = "Kept remote version, discarded local changes"
+            elif choice_str == "merge":
+                action = "Merged both versions (review note for conflict markers)"
+            else:
+                action = f"Resolved with {choice_str}"
+        elif conflict_type == "note_delete":
+            if choice_str == "restore":
+                action = "Note restored (undeleted)"
+            elif choice_str == "delete":
+                action = "Deletion confirmed, note removed"
+            else:
+                action = f"Resolved with {choice_str}"
+        elif conflict_type == "tag_rename":
+            if choice_str == "local":
+                action = "Kept local tag name"
+            elif choice_str == "remote":
+                action = "Kept remote tag name"
+            else:
+                action = f"Resolved with {choice_str}"
+        else:
+            action = f"Resolved with {choice_str}"
+
+        print(f"Resolved {conflict_type} conflict: {action}")
         return 0
     else:
         print(f"Error: {error}", file=sys.stderr)

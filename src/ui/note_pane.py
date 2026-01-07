@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.conflicts import ConflictManager
 from src.core.database import Database
 from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
@@ -110,6 +111,13 @@ class NotePane(QWidget, NoteEditorMixin):
         self.tags_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.tags_label)
 
+        # Conflict warning (hidden by default)
+        self.conflict_label = QLabel()
+        self.conflict_label.setStyleSheet("color: red; font-weight: bold;")
+        self.conflict_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.conflict_label.hide()
+        layout.addWidget(self.conflict_label)
+
         # Content (initially read-only) - BEFORE attachments per requirements
         self.content_text = QTextEdit()
         self.content_text.setReadOnly(True)
@@ -197,6 +205,20 @@ class NotePane(QWidget, NoteEditorMixin):
             self.tags_label.setText(f"Tags: {tag_names}")
         else:
             self.tags_label.setText("Tags: None")
+
+        # Check for conflicts
+        try:
+            conflict_mgr = ConflictManager(self.db)
+            conflict_types = conflict_mgr.get_note_conflict_types(note_id)
+            if conflict_types:
+                types_str = ", ".join(conflict_types)
+                self.conflict_label.setText(f"WARNING: This note has unresolved {types_str} conflict(s)")
+                self.conflict_label.show()
+            else:
+                self.conflict_label.hide()
+        except Exception as e:
+            logger.warning(f"Error checking conflicts for note {note_id}: {e}")
+            self.conflict_label.hide()
 
         # Update attachments - display BELOW content
         self.attachments_list.clear()
@@ -290,6 +312,7 @@ class NotePane(QWidget, NoteEditorMixin):
         self.created_label.setText("Created: ")
         self.modified_label.setText("Modified: Never modified")
         self.tags_label.setText("Tags: ")
+        self.conflict_label.hide()
         self.attachments_label.setText("Attachments:")
         self.attachments_list.clear()
         self.audio_player.hide()

@@ -245,6 +245,45 @@ class ConflictManager:
             ))
         return conflicts
 
+    def note_has_conflicts(self, note_id: str) -> bool:
+        """Check if a note has any unresolved conflicts.
+
+        Args:
+            note_id: Note ID (UUID hex, can be partial prefix)
+
+        Returns:
+            True if the note has unresolved conflicts
+        """
+        note_id_lower = note_id.lower()
+        for c in self.get_note_content_conflicts():
+            if c.note_id.lower().startswith(note_id_lower):
+                return True
+        for c in self.get_note_delete_conflicts():
+            if c.note_id.lower().startswith(note_id_lower):
+                return True
+        return False
+
+    def get_note_conflict_types(self, note_id: str) -> List[str]:
+        """Get the types of unresolved conflicts for a note.
+
+        Args:
+            note_id: Note ID (UUID hex, can be partial prefix)
+
+        Returns:
+            List of conflict type strings (e.g., ["content", "delete"])
+        """
+        note_id_lower = note_id.lower()
+        types = []
+        for c in self.get_note_content_conflicts():
+            if c.note_id.lower().startswith(note_id_lower):
+                if "content" not in types:
+                    types.append("content")
+        for c in self.get_note_delete_conflicts():
+            if c.note_id.lower().startswith(note_id_lower):
+                if "delete" not in types:
+                    types.append("delete")
+        return types
+
     def resolve_note_content_conflict(
         self,
         conflict_id: str,

@@ -41,6 +41,7 @@ from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 from src.core.config import Config
+from src.core.conflicts import ConflictManager
 from src.core.database import Database
 from src.core.validation import ValidationError, validate_uuid_hex
 
@@ -140,6 +141,11 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
         validate_uuid_hex(note_id, "note_id")
         note = db.get_note(note_id)
         if note:
+            # Add conflict information
+            conflict_mgr = ConflictManager(db)
+            conflict_types = conflict_mgr.get_note_conflict_types(note["id"])
+            note["has_conflicts"] = len(conflict_types) > 0
+            note["conflict_types"] = conflict_types
             return jsonify(note), 200
         return jsonify({"error": f"Note {note_id} not found"}), 404
 
