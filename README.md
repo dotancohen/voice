@@ -314,29 +314,97 @@ python -m src.main cli --format csv  # CSV output
 ### Web API Mode
 
 - Server runs on `http://127.0.0.1:5000` by default.
+- All endpoints return JSON.
+- CORS is enabled for cross-origin requests.
+- IDs are UUID7 hex strings (32 characters, no hyphens).
 
 ```bash
 python -m src.main web
 python -m src.main web --host 0.0.0.0 --port 8080 # Custom host or port
-python -m src.main web --debug                      # Debug mode
+python -m src.main web --debug                    # Debug mode
 ```
 
 #### Web API Endpoints
 
-- All endpoints return JSON.
-- CORS is enabled for cross-origin requests.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check |
+| GET | `/api/notes` | List all notes |
+| POST | `/api/notes` | Create a new note |
+| GET | `/api/notes/<id>` | Get specific note |
+| PUT | `/api/notes/<id>` | Update a note |
+| DELETE | `/api/notes/<id>` | Delete a note (soft delete) |
+| GET | `/api/notes/<id>/attachments` | List attachments for a note |
+| GET | `/api/audiofiles/<id>` | Get audio file details |
+| GET | `/api/tags` | List all tags |
+| GET | `/api/search` | Search notes |
 
+#### Example API Usage
+
+**List and retrieve notes:**
 ```bash
-curl http://127.0.0.1:5000/api/health                            # Health check
-curl http://127.0.0.1:5000/api/notes                             # List all notes
-curl http://127.0.0.1:5000/api/notes/<note-uuid>  # Get specific note
-curl http://127.0.0.1:5000/api/tags                                 # List all tags
-curl "http://127.0.0.1:5000/api/search?text=meeting"                     # Search notes by text
-curl "http://127.0.0.1:5000/api/search?tag=Work"                              # Search notes by tag
-curl "http://127.0.0.1:5000/api/search?tag=Europe/France/Paris" # Search notes by hierarchical tag
-curl "http://127.0.0.1:5000/api/search?tag=Work&tag=Projects"   # Search notes by specifying multiple tags (AND logic)
-curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work" # Combined text and tags
+curl http://127.0.0.1:5000/api/health                # Health check
+curl http://127.0.0.1:5000/api/notes                 # List all notes
+curl http://127.0.0.1:5000/api/notes/<note-uuid>     # Get specific note
+curl http://127.0.0.1:5000/api/tags                  # List all tags
 ```
+
+**Create and update notes:**
+```bash
+# Create a new note
+curl -X POST http://127.0.0.1:5000/api/notes \
+  -H "Content-Type: application/json" \
+  -d '{"content": "My new note"}'
+
+# Update an existing note
+curl -X PUT http://127.0.0.1:5000/api/notes/<note-uuid> \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Updated content"}'
+
+# Delete a note (soft delete)
+curl -X DELETE http://127.0.0.1:5000/api/notes/<note-uuid>
+```
+
+**Search notes:**
+```bash
+curl "http://127.0.0.1:5000/api/search?text=meeting"                # Search by text
+curl "http://127.0.0.1:5000/api/search?tag=Work"                    # Search by tag
+curl "http://127.0.0.1:5000/api/search?tag=Europe/France/Paris"     # Hierarchical tag
+curl "http://127.0.0.1:5000/api/search?tag=Work&tag=Projects"       # Multiple tags (AND logic)
+curl "http://127.0.0.1:5000/api/search?text=meeting&tag=Work"       # Combined text and tags
+```
+
+**Get attachments and audio files:**
+```bash
+curl http://127.0.0.1:5000/api/notes/<note-uuid>/attachments  # List note attachments
+curl http://127.0.0.1:5000/api/audiofiles/<audio-uuid>        # Get audio file details
+```
+
+#### API Response Format
+
+**Success responses** return the requested data directly:
+```json
+{
+  "id": "018d1234abcd5678901234567890abcd",
+  "content": "Note content here",
+  "created_at": "2024-01-15 10:30:00",
+  "modified_at": "2024-01-15 10:35:00"
+}
+```
+
+**Error responses** include an error message:
+```json
+{
+  "error": "Note 018d1234... not found"
+}
+```
+
+**HTTP Status Codes:**
+- `200` - Success
+- `201` - Created (for POST requests)
+- `400` - Bad request (validation error)
+- `404` - Not found
+- `500` - Internal server error
 
 ## Server Deployment
 
@@ -509,6 +577,25 @@ python -m src.main cli sync resolve <conflict-id> local       # Or:
 python -m src.main cli sync resolve <conflict-id> remote   # Or:
 python -m src.main cli sync resolve <conflict-id> merge
 ```
+
+### Sync Troubleshooting
+
+When sync issues occur (e.g., missing attachments, transcriptions, or data inconsistencies), use these commands:
+
+```bash
+# Reset sync timestamps - forces next sync to exchange all data
+# Useful when incremental sync missed some changes
+python -m src.main cli sync reset-timestamps
+
+# Full resync - performs initial sync (full dataset transfer) with peers
+# Fetches all data regardless of last_sync timestamps
+python -m src.main cli sync full-resync                       # Resync with all peers
+python -m src.main cli sync full-resync --peer <peer-id>      # Resync with specific peer
+```
+
+**When to use each:**
+- `reset-timestamps`: Clears the "last synced" timestamps locally. The next regular `sync now` will exchange all data. Use when you suspect sync state is stale.
+- `full-resync`: Immediately performs a complete sync, pulling and pushing all data. Use when you need to recover missing data now.
 
 ### Managing Peers
 
