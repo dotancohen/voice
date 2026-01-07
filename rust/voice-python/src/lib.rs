@@ -1442,12 +1442,15 @@ fn start_sync_server(
 ) -> PyResult<()> {
     // Initialize tracing subscriber for logging output only if verbose is enabled
     if verbose {
-        use tracing_subscriber::fmt;
-        let builder = fmt()
-            .with_max_level(tracing_subscriber::filter::LevelFilter::INFO)
+        use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+        // Use EnvFilter to explicitly set DEBUG level for all targets
+        // This overrides any RUST_LOG environment variable
+        let filter = EnvFilter::new("debug");
+        let _ = fmt()
+            .with_env_filter(filter)
             .with_target(false)
-            .with_ansi(ansi_colors);
-        let _ = builder.try_init();
+            .with_ansi(ansi_colors)
+            .try_init();
     }
 
     // Create Tokio runtime
