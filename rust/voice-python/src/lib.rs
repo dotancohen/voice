@@ -485,12 +485,14 @@ impl PyDatabase {
     // Conflict creation methods
     // ========================================================================
 
-    #[pyo3(signature = (note_id, local_content, local_modified_at, remote_content, remote_modified_at, remote_device_id=None, remote_device_name=None))]
+    #[pyo3(signature = (note_id, local_content, local_modified_at, local_device_id=None, local_device_name=None, remote_content="", remote_modified_at="", remote_device_id=None, remote_device_name=None))]
     fn create_note_content_conflict(
         &self,
         note_id: &str,
         local_content: &str,
         local_modified_at: &str,
+        local_device_id: Option<&str>,
+        local_device_name: Option<&str>,
         remote_content: &str,
         remote_modified_at: &str,
         remote_device_id: Option<&str>,
@@ -501,6 +503,8 @@ impl PyDatabase {
                 note_id,
                 local_content,
                 local_modified_at,
+                local_device_id,
+                local_device_name,
                 remote_content,
                 remote_modified_at,
                 remote_device_id,
@@ -509,13 +513,14 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (note_id, surviving_content, surviving_modified_at, surviving_device_id, deleted_content, deleted_at, deleting_device_id=None, deleting_device_name=None))]
+    #[pyo3(signature = (note_id, surviving_content, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_content=None, deleted_at="", deleting_device_id=None, deleting_device_name=None))]
     fn create_note_delete_conflict(
         &self,
         note_id: &str,
         surviving_content: &str,
         surviving_modified_at: &str,
         surviving_device_id: Option<&str>,
+        surviving_device_name: Option<&str>,
         deleted_content: Option<&str>,
         deleted_at: &str,
         deleting_device_id: Option<&str>,
@@ -527,6 +532,7 @@ impl PyDatabase {
                 surviving_content,
                 surviving_modified_at,
                 surviving_device_id,
+                surviving_device_name,
                 deleted_content,
                 deleted_at,
                 deleting_device_id,
@@ -535,12 +541,14 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (tag_id, local_name, local_modified_at, remote_name, remote_modified_at, remote_device_id=None, remote_device_name=None))]
+    #[pyo3(signature = (tag_id, local_name, local_modified_at, local_device_id=None, local_device_name=None, remote_name="", remote_modified_at="", remote_device_id=None, remote_device_name=None))]
     fn create_tag_rename_conflict(
         &self,
         tag_id: &str,
         local_name: &str,
         local_modified_at: &str,
+        local_device_id: Option<&str>,
+        local_device_name: Option<&str>,
         remote_name: &str,
         remote_modified_at: &str,
         remote_device_id: Option<&str>,
@@ -551,6 +559,8 @@ impl PyDatabase {
                 tag_id,
                 local_name,
                 local_modified_at,
+                local_device_id,
+                local_device_name,
                 remote_name,
                 remote_modified_at,
                 remote_device_id,
@@ -559,7 +569,7 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (note_id, tag_id, local_created_at=None, local_modified_at=None, local_deleted_at=None, remote_created_at=None, remote_modified_at=None, remote_deleted_at=None, remote_device_id=None, remote_device_name=None))]
+    #[pyo3(signature = (note_id, tag_id, local_created_at=None, local_modified_at=None, local_deleted_at=None, local_device_id=None, local_device_name=None, remote_created_at=None, remote_modified_at=None, remote_deleted_at=None, remote_device_id=None, remote_device_name=None))]
     fn create_note_tag_conflict(
         &self,
         note_id: &str,
@@ -567,6 +577,8 @@ impl PyDatabase {
         local_created_at: Option<&str>,
         local_modified_at: Option<&str>,
         local_deleted_at: Option<&str>,
+        local_device_id: Option<&str>,
+        local_device_name: Option<&str>,
         remote_created_at: Option<&str>,
         remote_modified_at: Option<&str>,
         remote_deleted_at: Option<&str>,
@@ -580,6 +592,8 @@ impl PyDatabase {
                 local_created_at,
                 local_modified_at,
                 local_deleted_at,
+                local_device_id,
+                local_device_name,
                 remote_created_at,
                 remote_modified_at,
                 remote_deleted_at,
@@ -589,12 +603,14 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (tag_id, local_parent_id, local_modified_at, remote_parent_id, remote_modified_at, remote_device_id=None, remote_device_name=None))]
+    #[pyo3(signature = (tag_id, local_parent_id, local_modified_at, local_device_id=None, local_device_name=None, remote_parent_id=None, remote_modified_at="", remote_device_id=None, remote_device_name=None))]
     fn create_tag_parent_conflict(
         &self,
         tag_id: &str,
         local_parent_id: Option<&str>,
         local_modified_at: &str,
+        local_device_id: Option<&str>,
+        local_device_name: Option<&str>,
         remote_parent_id: Option<&str>,
         remote_modified_at: &str,
         remote_device_id: Option<&str>,
@@ -605,6 +621,8 @@ impl PyDatabase {
                 tag_id,
                 local_parent_id,
                 local_modified_at,
+                local_device_id,
+                local_device_name,
                 remote_parent_id,
                 remote_modified_at,
                 remote_device_id,
@@ -1527,13 +1545,15 @@ fn stop_sync_server() -> PyResult<()> {
 /// Returns:
 ///     Dict with keys: applied, conflicts, errors
 #[pyfunction]
-#[pyo3(signature = (db, changes, peer_device_id, peer_device_name=None))]
+#[pyo3(signature = (db, changes, peer_device_id, peer_device_name=None, local_device_id=None, local_device_name=None))]
 fn apply_sync_changes<'py>(
     py: Python<'py>,
     db: &PyDatabase,
     changes: pyo3::Bound<'py, PyList>,
     peer_device_id: &str,
     peer_device_name: Option<&str>,
+    local_device_id: Option<&str>,
+    local_device_name: Option<&str>,
 ) -> PyResult<PyObject> {
     let db_ref = db.inner_ref()?;
 
@@ -1605,6 +1625,8 @@ fn apply_sync_changes<'py>(
         &rust_changes,
         peer_device_id,
         peer_device_name,
+        local_device_id,
+        local_device_name,
     )
     .map_err(voice_error_to_pyerr)?;
 

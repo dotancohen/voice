@@ -28,7 +28,7 @@ from src.core.audiofile_manager import AudioFileManager, is_supported_audio_form
 from src.core.config import Config
 from src.core.conflicts import ConflictManager, ResolutionChoice
 from src.core.database import Database
-from src.core.models import AUDIO_FILE_FORMATS
+from src.core.models import AUDIO_FILE_FORMATS, UUID_SHORT_LEN
 from src.core.search import resolve_tag_term
 from voicecore import SyncClient, sync_all_peers, start_sync_server
 from src.core.validation import ValidationError
@@ -272,8 +272,8 @@ def cmd_merge_notes(db: Database, args: argparse.Namespace) -> int:
             }))
         else:
             deleted_id = args.note_id_2 if survivor_id == args.note_id_1 else args.note_id_1
-            print(f"Merged notes into #{survivor_id[:8]}...")
-            print(f"Deleted note #{deleted_id[:8]}...")
+            print(f"Merged notes into #{survivor_id[:UUID_SHORT_LEN]}...")
+            print(f"Deleted note #{deleted_id[:UUID_SHORT_LEN]}...")
             print()
             content = merged_note.get("content", "")
             if content:
@@ -465,7 +465,7 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
                     except Exception as tag_error:
                         print(f"  Warning: Could not attach tag {tag_id}: {tag_error}")
 
-            print(f"  Imported: {audio_path.name} -> {audio_file_id[:8]}...")
+            print(f"  Imported: {audio_path.name} -> {audio_file_id[:UUID_SHORT_LEN]}...")
             imported += 1
 
         except Exception as e:
@@ -503,7 +503,7 @@ def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) 
         return 0
 
     for af in audio_files:
-        print(f"ID: {af['id'][:8]}...")
+        print(f"ID: {af['id'][:UUID_SHORT_LEN]}...")
         print(f"  Filename: {af['filename']}")
         print(f"  Imported: {af['imported_at']}")
         if af.get('file_created_at'):
@@ -863,7 +863,7 @@ def cmd_transcribe_audiofile(db: Database, config: Config, args: argparse.Namesp
         print(json.dumps(result, indent=2))
     else:
         print(f"Transcription ID: {result['transcription_id']}")
-        print(f"Audio File: {audio_file_id[:8]}...")
+        print(f"Audio File: {audio_file_id[:UUID_SHORT_LEN]}...")
         if result.get('duration_seconds'):
             print(f"Duration: {result['duration_seconds']:.1f}s")
         if result.get('languages'):
@@ -936,7 +936,7 @@ def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) 
             print(f"Errors: {errors}")
 
         for result in results:
-            print(f"\n--- {result['audio_file_id'][:8]}... ---")
+            print(f"\n--- {result['audio_file_id'][:UUID_SHORT_LEN]}... ---")
             print(result['content'])
 
     return 0 if errors == 0 else 1
@@ -1198,6 +1198,14 @@ def cmd_sync_conflicts(db: Database, args: argparse.Namespace) -> int:
     note_delete = conflict_mgr.get_note_delete_conflicts()
     tag_rename = conflict_mgr.get_tag_rename_conflicts()
 
+    # Filter by note ID if specified
+    note_filter = getattr(args, "note", None)
+    if note_filter:
+        note_filter = note_filter.lower()
+        note_content = [c for c in note_content if c.note_id.lower().startswith(note_filter)]
+        note_delete = [c for c in note_delete if c.note_id.lower().startswith(note_filter)]
+        # Tag conflicts don't have note_id, so they're excluded when filtering by note
+
     if args.format == "json":
         output = {
             "note_content": [
@@ -1233,9 +1241,13 @@ def cmd_sync_conflicts(db: Database, args: argparse.Namespace) -> int:
         }
         print(json.dumps(output, indent=2))
     else:
+        show_details = getattr(args, "details", False)
         total = len(note_content) + len(note_delete) + len(tag_rename)
         if total == 0:
-            print("No unresolved conflicts.")
+            if note_filter:
+                print(f"No unresolved conflicts for note {note_filter}.")
+            else:
+                print("No unresolved conflicts.")
             return 0
 
         print(f"Unresolved Conflicts ({total}):\n")
@@ -1243,21 +1255,38 @@ def cmd_sync_conflicts(db: Database, args: argparse.Namespace) -> int:
         if note_content:
             print("Note Content Conflicts:")
             for c in note_content:
-                local = c.local_device_name or c.local_device_id[:8]
-                remote = c.remote_device_name or c.remote_device_id[:8]
-                print(f"  [{c.id[:8]}] Note {c.note_id[:8]} - {local} vs {remote}")
+                local = c.local_device_name or (c.local_device_id[:UUID_SHORT_LEN] if c.local_device_id else "unknown")
+                remote = c.remote_device_name or (c.remote_device_id[:UUID_SHORT_LEN] if c.remote_device_id else "unknown")
+                print(f"  [{c.id[:UUID_SHORT_LEN]}] Note {c.note_id[:UUID_SHORT_LEN]} - {local} vs {remote}")
+                if show_details:
+                    print(f"    Created: {c.created_at}")
+                    print(f"    Local content:")
+                    for line in (c.local_content or "").split("\n"):
+                        print(f"      {line}")
+                    print(f"    Remote content:")
+                    for line in (c.remote_content or "").split("\n"):
+                        print(f"      {line}")
+                    print()
 
         if note_delete:
             print("\nNote Delete Conflicts:")
             for c in note_delete:
-                surviving = c.surviving_device_name or c.surviving_device_id[:8]
-                deleting = c.deleting_device_name or c.deleting_device_id[:8]
-                print(f"  [{c.id[:8]}] Note {c.note_id[:8]} - edited by {surviving}, deleted by {deleting}")
+                surviving = c.surviving_device_name or (c.surviving_device_id[:UUID_SHORT_LEN] if c.surviving_device_id else "unknown")
+                deleting = c.deleting_device_name or (c.deleting_device_id[:UUID_SHORT_LEN] if c.deleting_device_id else "unknown")
+                print(f"  [{c.id[:UUID_SHORT_LEN]}] Note {c.note_id[:UUID_SHORT_LEN]} - edited by {surviving}, deleted by {deleting}")
+                if show_details:
+                    print(f"    Created: {c.created_at}")
+                    print(f"    Surviving modified at: {c.surviving_modified_at}")
+                    print(f"    Deleted at: {c.deleted_at}")
+                    print(f"    Surviving content:")
+                    for line in (c.surviving_content or "").split("\n"):
+                        print(f"      {line}")
+                    print()
 
         if tag_rename:
             print("\nTag Rename Conflicts:")
             for c in tag_rename:
-                print(f"  [{c.id[:8]}] Tag {c.tag_id[:8]} - '{c.local_name}' vs '{c.remote_name}'")
+                print(f"  [{c.id[:UUID_SHORT_LEN]}] Tag {c.tag_id[:UUID_SHORT_LEN]} - '{c.local_name}' vs '{c.remote_name}'")
 
     return 0
 
@@ -1887,7 +1916,17 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     )
 
     # sync conflicts
-    sync_subparsers.add_parser("conflicts", help="List unresolved sync conflicts")
+    conflicts_parser = sync_subparsers.add_parser("conflicts", help="List unresolved sync conflicts")
+    conflicts_parser.add_argument(
+        "--note",
+        type=str,
+        help="Filter conflicts by note ID (or prefix)"
+    )
+    conflicts_parser.add_argument(
+        "--details",
+        action="store_true",
+        help="Show full conflict details including content"
+    )
 
     # sync resolve
     resolve_parser = sync_subparsers.add_parser("resolve", help="Resolve a sync conflict")

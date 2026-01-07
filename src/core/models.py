@@ -13,6 +13,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+# Length of short UUID display (e.g., "019b8ffd5711" instead of full 32-char UUID)
+UUID_SHORT_LEN = 12
+
 
 class AttachmentType(Enum):
     """Types of attachments that can be associated with notes."""

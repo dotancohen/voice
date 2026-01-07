@@ -47,10 +47,12 @@ from rich.text import Text as RichText
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.events import Key
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
+    Checkbox,
     Collapsible,
     Footer,
     Input,
@@ -69,6 +71,7 @@ DEFAULT_TRANSCRIPTION_STATE = "original !verified !verbatim !cleaned !polished"
 from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mpv_available
 from src.core.config import Config
 from src.core.database import Database
+from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
 from src.core.search import build_tag_search_term, execute_search
 from src.core.waveform import extract_waveform, waveform_with_progress, WAVEFORM_BAR_COUNT
@@ -196,6 +199,300 @@ class TagsTree(Tree[Dict[str, Any]]):
         # Start from root tags (parent_id=None) and build recursively
         for tag in children_by_parent.get(None, []):
             add_tag_recursive(self.root, tag)
+
+
+class TagManagementScreen(ModalScreen[None]):
+    """Modal screen for managing tags on a note.
+
+    Features:
+    - Shows all tags hierarchically with collapse/expand
+    - Filter field filters on each keypress
+    - Shows full hierarchy path when filtering (e.g., Geography > Europe > France > Paris)
+    - Checkboxes to add/remove tags from the note
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+    ]
+
+    CSS = """
+    TagManagementScreen {
+        align: center middle;
+    }
+
+    #tag-management-dialog {
+        width: 80;
+        height: 80%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #tag-filter-input {
+        margin-bottom: 1;
+    }
+
+    #tag-list-container {
+        height: 1fr;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    .tag-item {
+        height: auto;
+        padding: 0 1;
+    }
+
+    .tag-item-row {
+        height: 3;
+        width: 100%;
+    }
+
+    .tag-item-selected {
+        background: $accent;
+    }
+
+    .tag-path {
+        color: $text-muted;
+        text-style: italic;
+    }
+
+    .tag-toggle {
+        width: 3;
+        min-width: 3;
+        height: 1;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+        border: none;
+    }
+
+    .tag-toggle:hover {
+        background: $primary-darken-1;
+    }
+
+    #tag-management-buttons {
+        height: 3;
+        align: center middle;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, db: Database, note_id: str) -> None:
+        super().__init__()
+        self.db = db
+        self.note_id = note_id
+        self._all_tags: List[Dict[str, Any]] = []
+        self._note_tag_ids: set = set()
+        self._tag_paths: Dict[str, str] = {}  # tag_id -> full path
+        self._filtered_tags: List[Dict[str, Any]] = []
+        self._children_by_parent: Dict[str, set] = {}  # parent_id -> set of child ids
+        self._collapsed_ids: set = set()  # Set of collapsed tag IDs
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="tag-management-dialog"):
+            yield Label("Manage Tags for Note", id="tag-management-title")
+            yield Input(placeholder="Filter tags...", id="tag-filter-input")
+            yield VerticalScroll(id="tag-list-container")
+            with Horizontal(id="tag-management-buttons"):
+                yield Button("Close", id="close-btn", variant="primary")
+
+    def on_mount(self) -> None:
+        """Load tags when mounted."""
+        self._load_tags()
+        self._update_display()
+        # Focus the filter input
+        self.query_one("#tag-filter-input", Input).focus()
+
+    def _load_tags(self) -> None:
+        """Load all tags and compute paths."""
+        all_tags = self.db.get_all_tags()
+        note_tags = self.db.get_note_tags(self.note_id)
+        self._note_tag_ids = {t["id"] for t in note_tags}
+
+        # Build tag lookup by ID
+        tag_by_id = {t["id"]: t for t in all_tags}
+
+        # Build children map
+        self._children_by_parent = {}
+        for tag in all_tags:
+            parent_id = tag.get("parent_id")
+            if parent_id:
+                if parent_id not in self._children_by_parent:
+                    self._children_by_parent[parent_id] = set()
+                self._children_by_parent[parent_id].add(tag["id"])
+
+        # Compute full path for each tag
+        self._tag_paths = {}
+        for tag in all_tags:
+            path_parts = []
+            current = tag
+            while current:
+                path_parts.insert(0, current["name"])
+                parent_id = current.get("parent_id")
+                current = tag_by_id.get(parent_id) if parent_id else None
+            self._tag_paths[tag["id"]] = " > ".join(path_parts)
+
+        # Sort tags by their full path to get hierarchical order
+        self._all_tags = sorted(all_tags, key=lambda t: self._tag_paths[t["id"]].lower())
+        self._filtered_tags = self._all_tags[:]
+
+    def _has_children(self, tag_id: str) -> bool:
+        """Check if a tag has children."""
+        return tag_id in self._children_by_parent
+
+    def _is_hidden_by_collapse(self, tag: Dict[str, Any]) -> bool:
+        """Check if tag is hidden due to a collapsed ancestor."""
+        tag_by_id = {t["id"]: t for t in self._all_tags}
+        current = tag.get("parent_id")
+        while current:
+            if current in self._collapsed_ids:
+                return True
+            parent_tag = tag_by_id.get(current)
+            current = parent_tag.get("parent_id") if parent_tag else None
+        return False
+
+    def _toggle_collapse(self, tag_id: str) -> None:
+        """Toggle collapse state of a tag."""
+        if tag_id in self._collapsed_ids:
+            self._collapsed_ids.discard(tag_id)
+        else:
+            self._collapsed_ids.add(tag_id)
+        self._update_display()
+
+    def _filter_tags(self, filter_text: str) -> None:
+        """Filter tags based on input text."""
+        if not filter_text.strip():
+            self._filtered_tags = self._all_tags[:]
+        else:
+            filter_lower = filter_text.lower()
+            # Match tags where the path contains the filter text
+            self._filtered_tags = [
+                tag for tag in self._all_tags
+                if filter_lower in self._tag_paths[tag["id"]].lower()
+            ]
+
+    def _update_display(self) -> None:
+        """Update the tag list display."""
+        container = self.query_one("#tag-list-container", VerticalScroll)
+        container.remove_children()
+
+        filter_text = self.query_one("#tag-filter-input", Input).value.strip()
+        is_filtering = bool(filter_text)
+
+        for tag in self._filtered_tags:
+            tag_id = tag["id"]
+
+            # Skip hidden tags when not filtering
+            if not is_filtering and self._is_hidden_by_collapse(tag):
+                continue
+
+            is_selected = tag_id in self._note_tag_ids
+            has_children = self._has_children(tag_id)
+            is_collapsed = tag_id in self._collapsed_ids
+
+            # Show path when filtering, otherwise just name with hierarchy
+            if is_filtering:
+                display_text = self._tag_paths[tag_id]
+                # Simple checkbox for filtered view
+                checkbox = Checkbox(
+                    display_text,
+                    value=is_selected,
+                    id=f"tag-checkbox-{tag_id}",
+                    classes="tag-item" + (" tag-item-selected" if is_selected else "")
+                )
+                checkbox.tag_id = tag_id
+                container.mount(checkbox)
+            else:
+                # Show indented hierarchy with collapse toggle
+                depth = self._get_tag_depth(tag)
+                indent = "  " * depth
+
+                # Create horizontal container for toggle + checkbox
+                row = Horizontal(classes="tag-item-row")
+
+                # Add indent spacing
+                if depth > 0:
+                    indent_label = Static(indent, classes="tag-indent")
+                    row.compose_add_child(indent_label)
+
+                # Add collapse toggle for parent tags
+                if has_children:
+                    toggle_char = "▶" if is_collapsed else "▼"
+                    toggle_btn = Button(toggle_char, classes="tag-toggle", id=f"toggle-{tag_id}")
+                    toggle_btn.tag_id = tag_id
+                    row.compose_add_child(toggle_btn)
+                else:
+                    # Spacer for alignment
+                    spacer = Static("   ", classes="tag-toggle-spacer")
+                    row.compose_add_child(spacer)
+
+                # Add checkbox
+                checkbox = Checkbox(
+                    tag["name"],
+                    value=is_selected,
+                    id=f"tag-checkbox-{tag_id}",
+                    classes="tag-item" + (" tag-item-selected" if is_selected else "")
+                )
+                checkbox.tag_id = tag_id
+                row.compose_add_child(checkbox)
+
+                container.mount(row)
+
+    def _get_tag_depth(self, tag: Dict[str, Any]) -> int:
+        """Get the depth of a tag in the hierarchy."""
+        tag_by_id = {t["id"]: t for t in self._all_tags}
+        depth = 0
+        current = tag
+        while current.get("parent_id"):
+            depth += 1
+            current = tag_by_id.get(current["parent_id"], {})
+        return depth
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle filter input changes."""
+        if event.input.id == "tag-filter-input":
+            self._filter_tags(event.value)
+            self._update_display()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "close-btn":
+            self.dismiss(None)
+        elif event.button.id and event.button.id.startswith("toggle-"):
+            tag_id = getattr(event.button, 'tag_id', None)
+            if tag_id:
+                self._toggle_collapse(tag_id)
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Handle checkbox toggle - add/remove tag from note."""
+        checkbox = event.checkbox
+        tag_id = getattr(checkbox, 'tag_id', None)
+        if not tag_id:
+            return
+
+        if event.value:
+            # Add tag to note
+            success = self.db.add_tag_to_note(self.note_id, tag_id)
+            if success:
+                self._note_tag_ids.add(tag_id)
+                self.notify(f"Tag added")
+            else:
+                self.notify("Failed to add tag", severity="error")
+                checkbox.value = False
+        else:
+            # Remove tag from note
+            success = self.db.remove_tag_from_note(self.note_id, tag_id)
+            if success:
+                self._note_tag_ids.discard(tag_id)
+                self.notify(f"Tag removed")
+            else:
+                self.notify("Failed to remove tag", severity="error")
+                checkbox.value = True
+
+    def action_close(self) -> None:
+        """Close the modal."""
+        self.dismiss(None)
 
 
 class SearchInput(Input):
@@ -726,6 +1023,7 @@ class NoteDetail(Container, NoteEditorMixin):
         yield Label("", id="note-attachments")
         yield Horizontal(
             Button("Edit", id="edit-btn", variant="primary"),
+            Button("Tags", id="tags-btn"),
             Button("Save", id="save-btn", variant="success"),
             Button("Cancel", id="cancel-btn"),
             id="note-buttons"
@@ -797,7 +1095,7 @@ class NoteDetail(Container, NoteEditorMixin):
                         audio_player.display = False
                         attachment_lines = []
                         for af in audio_files:
-                            id_short = af.get("id", "")[:8]
+                            id_short = af.get("id", "")[:UUID_SHORT_LEN]
                             filename = af.get("filename", "unknown")
                             t_count = transcription_counts.get(af.get("id", ""), 0)
                             imported_at = af.get("imported_at", "unknown")
@@ -1061,6 +1359,7 @@ class VoiceTUI(App):
         Binding("r", "refresh", "Refresh"),
         Binding("s", "save", "Save Note"),
         Binding("a", "show_all", "All Notes"),
+        Binding("t", "manage_tags", "Tags"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -1115,6 +1414,8 @@ class VoiceTUI(App):
         detail = self.query_one("#note-detail", NoteDetail)
         if event.button.id == "edit-btn":
             detail.start_editing()
+        elif event.button.id == "tags-btn":
+            self._open_tag_management()
         elif event.button.id == "save-btn":
             detail.save_note()
             # Refresh notes list (preserve search)
@@ -1163,6 +1464,35 @@ class VoiceTUI(App):
         detail.start_editing()
 
         self.notify(f"Created note #{note_id}")
+
+    def _open_tag_management(self) -> None:
+        """Open tag management modal for the current note."""
+        detail = self.query_one("#note-detail", NoteDetail)
+        if detail.current_note_id:
+            self.push_screen(
+                TagManagementScreen(self.db, detail.current_note_id),
+                self._on_tag_management_closed
+            )
+        else:
+            self.notify("Select a note first", severity="warning")
+
+    def _on_tag_management_closed(self, result: None) -> None:
+        """Called when tag management modal is closed."""
+        # Refresh the note detail to show updated tags
+        detail = self.query_one("#note-detail", NoteDetail)
+        if detail.current_note_id:
+            detail.load_note(detail.current_note_id)
+        # Refresh notes list to update tag display
+        notes_list = self.query_one("#notes-list", NotesList)
+        search_text = notes_list.get_search_text()
+        if search_text:
+            notes_list.perform_search(search_text)
+        else:
+            notes_list.refresh_notes()
+
+    def action_manage_tags(self) -> None:
+        """Open tag management for current note (keyboard shortcut)."""
+        self._open_tag_management()
 
 
 def add_tui_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

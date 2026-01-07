@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.database import Database
+from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
 from src.ui.audio_player_widget import AudioPlayerWidget
 from src.ui.transcription_widget import TranscriptionsContainer
@@ -50,6 +51,7 @@ class NotePane(QWidget, NoteEditorMixin):
         current_note_id: ID of currently displayed note (hex string)
         current_note_content: Content of current note
         editing: Whether currently in edit mode
+        note_id_label: Label for note ID (selectable)
         created_label: Label for creation timestamp
         modified_label: Label for modification timestamp
         tags_label: Label for associated tags
@@ -88,16 +90,24 @@ class NotePane(QWidget, NoteEditorMixin):
         """Set up the user interface."""
         layout = QVBoxLayout(self)
 
+        # Note ID (selectable for debugging)
+        self.note_id_label = QLabel("Note ID: ")
+        self.note_id_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.note_id_label)
+
         # Created timestamp
         self.created_label = QLabel("Created: ")
+        self.created_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.created_label)
 
         # Modified timestamp
         self.modified_label = QLabel("Modified: Never modified")
+        self.modified_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.modified_label)
 
         # Tags
         self.tags_label = QLabel("Tags: ")
+        self.tags_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.tags_label)
 
         # Content (initially read-only) - BEFORE attachments per requirements
@@ -167,6 +177,9 @@ class NotePane(QWidget, NoteEditorMixin):
             self.clear()
             return
 
+        # Update Note ID
+        self.note_id_label.setText(f"Note ID: {note_id}")
+
         # Update created timestamp
         created_at = note.get("created_at", "Unknown")
         self.created_label.setText(f"Created: {created_at}")
@@ -224,7 +237,7 @@ class NotePane(QWidget, NoteEditorMixin):
                 else:
                     # Fallback to simple list
                     for af in audio_files:
-                        id_short = af.get("id", "")[:8]
+                        id_short = af.get("id", "")[:UUID_SHORT_LEN]
                         filename = af.get("filename", "unknown")
                         imported_at = af.get("imported_at", "unknown")
                         file_created_at = af.get("file_created_at", "unknown")
@@ -273,6 +286,7 @@ class NotePane(QWidget, NoteEditorMixin):
 
     def clear(self) -> None:
         """Clear all fields."""
+        self.note_id_label.setText("Note ID: ")
         self.created_label.setText("Created: ")
         self.modified_label.setText("Modified: Never modified")
         self.tags_label.setText("Tags: ")
