@@ -1310,11 +1310,12 @@ def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
         "local": ResolutionChoice.KEEP_LOCAL,
         "remote": ResolutionChoice.KEEP_REMOTE,
         "merge": ResolutionChoice.MERGE,
-        "both": ResolutionChoice.KEEP_BOTH,
+        "restore": ResolutionChoice.RESTORE,
+        "delete": ResolutionChoice.DELETE,
     }
 
     if choice_str not in choice_map:
-        print(f"Error: Invalid choice '{choice_str}'. Use: local, remote, merge, or both", file=sys.stderr)
+        print(f"Error: Invalid choice '{choice_str}'. Use: local, remote, merge, restore, or delete", file=sys.stderr)
         return 1
 
     choice = choice_map[choice_str]
@@ -1938,8 +1939,8 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     resolve_parser.add_argument(
         "choice",
         type=str,
-        choices=["local", "remote", "merge", "both"],
-        help="Resolution choice: local, remote, merge (content), or both (delete)"
+        choices=["local", "remote", "merge", "restore", "delete"],
+        help="Resolution choice: local, remote, merge (content), restore/delete (delete conflicts)"
     )
 
     # sync serve

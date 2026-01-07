@@ -2,8 +2,15 @@
 
 This module handles:
 - Listing unresolved conflicts
-- Resolving conflicts (choose local, remote, or merge)
+- Resolving conflicts
 - Diff3-style merging for text content
+
+Resolution Choices:
+- local: Keep local version (content conflicts)
+- remote: Keep remote version (content conflicts)
+- merge: Combine with conflict markers (content conflicts)
+- restore: Undelete the note (delete conflicts)
+- delete: Accept the deletion (delete conflicts)
 
 Conflict Types:
 - note_content: Two devices edited the same note simultaneously
@@ -64,7 +71,8 @@ class ResolutionChoice(Enum):
     KEEP_LOCAL = "keep_local"
     KEEP_REMOTE = "keep_remote"
     MERGE = "merge"  # Only for text content
-    KEEP_BOTH = "keep_both"  # For delete conflicts - keep the note
+    RESTORE = "restore"  # For delete conflicts - restore the deleted note
+    DELETE = "delete"  # For delete conflicts - accept the deletion
 
 
 @dataclass
@@ -290,14 +298,14 @@ class ConflictManager:
 
         Args:
             conflict_id: Conflict ID (UUID hex)
-            choice: How to resolve (KEEP_BOTH to restore, KEEP_REMOTE to accept delete)
+            choice: How to resolve (RESTORE to undelete, DELETE to accept deletion)
 
         Returns:
             True if resolved successfully
         """
-        if choice == ResolutionChoice.KEEP_BOTH:
+        if choice == ResolutionChoice.RESTORE:
             restore_note = True
-        elif choice == ResolutionChoice.KEEP_REMOTE:
+        elif choice == ResolutionChoice.DELETE:
             restore_note = False
         else:
             raise ValueError(f"Invalid choice for note delete: {choice}")
@@ -406,12 +414,12 @@ class ConflictManager:
             if c.id.startswith(conflict_id_prefix) or c.id == conflict_id_prefix:
                 # Validate choice
                 if choice not in [
-                    ResolutionChoice.KEEP_BOTH,
-                    ResolutionChoice.KEEP_REMOTE,
+                    ResolutionChoice.RESTORE,
+                    ResolutionChoice.DELETE,
                 ]:
                     return False, "note_delete", (
                         "Note delete conflicts can only be resolved with "
-                        "'keep_both' (restore) or 'keep_remote' (accept delete)"
+                        "'restore' (undelete) or 'delete' (accept deletion)"
                     )
 
                 result = self.resolve_note_delete_conflict(c.id, choice)

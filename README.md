@@ -572,10 +572,14 @@ Resolve edit conflicts from multiple devices:
 # Check for conflicts
 python -m src.main cli sync conflicts
 
-# Resolve a conflict by keeping local, remote, or merging
-python -m src.main cli sync resolve <conflict-id> local       # Or:
-python -m src.main cli sync resolve <conflict-id> remote   # Or:
-python -m src.main cli sync resolve <conflict-id> merge
+# Resolve content conflicts (two devices edited the same note)
+python -m src.main cli sync resolve <conflict-id> local    # Keep local version
+python -m src.main cli sync resolve <conflict-id> remote   # Keep remote version
+python -m src.main cli sync resolve <conflict-id> merge    # Keep merged content
+
+# Resolve delete conflicts (one device edited, another deleted)
+python -m src.main cli sync resolve <conflict-id> restore  # Undelete the note
+python -m src.main cli sync resolve <conflict-id> delete   # Accept deletion
 ```
 
 ### Sync Troubleshooting
