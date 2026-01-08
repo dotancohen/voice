@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -129,7 +129,9 @@ class NotePane(QWidget, NoteEditorMixin):
         layout.addWidget(self.attachments_label)
 
         # Transcriptions container (above waveform)
-        self.transcriptions_container = TranscriptionsContainer()
+        self.transcriptions_container = TranscriptionsContainer(
+            content_loader=self._load_transcription_content
+        )
         self.transcriptions_container.transcribe_requested.connect(
             self._on_transcribe_requested
         )
@@ -175,9 +177,14 @@ class NotePane(QWidget, NoteEditorMixin):
     def load_note(self, note_id: str) -> None:
         """Load and display note details.
 
+        Uses the display cache for faster loading when available.
+        If cache is not populated, rebuilds it and reloads.
+
         Args:
             note_id: ID of the note to display (hex string)
         """
+        import json
+
         note = self.db.get_note(note_id)
 
         if note is None:
@@ -199,6 +206,193 @@ class NotePane(QWidget, NoteEditorMixin):
         else:
             self.modified_label.setText("Modified: Never modified")
 
+        # Use display cache from get_note (included in query)
+        cache_str = note.get("display_cache")
+        cache = None
+        if cache_str:
+            try:
+                cache = json.loads(cache_str)
+            except json.JSONDecodeError:
+                pass
+
+        if cache is None:
+            # Cache not populated - show empty strings, rebuild cache, then reload
+            logger.info(f"Cache not populated for note {note_id}, rebuilding...")
+            self.tags_label.setText("Tags: ")
+            self.conflict_label.hide()
+            self.attachments_label.setText("Attachments:")
+            self.attachments_list.clear()
+            self.audio_player.hide()
+            self.transcriptions_container.hide()
+            self._current_audio_files = []
+
+            # Rebuild cache and re-fetch note to get updated cache
+            try:
+                self.db.rebuild_note_cache(note_id)
+                note = self.db.get_note(note_id)
+                if note and note.get("display_cache"):
+                    cache = json.loads(note["display_cache"])
+            except Exception as e:
+                logger.warning(f"Failed to rebuild cache for note {note_id}: {e}")
+
+        # Load from cache if available, otherwise fall back to direct queries
+        if cache:
+            self._load_from_cache(note_id, note, cache)
+        else:
+            self._load_without_cache(note_id, note)
+
+        # Use mixin to handle content and state
+        content = note.get("content", "")
+        self.load_note_content(note_id, content)
+
+        logger.info(f"Loaded note {note_id}")
+
+    def _load_from_cache(self, note_id: str, note: dict, cache: dict) -> None:
+        """Load note display data from cache.
+
+        Args:
+            note_id: Note UUID hex string
+            note: Note dict from database
+            cache: Display cache dict
+        """
+        # Update tags from note (already includes tag_names)
+        tag_names = note.get("tag_names", "")
+        if tag_names:
+            self.tags_label.setText(f"Tags: {tag_names}")
+        else:
+            self.tags_label.setText("Tags: None")
+
+        # Conflicts from cache
+        conflicts = cache.get("conflicts", [])
+        if conflicts:
+            types_str = ", ".join(conflicts)
+            self.conflict_label.setText(f"WARNING: This note has unresolved {types_str} conflict(s)")
+            self.conflict_label.show()
+        else:
+            self.conflict_label.hide()
+
+        # Attachments from cache
+        self.attachments_list.clear()
+        self.audio_player.hide()
+        self.attachments_list.hide()
+        self.transcriptions_container.hide()
+        self._current_audio_files = []
+
+        attachments = cache.get("attachments", [])
+        audio_attachments = [a for a in attachments if a.get("type") == "audio_file"]
+
+        if audio_attachments:
+            self.attachments_label.setText(f"Audio Files ({len(audio_attachments)}):")
+
+            # Build audio_files list, transcription counts, and waveforms from cache
+            audio_files = []
+            transcription_counts = {}
+            cached_waveforms = {}
+            first_transcriptions = []
+
+            for attachment in audio_attachments:
+                af_data = attachment.get("audio_file", {})
+                audio_id = af_data.get("id", "")
+                transcriptions_data = af_data.get("transcriptions", [])
+
+                # Build audio file dict matching database format
+                audio_file = {
+                    "id": audio_id,
+                    "filename": af_data.get("filename", ""),
+                    "imported_at": af_data.get("imported_at", ""),
+                    "file_created_at": af_data.get("file_created_at"),
+                    "summary": af_data.get("summary"),
+                }
+                audio_files.append(audio_file)
+                transcription_counts[audio_id] = len(transcriptions_data)
+
+                # Extract cached waveform
+                waveform = af_data.get("waveform")
+                if waveform and audio_id:
+                    cached_waveforms[audio_id] = waveform
+
+                # Use transcriptions from first audio file (cache has content_preview)
+                if not first_transcriptions and transcriptions_data:
+                    first_transcriptions = transcriptions_data
+
+            self._current_audio_files = audio_files
+
+            # Build a lookup for audio file paths from cached filenames
+            self._cached_audio_filenames = {
+                af.get("id", ""): af.get("filename", "") for af in audio_files
+            }
+
+            # Show transcriptions for first audio file
+            if audio_files:
+                first_audio_id = audio_files[0].get("id", "")
+                if first_transcriptions or self.audiofile_directory:
+                    self.transcriptions_container.set_audio_file(
+                        first_audio_id, first_transcriptions
+                    )
+                    self.transcriptions_container.show()
+
+            # Use audio player widget if audiofile directory is configured
+            if self.audiofile_directory:
+                self.audio_player.set_audio_files(
+                    audio_files,
+                    get_file_path=self._get_audio_file_path_cached,
+                    transcription_counts=transcription_counts,
+                    cached_waveforms=cached_waveforms,
+                    on_waveform_extracted=self._on_waveform_extracted,
+                )
+                self.audio_player.show()
+            else:
+                # Fallback to simple list
+                for af in audio_files:
+                    id_short = af.get("id", "")[:UUID_SHORT_LEN]
+                    filename = af.get("filename", "unknown")
+                    imported_at = af.get("imported_at", "unknown")
+                    t_count = transcription_counts.get(af.get("id", ""), 0)
+
+                    item_text = f"{id_short}... | {filename} | T: {t_count} | Imported: {imported_at}"
+                    item = QListWidgetItem(item_text)
+                    self.attachments_list.addItem(item)
+                self.attachments_list.show()
+        else:
+            self.attachments_label.setText("Attachments: None")
+
+    def _load_transcription_content(self, transcription_id: str) -> Optional[str]:
+        """Load full transcription content from database.
+
+        Used for lazy loading when user unfolds a transcription.
+
+        Args:
+            transcription_id: Transcription UUID hex string
+
+        Returns:
+            Full transcription content, or None if not found
+        """
+        return self.db.get_transcription_content(transcription_id)
+
+    def _on_waveform_extracted(self, audio_id: str, waveform: List[int]) -> None:
+        """Callback when a waveform is extracted from an audio file.
+
+        Updates the note's display cache with the waveform data.
+
+        Args:
+            audio_id: Audio file UUID hex string
+            waveform: Waveform data as list of 0-255 values
+        """
+        if not self.current_note_id:
+            return
+        try:
+            self.db.update_cache_waveform(self.current_note_id, audio_id, waveform)
+            logger.debug(f"Updated cache waveform for audio {audio_id[:8]}")
+        except Exception as e:
+            logger.warning(f"Failed to update cache waveform: {e}")
+
+    def _load_without_cache(self, note_id: str, note: dict) -> None:
+        """Load note display data without cache (fallback).
+
+        Args:
+            note_id: Note UUID hex string
+            note: Note dict from database
+        """
         # Update tags
         tag_names = note.get("tag_names", "")
         if tag_names:
@@ -275,12 +469,6 @@ class NotePane(QWidget, NoteEditorMixin):
             logger.warning(f"Error loading attachments for note {note_id}: {e}")
             self.attachments_label.setText("Attachments: None")
 
-        # Use mixin to handle content and state
-        content = note.get("content", "")
-        self.load_note_content(note_id, content)
-
-        logger.info(f"Loaded note {note_id}")
-
     def _get_audio_file_path(self, audio_id: str) -> Optional[str]:
         """Get the file path for an audio file.
 
@@ -301,6 +489,30 @@ class NotePane(QWidget, NoteEditorMixin):
         filename = audio_file.get("filename", "")
         if "." not in filename:
             return None
+
+        ext = filename.rsplit(".", 1)[-1].lower()
+        path = self.audiofile_directory / f"{audio_id}.{ext}"
+        return str(path) if path.exists() else None
+
+    def _get_audio_file_path_cached(self, audio_id: str) -> Optional[str]:
+        """Get the file path for an audio file using cached filename.
+
+        This avoids a database query by using the filename from the display cache.
+
+        Args:
+            audio_id: UUID of the audio file.
+
+        Returns:
+            Path to the audio file, or None if not found.
+        """
+        if not self.audiofile_directory:
+            return None
+
+        # Use cached filename if available
+        filename = getattr(self, '_cached_audio_filenames', {}).get(audio_id, "")
+        if not filename or "." not in filename:
+            # Fallback to database query
+            return self._get_audio_file_path(audio_id)
 
         ext = filename.rsplit(".", 1)[-1].lower()
         path = self.audiofile_directory / f"{audio_id}.{ext}"

@@ -244,6 +244,8 @@ class AudioPlayerWidget(QFrame):
         audio_files: List[Dict],
         get_file_path: callable,
         transcription_counts: Optional[Dict[str, int]] = None,
+        cached_waveforms: Optional[Dict[str, List[int]]] = None,
+        on_waveform_extracted: Optional[callable] = None,
     ) -> None:
         """Set the audio files to display.
 
@@ -251,6 +253,8 @@ class AudioPlayerWidget(QFrame):
             audio_files: List of audio file dicts (with 'id', 'filename' keys).
             get_file_path: Callable that takes audio_id and returns file path.
             transcription_counts: Optional dict mapping audio_file_id to transcription count.
+            cached_waveforms: Optional dict mapping audio_id to cached waveform data (0-255 values).
+            on_waveform_extracted: Optional callback(audio_id, waveform) called when waveform is extracted.
         """
         self._audio_files = audio_files
         self._transcription_counts = transcription_counts or {}
@@ -258,7 +262,9 @@ class AudioPlayerWidget(QFrame):
         self._file_paths = []
         self._waveforms = {}
 
-        for af in audio_files:
+        cached_waveforms = cached_waveforms or {}
+
+        for i, af in enumerate(audio_files):
             audio_id = af.get("id", "")
             filename = af.get("filename", "Unknown")
             t_count = self._transcription_counts.get(audio_id, 0)
@@ -273,14 +279,30 @@ class AudioPlayerWidget(QFrame):
             path = get_file_path(audio_id)
             self._file_paths.append(Path(path) if path else Path())
 
+            # Check for cached waveform
+            if audio_id in cached_waveforms:
+                cached = cached_waveforms[audio_id]
+                if cached:
+                    # Convert from 0-255 to 0.0-1.0
+                    self._waveforms[i] = [v / 255.0 for v in cached]
+
         # Set files in player
         self._player.set_audio_files(self._file_paths)
 
-        # Extract waveforms in background (synchronous for now)
+        # Extract waveforms only for files without cached data
         for i, path in enumerate(self._file_paths):
+            if i in self._waveforms:
+                continue  # Already have cached waveform
             if path.exists():
                 waveform = extract_waveform(path, WAVEFORM_BAR_COUNT)
                 self._waveforms[i] = waveform
+                # Notify caller so they can update cache
+                if on_waveform_extracted and waveform:
+                    audio_id = audio_files[i].get("id", "")
+                    if audio_id:
+                        # Convert to 0-255 for storage
+                        waveform_bytes = [min(255, max(0, int(v * 255))) for v in waveform]
+                        on_waveform_extracted(audio_id, waveform_bytes)
 
         # Update waveform display if we have files
         if self._waveforms:

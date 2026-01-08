@@ -1550,6 +1550,37 @@ def cmd_maintenance_database_normalize(db: Database, args: argparse.Namespace) -
         return 1
 
 
+def cmd_maintenance_rebuild_cache(db: Database, args: argparse.Namespace) -> int:
+    """Rebuild note display cache.
+
+    The cache stores pre-computed data for faster Note pane display:
+    - Tags with full hierarchical paths
+    - Conflict types
+    - Attachments with audio files and transcriptions (metadata only)
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments (optional note_id)
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        note_id = getattr(args, 'note_id', None)
+        if note_id:
+            print(f"Rebuilding cache for note {note_id}...")
+            db.rebuild_note_cache(note_id)
+            print("Cache rebuild complete.")
+        else:
+            print("Rebuilding cache for all notes...")
+            count = db.rebuild_all_note_caches()
+            print(f"Cache rebuild complete. Processed {count} notes.")
+        return 0
+    except Exception as e:
+        print(f"Error rebuilding cache: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_new_tag(db: Database, args: argparse.Namespace) -> int:
     """Create a new tag.
 
@@ -2035,6 +2066,17 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Normalize database data (timestamps, unicode, etc.)"
     )
 
+    # maintenance rebuild-cache
+    rebuild_cache_parser = maintenance_subparsers.add_parser(
+        "rebuild-cache",
+        help="Rebuild note display cache (tags, conflicts, attachments)"
+    )
+    rebuild_cache_parser.add_argument(
+        "note_id",
+        nargs="?",
+        help="Note ID to rebuild cache for (rebuilds all if not specified)"
+    )
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -2125,6 +2167,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return 1
             if maint_cmd == "database-normalize":
                 return cmd_maintenance_database_normalize(db, args)
+            elif maint_cmd == "rebuild-cache":
+                return cmd_maintenance_rebuild_cache(db, args)
             else:
                 print(f"Error: Unknown maintenance command '{maint_cmd}'", file=sys.stderr)
                 return 1

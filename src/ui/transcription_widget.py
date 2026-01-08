@@ -7,7 +7,7 @@ with foldable text boxes.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 # Default state for new transcriptions
 DEFAULT_TRANSCRIPTION_STATE = "original !verified !verbatim !cleaned !polished"
 
+# Type alias for content loader callback
+ContentLoader = Callable[[str], Optional[str]]
+
 
 class TranscriptionTextBox(QFrame):
     """Foldable text box for displaying and editing a single transcription.
@@ -34,9 +37,13 @@ class TranscriptionTextBox(QFrame):
     Features:
     - Fold/unfold button
     - Header with service name and status
-    - Editable content area
+    - Editable content area (lazy loaded)
     - State field editor
     - Save/Cancel buttons when editing
+
+    Lazy Loading:
+    - Initially displays content_preview (first 100 chars)
+    - Full content is loaded on first unfold via content_loader callback
     """
 
     transcription_saved = Signal(str, str, str)  # transcription_id, content, state
@@ -45,12 +52,14 @@ class TranscriptionTextBox(QFrame):
         self,
         transcription: Dict[str, Any],
         parent: Optional[QWidget] = None,
+        content_loader: Optional[ContentLoader] = None,
     ) -> None:
         """Initialize transcription text box.
 
         Args:
-            transcription: Transcription dict from database
+            transcription: Transcription dict with content_preview (or content)
             parent: Parent widget
+            content_loader: Callback to load full content by transcription_id
         """
         super().__init__(parent)
         self._transcription = transcription
@@ -58,6 +67,8 @@ class TranscriptionTextBox(QFrame):
         self._is_editing = False
         self._original_content = ""
         self._original_state = ""
+        self._content_loader = content_loader
+        self._full_content_loaded = False
 
         self.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
         self._setup_ui()
@@ -96,17 +107,24 @@ class TranscriptionTextBox(QFrame):
         layout.addWidget(header)
 
         # Content preview (always visible when folded)
-        content = self._transcription.get("content", "")
-        preview = content[:100].replace("\n", " ")
-        if len(content) > 100:
-            preview += "..."
+        # Use content_preview if available (from cache), otherwise fall back to content
+        content_preview = self._transcription.get("content_preview")
+        if content_preview is None:
+            # Fallback: generate preview from full content
+            content = self._transcription.get("content", "")
+            content_preview = content[:100].replace("\n", " ")
+            if len(content) > 100:
+                content_preview += "…"
+            self._full_content_loaded = True  # Already have full content
+        else:
+            content = self._transcription.get("content", "")
 
-        self._preview_label = QLabel(preview)
+        self._preview_label = QLabel(content_preview.replace("\n", " "))
         self._preview_label.setWordWrap(True)
         self._preview_label.setStyleSheet("color: #cccccc;")
         layout.addWidget(self._preview_label)
 
-        # Full content (hidden when folded)
+        # Full content (hidden when folded, lazy loaded)
         self._content_edit = QTextEdit()
         self._content_edit.setPlainText(content)
         self._content_edit.setMinimumHeight(100)
@@ -180,6 +198,10 @@ class TranscriptionTextBox(QFrame):
             self._state_row.setVisible(False)
             self._button_row.setVisible(False)
         else:
+            # Lazy load full content on first unfold
+            if not self._full_content_loaded:
+                self._load_full_content()
+
             self._fold_button.setText("v")
             self._preview_label.setVisible(False)
             self._content_edit.setVisible(True)
@@ -189,6 +211,28 @@ class TranscriptionTextBox(QFrame):
             # Store original values when unfolding
             self._original_content = self._content_edit.toPlainText()
             self._original_state = self._state_edit.text()
+
+    def _load_full_content(self) -> None:
+        """Load full content from database on first unfold."""
+        if self._full_content_loaded:
+            return
+
+        trans_id = self._transcription.get("id", "")
+        if not trans_id:
+            self._full_content_loaded = True
+            return
+
+        if self._content_loader:
+            try:
+                full_content = self._content_loader(trans_id)
+                if full_content is not None:
+                    self._transcription["content"] = full_content
+                    self._content_edit.setPlainText(full_content)
+                    logger.debug(f"Lazy loaded content for transcription {trans_id[:8]}")
+            except Exception as e:
+                logger.warning(f"Failed to load content for transcription {trans_id}: {e}")
+
+        self._full_content_loaded = True
 
     def _on_content_changed(self) -> None:
         """Handle content text changes."""
@@ -297,18 +341,37 @@ class TranscriptionsContainer(QWidget):
     - Scrollable container
     - Displays all transcriptions for an audio file
     - Shows transcription count in header
+    - Lazy loading of transcription content via content_loader
     """
 
     transcribe_requested = Signal(str)  # audio_file_id
     transcription_saved = Signal(str, str, str)  # transcription_id, content, state
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        """Initialize transcriptions container."""
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        content_loader: Optional[ContentLoader] = None,
+    ) -> None:
+        """Initialize transcriptions container.
+
+        Args:
+            parent: Parent widget
+            content_loader: Callback to load full transcription content by ID
+        """
         super().__init__(parent)
         self._audio_file_id: Optional[str] = None
         self._text_boxes: Dict[str, TranscriptionTextBox] = {}
+        self._content_loader = content_loader
 
         self._setup_ui()
+
+    def set_content_loader(self, content_loader: Optional[ContentLoader]) -> None:
+        """Set the content loader callback.
+
+        Args:
+            content_loader: Callback to load full transcription content by ID
+        """
+        self._content_loader = content_loader
 
     def _setup_ui(self) -> None:
         """Set up the user interface."""
@@ -381,7 +444,7 @@ class TranscriptionsContainer(QWidget):
 
         # Add transcription boxes
         for t in transcriptions:
-            box = TranscriptionTextBox(t)
+            box = TranscriptionTextBox(t, content_loader=self._content_loader)
             box.transcription_saved.connect(self._on_transcription_saved)
             self._text_boxes[t["id"]] = box
             self._content_layout.addWidget(box)
@@ -422,7 +485,7 @@ class TranscriptionsContainer(QWidget):
         if self._content_layout.count() > 0:
             item = self._content_layout.takeAt(self._content_layout.count() - 1)
 
-        box = TranscriptionTextBox(transcription)
+        box = TranscriptionTextBox(transcription, content_loader=self._content_loader)
         box.transcription_saved.connect(self._on_transcription_saved)
         self._text_boxes[tid] = box
         self._content_layout.addWidget(box)

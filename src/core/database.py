@@ -784,3 +784,73 @@ class Database:
         return self._rust_db.update_transcription(
             transcription_id, content, content_segments, service_response, state
         )
+
+    # ============================================================================
+    # Note Display Cache methods
+    # ============================================================================
+
+    def rebuild_note_cache(self, note_id: Union[bytes, str]) -> None:
+        """Rebuild the display cache for a single note.
+
+        The cache stores pre-computed data for the Note pane display:
+        - Tags with full hierarchical paths
+        - Conflict types
+        - Attachments with audio files and transcriptions (metadata only)
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        self._rust_db.rebuild_note_cache(note_id)
+
+    def rebuild_all_note_caches(self) -> int:
+        """Rebuild the display cache for all notes.
+
+        Returns:
+            Number of notes processed
+        """
+        return self._rust_db.rebuild_all_note_caches()
+
+    def get_transcription_content(self, transcription_id: Union[bytes, str]) -> Optional[str]:
+        """Get full transcription content by ID.
+
+        Used for lazy-loading full content when displaying transcription.
+        The cache only stores a 100-character preview.
+
+        Args:
+            transcription_id: Transcription UUID (bytes or hex string)
+
+        Returns:
+            Full transcription content, or None if not found
+        """
+        if isinstance(transcription_id, bytes):
+            transcription_id = uuid_module.UUID(bytes=transcription_id).hex
+        return self._rust_db.get_transcription_content(transcription_id)
+
+    def update_cache_waveform(
+        self,
+        note_id: Union[bytes, str],
+        audio_id: Union[bytes, str],
+        waveform: List[int]
+    ) -> bool:
+        """Update the waveform data in a note's display cache.
+
+        The waveform is an array of amplitude values (0-255) for visualization.
+        This is called after extracting the waveform with ffmpeg.
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+            audio_id: Audio file UUID (bytes or hex string)
+            waveform: List of amplitude values (0-255), typically 150 values
+
+        Returns:
+            True if the cache was updated, False if note or audio not found
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        if isinstance(audio_id, bytes):
+            audio_id = uuid_module.UUID(bytes=audio_id).hex
+        # Convert to bytes for Rust
+        waveform_bytes = bytes(waveform)
+        return self._rust_db.update_cache_waveform(note_id, audio_id, list(waveform_bytes))

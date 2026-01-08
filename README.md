@@ -296,12 +296,28 @@ Example provider configuration:
 
 #### Database maintenance
 
+**Normalize timestamps:**
+
 - Normalizes timestamps from ISO 8601 format (2025-12-29T23:22:13.462391) to SQLite format (2025-12-29 23:22:13)
 - Uses PRAGMA user_version to track migration status (only runs once)
 - Is extensible - future normalizations (like unicode normalization) can be added to the normalize_database() method
 
 ```
 python -m src.main cli db-maintenance database-normalize
+```
+
+**Rebuild note display cache:**
+
+The display cache stores pre-computed data for faster Note pane display (tags, conflicts, attachments with transcriptions). The cache is automatically updated when notes, tags, or attachments change.
+
+To manually rebuild:
+
+```bash
+# Rebuild cache for a specific note
+python -m src.main cli db-maintenance rebuild-cache <note_id>
+
+# Rebuild cache for all notes
+python -m src.main cli db-maintenance rebuild-cache
 ```
 
 #### Output formatting

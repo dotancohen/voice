@@ -50,6 +50,8 @@ fn note_row_to_dict<'py>(py: Python<'py>, note: &database::NoteRow) -> PyResult<
     dict.set_item("modified_at", &note.modified_at)?;
     dict.set_item("deleted_at", &note.deleted_at)?;
     dict.set_item("tag_names", &note.tag_names)?;
+    // Include raw display_cache JSON string (Python will parse it)
+    dict.set_item("display_cache", &note.display_cache)?;
     Ok(dict)
 }
 
@@ -1009,6 +1011,48 @@ impl PyDatabase {
             .as_mut()
             .ok_or_else(|| DatabaseError::new_err("Database has been closed"))?
             .normalize_database()
+            .map_err(voice_error_to_pyerr)
+    }
+
+    // ========================================================================
+    // Note Display Cache methods
+    // ========================================================================
+
+    /// Rebuild the display cache for a single note.
+    ///
+    /// The cache stores pre-computed data needed for the Note pane display:
+    /// tags (with full paths), conflicts, and attachments with audio files and transcriptions.
+    fn rebuild_note_cache(&self, note_id: &str) -> PyResult<()> {
+        self.inner_ref()?
+            .rebuild_note_cache(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Rebuild the display cache for all notes.
+    ///
+    /// Returns the number of notes processed.
+    fn rebuild_all_note_caches(&self) -> PyResult<u32> {
+        self.inner_ref()?
+            .rebuild_all_note_caches()
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Get full transcription content by ID.
+    ///
+    /// Used for lazy-loading full content when displaying transcription.
+    fn get_transcription_content(&self, transcription_id: &str) -> PyResult<Option<String>> {
+        self.inner_ref()?
+            .get_transcription_content(transcription_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Update the waveform data in a note's display cache.
+    ///
+    /// The waveform is an array of amplitude values (0-255) for visualization.
+    /// This is called from Python after extracting the waveform with ffmpeg.
+    fn update_cache_waveform(&self, note_id: &str, audio_id: &str, waveform: Vec<u8>) -> PyResult<bool> {
+        self.inner_ref()?
+            .update_cache_waveform(note_id, audio_id, waveform)
             .map_err(voice_error_to_pyerr)
     }
 }
