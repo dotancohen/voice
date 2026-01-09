@@ -186,6 +186,26 @@ class Database:
             tag_id = uuid.UUID(bytes=tag_id).hex
         return self._rust_db.rename_tag(tag_id, new_name)
 
+    def reparent_tag(
+        self, tag_id: Union[bytes, str], new_parent_id: Optional[Union[bytes, str]] = None
+    ) -> bool:
+        """Move a tag to a different parent (or make it a root tag).
+
+        Args:
+            tag_id: UUID of the tag to move (bytes or hex string)
+            new_parent_id: UUID of new parent, or None to make it a root tag
+
+        Returns:
+            True if the tag was moved, False if not found
+        """
+        if isinstance(tag_id, bytes):
+            import uuid
+            tag_id = uuid.UUID(bytes=tag_id).hex
+        if isinstance(new_parent_id, bytes):
+            import uuid
+            new_parent_id = uuid.UUID(bytes=new_parent_id).hex
+        return self._rust_db.reparent_tag(tag_id, new_parent_id)
+
     def delete_tag(self, tag_id: Union[bytes, str]) -> bool:
         """Soft delete a tag.
 

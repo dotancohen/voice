@@ -287,6 +287,10 @@ impl PyDatabase {
         self.inner_ref()?.rename_tag(tag_id, new_name).map_err(voice_error_to_pyerr)
     }
 
+    fn reparent_tag(&self, tag_id: &str, new_parent_id: Option<&str>) -> PyResult<bool> {
+        self.inner_ref()?.reparent_tag(tag_id, new_parent_id).map_err(voice_error_to_pyerr)
+    }
+
     fn delete_tag(&self, tag_id: &str) -> PyResult<bool> {
         self.inner_ref()?.delete_tag(tag_id).map_err(voice_error_to_pyerr)
     }

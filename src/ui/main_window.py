@@ -30,6 +30,7 @@ from src.core.database import Database
 from src.core.transcription_service import TranscriptionService
 from src.ui.note_pane import NotePane
 from src.ui.notes_list_pane import NotesListPane
+from src.ui.tag_hierarchy_dialog import TagHierarchyDialog
 from src.ui.tags_pane import TagsPane
 from src.ui.transcription_dialog import TranscriptionDialog
 
@@ -154,6 +155,13 @@ class MainWindow(QMainWindow):
 
         # Track unsynced state
         self._has_unsynced_changes = False
+
+        file_menu.addSeparator()
+
+        # Manage Tags action
+        manage_tags_action = QAction("Manage &Tags...", self)
+        manage_tags_action.triggered.connect(self._open_manage_tags)
+        file_menu.addAction(manage_tags_action)
 
         # Set up timer to check for unsynced changes periodically
         self._sync_check_timer = QTimer(self)
@@ -378,6 +386,28 @@ class MainWindow(QMainWindow):
             self.sync_now_action.setText("Sync Now *")
         else:
             self.sync_now_action.setText("Sync Now")
+
+    def _open_manage_tags(self) -> None:
+        """Open the tag hierarchy management dialog."""
+        dialog = TagHierarchyDialog(self.db, parent=self)
+        dialog.tags_modified.connect(self._on_tags_modified)
+        dialog.exec()
+
+    def _on_tags_modified(self) -> None:
+        """Handle tags being modified in the hierarchy dialog."""
+        # Refresh the tags pane
+        self.tags_pane.load_tags()
+
+        # Refresh the note pane if a note is selected (to update tag display)
+        if self._current_note_id:
+            self.note_pane.load_note(self._current_note_id)
+
+        # Mark as having unsynced changes
+        if not self._has_unsynced_changes:
+            self._has_unsynced_changes = True
+            self._update_sync_action_style()
+
+        logger.info("Tags modified - refreshed UI")
 
     def sync_now(self) -> None:
         """Perform sync with all configured peers."""
