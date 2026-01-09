@@ -222,6 +222,16 @@ class TagManagementDialog(QDialog):
         try:
             # Get all tags
             self.all_tags = self.db.get_all_tags()
+
+            # Filter out _system tag and its descendants
+            # _system is the hidden system tag for internal features like starred notes
+            system_tag_id = self.db.get_system_tag_id_hex()
+            if system_tag_id:
+                self.all_tags = [
+                    tag for tag in self.all_tags
+                    if tag["id"] != system_tag_id and tag.get("parent_id") != system_tag_id
+                ]
+
             logger.info(f"Loaded {len(self.all_tags)} tags")
 
             # Get note's current tags

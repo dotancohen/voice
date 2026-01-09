@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAbstractTextDocumentLayout,
     QColor,
@@ -54,6 +54,14 @@ CONTENT_TRUNCATE_LENGTH = 100
 # Custom item data roles (typed to satisfy mypy)
 ROLE_NOTE_ID = Qt.ItemDataRole.UserRole
 ROLE_HTML_TEXT = Qt.ItemDataRole(int(Qt.ItemDataRole.UserRole) + 1)
+ROLE_MARKED = Qt.ItemDataRole(int(Qt.ItemDataRole.UserRole) + 2)
+
+# Star icons and colors
+STAR_FILLED = "★"  # U+2605
+STAR_EMPTY = "☆"   # U+2606
+STAR_COLOR_GOLD = "#FFD700"
+STAR_COLOR_GRAY = "#888888"
+STAR_CLICK_REGION_WIDTH = 20  # pixels
 
 
 class SearchTextEdit(QTextEdit):
@@ -92,7 +100,13 @@ class NotesListWidget(QListWidget):
 
 
 class HTMLDelegate(QStyledItemDelegate):
-    """Custom delegate to render HTML in list widget items."""
+    """Custom delegate to render HTML in list widget items.
+
+    Signals:
+        star_clicked: Emitted when the star icon is clicked (note_id: str)
+    """
+
+    star_clicked = Signal(str)  # Emits note_id when star is clicked
 
     def __init__(self, parent: Optional[QWidget] = None, theme: str = "dark") -> None:
         """Initialize the delegate.
@@ -103,6 +117,27 @@ class HTMLDelegate(QStyledItemDelegate):
         """
         super().__init__(parent)
         self.theme = theme
+
+    def editorEvent(
+        self,
+        event: QEvent,
+        model: Any,
+        option: QStyleOptionViewItem,
+        index: Union[QModelIndex, QPersistentModelIndex]
+    ) -> bool:
+        """Handle mouse events on the item.
+
+        Detects clicks in the star region and emits star_clicked signal.
+        """
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            # Check if click is in star region (first STAR_CLICK_REGION_WIDTH pixels)
+            click_x = event.pos().x() - option.rect.x()
+            if click_x < STAR_CLICK_REGION_WIDTH:
+                note_id = index.data(ROLE_NOTE_ID)
+                if note_id:
+                    self.star_clicked.emit(note_id)
+                    return True
+        return super().editorEvent(event, model, option, index)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: Union[QModelIndex, QPersistentModelIndex]) -> None:
         """Paint the item with HTML rendering."""
@@ -244,28 +279,35 @@ class NotesListPane(QWidget):
         toolbar = QHBoxLayout()
         toolbar.setSpacing(4)
 
-        # Create search field container with embedded clear button
+        # Create search field container with star filter and clear buttons
         search_container = QFrame()
         search_container.setFrameShape(QFrame.Shape.StyledPanel)
         search_container.setMaximumHeight(35)
         container_layout = QHBoxLayout(search_container)
-        container_layout.setContentsMargins(0, 0, 2, 0)
+        container_layout.setContentsMargins(2, 0, 2, 0)
         container_layout.setSpacing(0)
 
-        self.search_field = SearchTextEdit()
-        self.search_field.setPlaceholderText("Search notes... (use tag:tagname for tags)")
-        self.search_field.setAcceptRichText(False)  # Use plain text to prevent formatting inheritance
-        # Configure as single-line input with no frame (container provides the frame)
-        self.search_field.setFrameShape(QFrame.Shape.NoFrame)
-        self.search_field.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.search_field.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.search_field.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        # Enable undo/redo functionality
-        self.search_field.setUndoRedoEnabled(True)
-        self.search_field.textChanged.connect(self.on_search_field_edited)
-        self.search_field.returnPressed.connect(self.perform_search)
+        # Star filter button (leftmost) - toggles is:marked in search
+        self.star_filter_button = QToolButton()
+        self.star_filter_button.setText(STAR_EMPTY)
+        self.star_filter_button.setToolTip("Toggle starred notes filter (is:marked)")
+        self.star_filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.star_filter_button.setFixedSize(24, 24)
+        self.star_filter_button.setStyleSheet(f"""
+            QToolButton {{
+                border: none;
+                background: transparent;
+                font-size: 16px;
+                color: {STAR_COLOR_GRAY};
+            }}
+            QToolButton:hover {{
+                background: #555;
+                border-radius: 12px;
+            }}
+        """)
+        self.star_filter_button.clicked.connect(self.toggle_marked_filter)
 
-        # Clear button embedded inside search field
+        # Clear button (to the left of search field)
         self.clear_button = QToolButton()
         self.clear_button.setText("\u00d7")  # × symbol
         self.clear_button.setToolTip("Clear search")
@@ -287,8 +329,23 @@ class NotesListPane(QWidget):
         """)
         self.clear_button.clicked.connect(self.clear_search)
 
-        container_layout.addWidget(self.search_field)
+        self.search_field = SearchTextEdit()
+        self.search_field.setPlaceholderText("Search notes... (use tag:tagname or is:marked)")
+        self.search_field.setAcceptRichText(False)  # Use plain text to prevent formatting inheritance
+        # Configure as single-line input with no frame (container provides the frame)
+        self.search_field.setFrameShape(QFrame.Shape.NoFrame)
+        self.search_field.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.search_field.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.search_field.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        # Enable undo/redo functionality
+        self.search_field.setUndoRedoEnabled(True)
+        self.search_field.textChanged.connect(self.on_search_field_edited)
+        self.search_field.returnPressed.connect(self.perform_search)
+
+        # Layout: [star] [clear] [search field]
+        container_layout.addWidget(self.star_filter_button)
         container_layout.addWidget(self.clear_button)
+        container_layout.addWidget(self.search_field)
 
         self.search_button = QPushButton("Search")
         self.search_button.setStyleSheet(BUTTON_STYLE)
@@ -305,7 +362,9 @@ class NotesListPane(QWidget):
         self.list_widget.itemActivated.connect(self.on_note_clicked)  # Enter/Space keys
 
         # Set custom delegate for HTML rendering (with theme-aware dividing lines)
-        self.list_widget.setItemDelegate(HTMLDelegate(self.list_widget, theme=self.theme))
+        self.delegate = HTMLDelegate(self.list_widget, theme=self.theme)
+        self.delegate.star_clicked.connect(self.on_star_clicked)
+        self.list_widget.setItemDelegate(self.delegate)
 
         layout.addWidget(self.list_widget)
 
@@ -346,18 +405,27 @@ class NotesListPane(QWidget):
         if len(content) > CONTENT_TRUNCATE_LENGTH:
             content = content[:CONTENT_TRUNCATE_LENGTH] + "..."
 
-        # Create two-line text with bold date
-        html_text = f"<b>{created_at}</b><br>{content}"
+        # Check if note is marked (starred)
+        is_marked = self.db.is_note_marked(note["id"])
+        if is_marked:
+            star_html = f'<span style="color: {STAR_COLOR_GOLD};">{STAR_FILLED}</span>'
+        else:
+            star_html = f'<span style="color: {STAR_COLOR_GRAY};">{STAR_EMPTY}</span>'
+
+        # Create two-line text with star, then bold date
+        html_text = f"{star_html} <b>{created_at}</b><br>{content}"
 
         # Create item
         item = QListWidgetItem()
         item.setData(ROLE_NOTE_ID, note["id"])  # Store note_id
+        item.setData(ROLE_MARKED, is_marked)  # Store marked state
 
         # Store the HTML for custom delegate rendering
         item.setData(ROLE_HTML_TEXT, html_text)
 
         # Set plain text for display role (used by default rendering/accessibility)
-        plain_text = f"{created_at}\n{content}"
+        star_plain = STAR_FILLED if is_marked else STAR_EMPTY
+        plain_text = f"{star_plain} {created_at}\n{content}"
         item.setText(plain_text)
 
         return item
@@ -371,6 +439,48 @@ class NotesListPane(QWidget):
         note_id = item.data(ROLE_NOTE_ID)
         logger.info(f"Note selected: ID {note_id}")
         self.note_selected.emit(note_id)
+
+    def on_star_clicked(self, note_id: str) -> None:
+        """Handle star icon click to toggle marked state.
+
+        Args:
+            note_id: ID of the note whose star was clicked
+        """
+        # Toggle the marked state in the database
+        new_state = self.db.toggle_note_marked(note_id)
+        logger.info(f"Toggled marked state for note {note_id[:8]}... to {new_state}")
+
+        # Find and update the item in the list
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item and item.data(ROLE_NOTE_ID) == note_id:
+                # Update the item's marked state and HTML
+                item.setData(ROLE_MARKED, new_state)
+
+                # Rebuild the HTML with updated star
+                note = self.db.get_note(note_id)
+                if note:
+                    # Get current content from item text (second line)
+                    plain_text = item.text()
+                    content_line = plain_text.split("\n")[1] if "\n" in plain_text else ""
+
+                    # Build new HTML
+                    if new_state:
+                        star_html = f'<span style="color: {STAR_COLOR_GOLD};">{STAR_FILLED}</span>'
+                    else:
+                        star_html = f'<span style="color: {STAR_COLOR_GRAY};">{STAR_EMPTY}</span>'
+
+                    created_at = note.get("created_at", "Unknown")
+                    html_text = f"{star_html} <b>{created_at}</b><br>{content_line}"
+                    item.setData(ROLE_HTML_TEXT, html_text)
+
+                    # Update plain text for accessibility
+                    star_plain = STAR_FILLED if new_state else STAR_EMPTY
+                    item.setText(f"{star_plain} {created_at}\n{content_line}")
+
+                # Force repaint
+                self.list_widget.update()
+                break
 
     def select_note_by_id(self, note_id: int) -> bool:
         """Select a note in the list by its ID.
@@ -432,6 +542,9 @@ class NotesListPane(QWidget):
         try:
             # Get plain text to avoid recursive updates
             text = self.search_field.toPlainText()
+
+            # Update star filter button state based on search text
+            self._update_star_filter_button_state(text)
 
             # Parse to find tag terms and check which are ambiguous
             parsed = parse_search_input(text)
@@ -529,8 +642,65 @@ class NotesListPane(QWidget):
     def clear_search(self) -> None:
         """Clear the search field and show all notes."""
         self.search_field.clear()
+        self._update_star_filter_button_state("")
         self.load_notes()
         logger.info("Search cleared, showing all notes")
+
+    def toggle_marked_filter(self) -> None:
+        """Toggle is:marked filter in the search field."""
+        import re
+        current_text = self.search_field.toPlainText()
+
+        if "is:marked" in current_text.lower():
+            # Remove is:marked (case-insensitive)
+            new_text = re.sub(r'\bis:marked\b', '', current_text, flags=re.IGNORECASE)
+            # Collapse multiple spaces and strip
+            new_text = re.sub(r'\s+', ' ', new_text).strip()
+            self.search_field.setPlainText(new_text)
+            logger.info("Removed is:marked filter from search")
+        else:
+            # Add is:marked at the beginning
+            new_text = f"is:marked {current_text}".strip()
+            self.search_field.setPlainText(new_text)
+            logger.info("Added is:marked filter to search")
+
+        # Run search with the updated query
+        self.perform_search()
+
+    def _update_star_filter_button_state(self, search_text: str) -> None:
+        """Update the star filter button appearance based on search text.
+
+        Args:
+            search_text: Current search field text
+        """
+        if "is:marked" in search_text.lower():
+            self.star_filter_button.setText(STAR_FILLED)
+            self.star_filter_button.setStyleSheet(f"""
+                QToolButton {{
+                    border: none;
+                    background: transparent;
+                    font-size: 16px;
+                    color: {STAR_COLOR_GOLD};
+                }}
+                QToolButton:hover {{
+                    background: #555;
+                    border-radius: 12px;
+                }}
+            """)
+        else:
+            self.star_filter_button.setText(STAR_EMPTY)
+            self.star_filter_button.setStyleSheet(f"""
+                QToolButton {{
+                    border: none;
+                    background: transparent;
+                    font-size: 16px;
+                    color: {STAR_COLOR_GRAY};
+                }}
+                QToolButton:hover {{
+                    background: #555;
+                    border-radius: 12px;
+                }}
+            """)
 
     def perform_search(self) -> None:
         """Perform search based on search field content.

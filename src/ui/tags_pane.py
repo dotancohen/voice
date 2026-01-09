@@ -111,6 +111,16 @@ class TagsPane(QWidget):
             logger.info("No tags found in database")
             return
 
+        # Filter out _system tag and its descendants
+        # _system is the hidden system tag for internal features like starred notes
+        system_tag_id = self.db.get_system_tag_id_hex()
+        if system_tag_id:
+            # Filter out _system and any tag whose parent is _system
+            tags = [
+                tag for tag in tags
+                if tag["id"] != system_tag_id and tag.get("parent_id") != system_tag_id
+            ]
+
         # Build a map of tag_id -> tag_data for quick lookup
         tag_map: Dict[int, Dict[str, Any]] = {tag["id"]: tag for tag in tags}
 

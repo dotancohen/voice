@@ -874,3 +874,69 @@ class Database:
         # Convert to bytes for Rust
         waveform_bytes = bytes(waveform)
         return self._rust_db.update_cache_waveform(note_id, audio_id, list(waveform_bytes))
+
+    # ============================================================================
+    # Note marking (star/bookmark) methods
+    # ============================================================================
+
+    def is_note_marked(self, note_id: Union[bytes, str]) -> bool:
+        """Check if a note is marked (starred/bookmarked).
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+
+        Returns:
+            True if the note is marked, False otherwise
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        return self._rust_db.is_note_marked(note_id)
+
+    def mark_note(self, note_id: Union[bytes, str]) -> bool:
+        """Mark a note (add the _system/_marked tag).
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+
+        Returns:
+            True if the note was marked, False if already marked
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        return self._rust_db.mark_note(note_id)
+
+    def unmark_note(self, note_id: Union[bytes, str]) -> bool:
+        """Unmark a note (remove the _system/_marked tag).
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+
+        Returns:
+            True if the note was unmarked, False if not marked
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        return self._rust_db.unmark_note(note_id)
+
+    def toggle_note_marked(self, note_id: Union[bytes, str]) -> bool:
+        """Toggle a note's marked state.
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+
+        Returns:
+            The new marked state (True if now marked, False if now unmarked)
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        return self._rust_db.toggle_note_marked(note_id)
+
+    def get_system_tag_id_hex(self) -> Optional[str]:
+        """Get the _system tag ID as a hex string.
+
+        Used for filtering system tags from UI display.
+
+        Returns:
+            System tag ID hex string, or None if not found
+        """
+        return self._rust_db.get_system_tag_id_hex()

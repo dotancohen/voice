@@ -8,7 +8,7 @@ use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use voicecore_lib::{config, database, error, merge, search, sync_client, sync_server, validation};
+use voicecore_lib::{config, database, error, merge, models, search, sync_client, sync_server, validation};
 
 // ============================================================================
 // Error types
@@ -1059,6 +1059,49 @@ impl PyDatabase {
             .update_cache_waveform(note_id, audio_id, waveform)
             .map_err(voice_error_to_pyerr)
     }
+
+    // ========================================================================
+    // Note marking (star/bookmark) methods
+    // ========================================================================
+
+    /// Check if a note is marked (starred/bookmarked).
+    fn is_note_marked(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .is_note_marked(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Mark a note (add the _system/_marked tag).
+    /// Returns true if the note was marked, false if already marked.
+    fn mark_note(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .mark_note(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Unmark a note (remove the _system/_marked tag).
+    /// Returns true if the note was unmarked, false if not marked.
+    fn unmark_note(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .unmark_note(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Toggle a note's marked state.
+    /// Returns the new marked state (true if now marked, false if now unmarked).
+    fn toggle_note_marked(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .toggle_note_marked(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Get the _system tag ID as a hex string for filtering in UI.
+    /// Returns None if _system tag doesn't exist.
+    fn get_system_tag_id_hex(&self) -> PyResult<Option<String>> {
+        self.inner_ref()?
+            .get_system_tag_id_hex()
+            .map_err(voice_error_to_pyerr)
+    }
 }
 
 // ============================================================================
@@ -1656,7 +1699,7 @@ fn apply_sync_changes<'py>(
                 (entity_type, entity_id, operation, timestamp, device_id, device_name, data_json)
             };
 
-        rust_changes.push(sync_client::SyncChange {
+        rust_changes.push(models::SyncChange {
             entity_type,
             entity_id,
             operation,

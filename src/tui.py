@@ -175,6 +175,14 @@ class TagsTree(Tree[Dict[str, Any]]):
         self.root.expand()
         tags = self.db.get_all_tags()
 
+        # Filter out _system tag and its descendants
+        system_tag_id = self.db.get_system_tag_id_hex()
+        if system_tag_id:
+            tags = [
+                tag for tag in tags
+                if tag["id"] != system_tag_id and tag.get("parent_id") != system_tag_id
+            ]
+
         # Build set of tags that have children (for determining leaf vs branch)
         tags_with_children = {tag["parent_id"] for tag in tags if tag["parent_id"] is not None}
 
@@ -308,6 +316,15 @@ class TagManagementScreen(ModalScreen[None]):
     def _load_tags(self) -> None:
         """Load all tags and compute paths."""
         all_tags = self.db.get_all_tags()
+
+        # Filter out _system tag and its descendants
+        system_tag_id = self.db.get_system_tag_id_hex()
+        if system_tag_id:
+            all_tags = [
+                tag for tag in all_tags
+                if tag["id"] != system_tag_id and tag.get("parent_id") != system_tag_id
+            ]
+
         note_tags = self.db.get_note_tags(self.note_id)
         self._note_tag_ids = {t["id"] for t in note_tags}
 
@@ -898,12 +915,20 @@ class NotesList(Container):
         listview.clear()
         self.notes = []
 
+        # Star icons
+        STAR_FILLED = "★"  # U+2605
+        STAR_EMPTY = "☆"   # U+2606
+
         for note in notes:
+            # Check if note is marked (starred)
+            is_marked = self.db.is_note_marked(note["id"])
+
             note_dict = {
                 "id": note["id"],
                 "content": note["content"],
                 "created_at": note["created_at"],
-                "tag_names": note.get("tag_names", "")
+                "tag_names": note.get("tag_names", ""),
+                "is_marked": is_marked
             }
             self.notes.append(note_dict)
 
@@ -911,7 +936,10 @@ class NotesList(Container):
             if len(note["content"]) > 50:
                 content_preview += "..."
             tags = note_dict["tag_names"] or "No tags"
-            header_line = f"#{note['id']} | {tags}"
+
+            # Add star icon to header
+            star = STAR_FILLED if is_marked else STAR_EMPTY
+            header_line = f"{star} #{note['id']} | {tags}"
             is_rtl = detect_rtl(content_preview) or detect_rtl(tags)
 
             # LLM NOTE: For list items, we only use CSS text-align:right for RTL.
@@ -919,7 +947,12 @@ class NotesList(Container):
             # where text bleeds into adjacent panes. The markers work fine for
             # single-widget display but cause issues in ListView context.
             rich_text = RichText()
-            rich_text.append(header_line, style="bold")
+            # Apply gold color to filled star
+            if is_marked:
+                rich_text.append(star, style="bold yellow")
+                rich_text.append(f" #{note['id']} | {tags}", style="bold")
+            else:
+                rich_text.append(header_line, style="bold")
             rich_text.append("\n")
             rich_text.append(content_preview)
             static = Static(rich_text, classes="rtl" if is_rtl else "")
@@ -1387,6 +1420,7 @@ class VoiceTUI(App):
         Binding("s", "save", "Save Note"),
         Binding("a", "show_all", "All Notes"),
         Binding("t", "manage_tags", "Tags"),
+        Binding("m", "toggle_star", "Star"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -1520,6 +1554,26 @@ class VoiceTUI(App):
     def action_manage_tags(self) -> None:
         """Open tag management for current note (keyboard shortcut)."""
         self._open_tag_management()
+
+    def action_toggle_star(self) -> None:
+        """Toggle star (marked) state of current note."""
+        detail = self.query_one("#note-detail", NoteDetail)
+        if not detail.current_note_id:
+            self.notify("Select a note first", severity="warning")
+            return
+
+        # Toggle the marked state
+        new_state = self.db.toggle_note_marked(detail.current_note_id)
+        star = "★" if new_state else "☆"
+        self.notify(f"Note {star} {'starred' if new_state else 'unstarred'}")
+
+        # Refresh notes list to update star display
+        notes_list = self.query_one("#notes-list", NotesList)
+        search_text = notes_list.get_search_text()
+        if search_text:
+            notes_list.perform_search(search_text)
+        else:
+            notes_list.refresh_notes()
 
 
 def add_tui_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
