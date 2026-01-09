@@ -27,6 +27,7 @@ from src.core.database import Database
 from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
 from src.ui.audio_player_widget import AudioPlayerWidget
+from src.ui.tag_management_dialog import TagManagementDialog
 from src.ui.transcription_widget import TranscriptionsContainer
 from src.ui.styles import BUTTON_STYLE
 
@@ -39,7 +40,7 @@ class NotePane(QWidget, NoteEditorMixin):
     Shows complete note details:
     - Created timestamp
     - Modified timestamp (or "Never modified")
-    - Associated tags (comma-separated)
+    - Tags button (opens tag management dialog) with tag names display
     - Full content (editable)
 
     Inherits from NoteEditorMixin to share editing state logic with TUI.
@@ -55,7 +56,8 @@ class NotePane(QWidget, NoteEditorMixin):
         note_id_label: Label for note ID (selectable)
         created_label: Label for creation timestamp
         modified_label: Label for modification timestamp
-        tags_label: Label for associated tags
+        tags_button: Button to open tag management dialog
+        tags_display: Label showing current tag names
         content_text: Text edit for note content
         edit_button: Button to enable editing
         save_button: Button to save changes
@@ -106,10 +108,19 @@ class NotePane(QWidget, NoteEditorMixin):
         self.modified_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.modified_label)
 
-        # Tags
-        self.tags_label = QLabel("Tags: ")
-        self.tags_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(self.tags_label)
+        # Tags - button that opens tag management dialog, with tag names display
+        tags_layout = QHBoxLayout()
+        self.tags_button = QPushButton("Tags")
+        self.tags_button.setStyleSheet(BUTTON_STYLE)
+        self.tags_button.clicked.connect(self._open_tag_management)
+        self.tags_button.setEnabled(False)  # Disabled until a note is loaded
+        tags_layout.addWidget(self.tags_button)
+
+        self.tags_display = QLabel("")
+        self.tags_display.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        tags_layout.addWidget(self.tags_display)
+        tags_layout.addStretch()
+        layout.addLayout(tags_layout)
 
         # Conflict warning (hidden by default)
         self.conflict_label = QLabel()
@@ -218,7 +229,7 @@ class NotePane(QWidget, NoteEditorMixin):
         if cache is None:
             # Cache not populated - show empty strings, rebuild cache, then reload
             logger.info(f"Cache not populated for note {note_id}, rebuilding...")
-            self.tags_label.setText("Tags: ")
+            self.tags_display.setText("")
             self.conflict_label.hide()
             self.attachments_label.setText("Attachments:")
             self.attachments_list.clear()
@@ -255,12 +266,13 @@ class NotePane(QWidget, NoteEditorMixin):
             note: Note dict from database
             cache: Display cache dict
         """
-        # Update tags from note (already includes tag_names)
+        # Update tags display from note (already includes tag_names)
         tag_names = note.get("tag_names", "")
         if tag_names:
-            self.tags_label.setText(f"Tags: {tag_names}")
+            self.tags_display.setText(tag_names)
         else:
-            self.tags_label.setText("Tags: None")
+            self.tags_display.setText("None")
+        self.tags_button.setEnabled(True)
 
         # Conflicts from cache
         conflicts = cache.get("conflicts", [])
@@ -393,12 +405,13 @@ class NotePane(QWidget, NoteEditorMixin):
             note_id: Note UUID hex string
             note: Note dict from database
         """
-        # Update tags
+        # Update tags display
         tag_names = note.get("tag_names", "")
         if tag_names:
-            self.tags_label.setText(f"Tags: {tag_names}")
+            self.tags_display.setText(tag_names)
         else:
-            self.tags_label.setText("Tags: None")
+            self.tags_display.setText("None")
+        self.tags_button.setEnabled(True)
 
         # Check for conflicts
         try:
@@ -523,7 +536,8 @@ class NotePane(QWidget, NoteEditorMixin):
         self.note_id_label.setText("Note ID: ")
         self.created_label.setText("Created: ")
         self.modified_label.setText("Modified: Never modified")
-        self.tags_label.setText("Tags: ")
+        self.tags_display.setText("")
+        self.tags_button.setEnabled(False)
         self.conflict_label.hide()
         self.attachments_label.setText("Attachments:")
         self.attachments_list.clear()
@@ -532,6 +546,27 @@ class NotePane(QWidget, NoteEditorMixin):
         self.transcriptions_container.set_audio_file(None, [])
         self._current_audio_files = []
         self.clear_editor()  # Handles content and state via mixin
+
+    def _open_tag_management(self) -> None:
+        """Open the tag management dialog."""
+        if not self.current_note_id:
+            return
+
+        dialog = TagManagementDialog(self.db, self.current_note_id, self)
+        dialog.tags_changed.connect(self._on_tags_changed)
+        dialog.exec()
+
+    def _on_tags_changed(self, note_id: str) -> None:
+        """Handle tags changed from the tag management dialog.
+
+        Args:
+            note_id: Note UUID hex string
+        """
+        # Reload the note to update tag display
+        if note_id == self.current_note_id:
+            self.load_note(note_id)
+            # Emit note_saved to refresh the notes list (tags may affect display)
+            self.note_saved.emit(note_id)
 
     def _on_transcribe_requested(self, audio_file_id: str) -> None:
         """Handle transcribe request from transcriptions container.
