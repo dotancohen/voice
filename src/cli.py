@@ -1590,12 +1590,11 @@ def cmd_maintenance_database_normalize(db: Database, args: argparse.Namespace) -
 
 
 def cmd_maintenance_rebuild_cache(db: Database, args: argparse.Namespace) -> int:
-    """Rebuild note display cache.
+    """Rebuild all cache fields for notes.
 
-    The cache stores pre-computed data for faster Note pane display:
-    - Tags with full hierarchical paths
-    - Conflict types
-    - Attachments with audio files and transcriptions (metadata only)
+    The cache fields store pre-computed data for faster display:
+    - di_cache_note_pane_display: Tags, conflicts, attachments for Note pane
+    - di_cache_note_list_pane_display: Date, marked status, content preview for List pane
 
     Args:
         db: Database instance
@@ -1607,16 +1606,64 @@ def cmd_maintenance_rebuild_cache(db: Database, args: argparse.Namespace) -> int
     try:
         note_id = getattr(args, 'note_id', None)
         if note_id:
-            print(f"Rebuilding cache for note {note_id}...")
-            db.rebuild_note_cache(note_id)
+            print(f"Rebuilding all caches for note {note_id}...")
+            db.rebuild_all_caches_for_note(note_id)
             print("Cache rebuild complete.")
         else:
-            print("Rebuilding cache for all notes...")
-            count = db.rebuild_all_note_caches()
-            print(f"Cache rebuild complete. Processed {count} notes.")
+            print("Rebuilding all caches for all notes...")
+            result = db.rebuild_all_database_caches()
+            print(f"Cache rebuild complete.")
+            print(f"  Notes processed: {result['notes_processed']}")
+            print(f"  Cache fields rebuilt: {result['cache_fields_rebuilt']}")
+            if result.get('errors'):
+                print(f"  Errors: {len(result['errors'])}")
+                for error in result['errors']:
+                    print(f"    - {error}")
         return 0
     except Exception as e:
         print(f"Error rebuilding cache: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_maintenance_rebuild_all_caches(db: Database, args: argparse.Namespace) -> int:
+    """Rebuild all di_* cache fields in the entire database.
+
+    Uses the cache registry to identify all cache fields across all tables
+    and rebuilds them.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        verbose = getattr(args, 'verbose', False)
+
+        # Show cache registry info if verbose
+        if verbose:
+            print("Cache Registry:")
+            registry = db.get_cache_registry_info()
+            for entry in registry:
+                print(f"  {entry['table']}.{entry['column']}")
+                print(f"    {entry['description']}")
+            print()
+
+        print("Rebuilding all database caches...")
+        result = db.rebuild_all_database_caches()
+
+        print(f"Cache rebuild complete.")
+        print(f"  Notes processed: {result['notes_processed']}")
+        print(f"  Cache fields rebuilt: {result['cache_fields_rebuilt']}")
+        if result.get('errors'):
+            print(f"  Errors: {len(result['errors'])}")
+            for error in result['errors']:
+                print(f"    - {error}")
+
+        return 0 if not result.get('errors') else 1
+    except Exception as e:
+        print(f"Error rebuilding caches: {e}", file=sys.stderr)
         return 1
 
 
@@ -2115,15 +2162,26 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Normalize database data (timestamps, unicode, etc.)"
     )
 
-    # maintenance rebuild-cache
+    # maintenance note-rebuild-caches (rebuild all caches for a single note or all notes)
     rebuild_cache_parser = maintenance_subparsers.add_parser(
-        "rebuild-cache",
-        help="Rebuild note display cache (tags, conflicts, attachments)"
+        "note-rebuild-caches",
+        help="Rebuild all cache fields for notes (di_cache_note_pane_display, di_cache_note_list_pane_display)"
     )
     rebuild_cache_parser.add_argument(
         "note_id",
         nargs="?",
-        help="Note ID to rebuild cache for (rebuilds all if not specified)"
+        help="Note ID to rebuild caches for (rebuilds all notes if not specified)"
+    )
+
+    # maintenance rebuild-all-caches (rebuild ALL di_* fields in the database)
+    rebuild_all_parser = maintenance_subparsers.add_parser(
+        "rebuild-all-caches",
+        help="Rebuild all di_* cache fields in the entire database"
+    )
+    rebuild_all_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Show cache registry info before rebuilding"
     )
 
 
@@ -2216,8 +2274,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return 1
             if maint_cmd == "database-normalize":
                 return cmd_maintenance_database_normalize(db, args)
-            elif maint_cmd == "rebuild-cache":
+            elif maint_cmd == "note-rebuild-caches":
                 return cmd_maintenance_rebuild_cache(db, args)
+            elif maint_cmd == "rebuild-all-caches":
+                return cmd_maintenance_rebuild_all_caches(db, args)
             else:
                 print(f"Error: Unknown maintenance command '{maint_cmd}'", file=sys.stderr)
                 return 1

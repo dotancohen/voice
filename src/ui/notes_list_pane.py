@@ -394,19 +394,33 @@ class NotesListPane(QWidget):
         Returns:
             QListWidgetItem configured with note data.
         """
-        # Format created_at timestamp
-        created_at = note.get("created_at", "Unknown")
+        # Try to use cached data if available
+        list_cache = note.get("list_display_cache")
+        if list_cache:
+            import json
+            try:
+                cache_data = json.loads(list_cache)
+                created_at = cache_data.get("date", note.get("created_at", "Unknown"))
+                is_marked = cache_data.get("marked", False)
+                content = cache_data.get("content_preview", "")
+                # Add ellipsis if content was truncated
+                original_content = note.get("content", "")
+                if len(original_content) > CONTENT_TRUNCATE_LENGTH:
+                    content = content + "..."
+            except (json.JSONDecodeError, TypeError):
+                # Fall back to computing values
+                list_cache = None
 
-        # Truncate and clean content
-        content = note.get("content", "")
-        # Replace newlines and carriage returns with spaces
-        content = content.replace("\n", " ").replace("\r", "")
-        # Truncate if too long
-        if len(content) > CONTENT_TRUNCATE_LENGTH:
-            content = content[:CONTENT_TRUNCATE_LENGTH] + "..."
-
-        # Check if note is marked (starred)
-        is_marked = self.db.is_note_marked(note["id"])
+        if not list_cache:
+            # No cache or cache parse failed - compute values
+            created_at = note.get("created_at", "Unknown")
+            is_marked = self.db.is_note_marked(note["id"])
+            content = note.get("content", "")
+            # Replace newlines and carriage returns with spaces
+            content = content.replace("\n", " ").replace("\r", "")
+            # Truncate if too long
+            if len(content) > CONTENT_TRUNCATE_LENGTH:
+                content = content[:CONTENT_TRUNCATE_LENGTH] + "..."
         if is_marked:
             star_html = f'<span style="color: {STAR_COLOR_GOLD};">{STAR_FILLED}</span>'
         else:

@@ -52,6 +52,8 @@ fn note_row_to_dict<'py>(py: Python<'py>, note: &database::NoteRow) -> PyResult<
     dict.set_item("tag_names", &note.tag_names)?;
     // Include raw display_cache JSON string (Python will parse it)
     dict.set_item("display_cache", &note.display_cache)?;
+    // Include raw list_display_cache JSON string (Python will parse it)
+    dict.set_item("list_display_cache", &note.list_display_cache)?;
     Ok(dict)
 }
 
@@ -1039,6 +1041,55 @@ impl PyDatabase {
         self.inner_ref()?
             .rebuild_all_note_caches()
             .map_err(voice_error_to_pyerr)
+    }
+
+    /// Rebuild the list pane display cache for a single note.
+    ///
+    /// The cache stores pre-computed data for the notes list pane:
+    /// date, marked status, and content preview (first 100 chars).
+    fn rebuild_note_list_cache(&self, note_id: &str) -> PyResult<()> {
+        self.inner_ref()?
+            .rebuild_note_list_cache(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Rebuild the list pane display cache for all notes.
+    ///
+    /// Returns the number of notes processed.
+    fn rebuild_all_note_list_caches(&self) -> PyResult<u32> {
+        self.inner_ref()?
+            .rebuild_all_note_list_caches()
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Rebuild ALL cache fields for a single note.
+    ///
+    /// This rebuilds every cache column (note pane display, list pane display)
+    /// for the given note.
+    fn rebuild_all_caches_for_note(&self, note_id: &str) -> PyResult<()> {
+        self.inner_ref()?
+            .rebuild_all_caches_for_note(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Rebuild ALL cache fields for all notes in the database.
+    ///
+    /// Returns a tuple: (notes_processed, cache_fields_per_note, error_list)
+    fn rebuild_all_database_caches(&self) -> PyResult<(u32, u32, Vec<String>)> {
+        let summary = self.inner_ref()?
+            .rebuild_all_database_caches()
+            .map_err(voice_error_to_pyerr)?;
+        Ok((summary.notes_processed, summary.cache_fields_rebuilt, summary.errors))
+    }
+
+    /// Get information about all registered cache fields.
+    ///
+    /// Returns a list of (table, column, description) tuples.
+    fn get_cache_registry_info(&self) -> PyResult<Vec<(String, String, String)>> {
+        Ok(database::Database::get_cache_registry_info()
+            .iter()
+            .map(|info| (info.table.to_string(), info.column.to_string(), info.description.to_string()))
+            .collect())
     }
 
     /// Get full transcription content by ID.

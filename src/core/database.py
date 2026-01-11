@@ -832,6 +832,70 @@ class Database:
         """
         return self._rust_db.rebuild_all_note_caches()
 
+    def rebuild_note_list_cache(self, note_id: Union[bytes, str]) -> None:
+        """Rebuild the list pane display cache for a single note.
+
+        The cache stores pre-computed data for the Notes List pane:
+        - Date (created_at timestamp)
+        - Marked status (has _system/_marked tag)
+        - Content preview (first 100 characters)
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        self._rust_db.rebuild_note_list_cache(note_id)
+
+    def rebuild_all_note_list_caches(self) -> int:
+        """Rebuild the list pane display cache for all notes.
+
+        Returns:
+            Number of notes processed
+        """
+        return self._rust_db.rebuild_all_note_list_caches()
+
+    def rebuild_all_caches_for_note(self, note_id: Union[bytes, str]) -> None:
+        """Rebuild ALL cache fields for a single note.
+
+        This rebuilds every cache column (note pane display, list pane display)
+        for the given note.
+
+        Args:
+            note_id: Note UUID (bytes or hex string)
+        """
+        if isinstance(note_id, bytes):
+            note_id = uuid_module.UUID(bytes=note_id).hex
+        self._rust_db.rebuild_all_caches_for_note(note_id)
+
+    def rebuild_all_database_caches(self) -> Dict[str, Any]:
+        """Rebuild ALL cache fields for all notes in the database.
+
+        Returns:
+            Summary dict with:
+            - notes_processed: Number of notes processed
+            - cache_fields_rebuilt: Number of cache fields per note
+            - errors: List of error messages (if any)
+        """
+        notes, fields, errors = self._rust_db.rebuild_all_database_caches()
+        return {
+            "notes_processed": notes,
+            "cache_fields_rebuilt": fields,
+            "errors": errors,
+        }
+
+    def get_cache_registry_info(self) -> List[Dict[str, str]]:
+        """Get information about all registered cache fields.
+
+        Returns:
+            List of dicts with table, column, and description for each cache field.
+        """
+        info_list = self._rust_db.get_cache_registry_info()
+        return [
+            {"table": table, "column": column, "description": desc}
+            for table, column, desc in info_list
+        ]
+
     def get_transcription_content(self, transcription_id: Union[bytes, str]) -> Optional[str]:
         """Get full transcription content by ID.
 
