@@ -13,7 +13,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, TypedDict, Union
+
+
+class TagChangeResult(TypedDict):
+    """Result of a tag change operation (add/remove tag from note)."""
+    changed: bool
+    note_id: str
+    list_cache_rebuilt: bool
 
 # Import Database from the Rust extension
 from voicecore import Database as RustDatabase
@@ -222,8 +229,15 @@ class Database:
 
     def add_tag_to_note(
         self, note_id: Union[bytes, str], tag_id: Union[bytes, str]
-    ) -> bool:
-        """Add a tag to a note."""
+    ) -> TagChangeResult:
+        """Add a tag to a note.
+
+        Returns:
+            TagChangeResult with:
+            - changed: True if tag was added (False if already present)
+            - note_id: The resolved note ID
+            - list_cache_rebuilt: True if the list pane cache was rebuilt
+        """
         if isinstance(note_id, bytes):
             import uuid
             note_id = uuid.UUID(bytes=note_id).hex
@@ -234,8 +248,15 @@ class Database:
 
     def remove_tag_from_note(
         self, note_id: Union[bytes, str], tag_id: Union[bytes, str]
-    ) -> bool:
-        """Remove a tag from a note."""
+    ) -> TagChangeResult:
+        """Remove a tag from a note.
+
+        Returns:
+            TagChangeResult with:
+            - changed: True if tag was removed (False if not present)
+            - note_id: The resolved note ID
+            - list_cache_rebuilt: True if the list pane cache was rebuilt
+        """
         if isinstance(note_id, bytes):
             import uuid
             note_id = uuid.UUID(bytes=note_id).hex
@@ -665,6 +686,7 @@ class Database:
         imported_at: str,
         filename: str,
         file_created_at: Optional[str] = None,
+        duration_seconds: Optional[int] = None,
         summary: Optional[str] = None,
         modified_at: Optional[str] = None,
         deleted_at: Optional[str] = None,
@@ -672,8 +694,16 @@ class Database:
         """Apply a sync audio file change."""
         return self._rust_db.apply_sync_audio_file(
             audio_id, imported_at, filename,
-            file_created_at, summary, modified_at, deleted_at
+            file_created_at, duration_seconds, summary, modified_at, deleted_at
         )
+
+    def get_audio_files_missing_duration(self) -> List[Dict[str, Any]]:
+        """Get all audio files that have no duration set."""
+        return self._rust_db.get_audio_files_missing_duration()
+
+    def update_audio_file_duration(self, audio_id: str, duration_seconds: int) -> bool:
+        """Update an audio file's duration."""
+        return self._rust_db.update_audio_file_duration(audio_id, duration_seconds)
 
     def get_note_attachment_raw(
         self, association_id: str

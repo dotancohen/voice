@@ -266,10 +266,12 @@ class NotePane(QWidget, NoteEditorMixin):
             note: Note dict from database
             cache: Display cache dict
         """
-        # Update tags display from note (already includes tag_names)
-        tag_names = note.get("tag_names", "")
-        if tag_names:
-            self.tags_display.setText(tag_names)
+        # Update tags display from cache (uses display_name which handles ambiguity)
+        tags = cache.get("tags", [])
+        if tags:
+            # Use display_name which shows minimal path for ambiguous tags
+            tag_display_names = [t.get("display_name", t.get("name", "")) for t in tags]
+            self.tags_display.setText(", ".join(tag_display_names))
         else:
             self.tags_display.setText("None")
         self.tags_button.setEnabled(True)
@@ -405,7 +407,8 @@ class NotePane(QWidget, NoteEditorMixin):
             note_id: Note UUID hex string
             note: Note dict from database
         """
-        # Update tags display
+        # Update tags display (fallback uses simple tag_names, not ambiguity-aware display)
+        # Cache path uses display_name which handles ambiguous tag names properly
         tag_names = note.get("tag_names", "")
         if tag_names:
             self.tags_display.setText(tag_names)

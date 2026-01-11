@@ -34,6 +34,25 @@ from voicecore import SyncClient, sync_all_peers, start_sync_server
 from src.core.validation import ValidationError
 
 
+def format_duration(seconds: int) -> str:
+    """Format duration in seconds as [h:]mm:ss.
+
+    Args:
+        seconds: Duration in seconds (integer)
+
+    Returns:
+        Formatted string like "00:03", "1:07:00", etc.
+    """
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes:02d}:{secs:02d}"
+
+
 def format_tag_hierarchy(tags: List[Dict[str, Any]], indent: int = 0) -> str:
     """Format tags as indented hierarchy.
 
@@ -1667,6 +1686,80 @@ def cmd_maintenance_rebuild_all_caches(db: Database, args: argparse.Namespace) -
         return 1
 
 
+def cmd_maintenance_audio_rebuild_durations(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Find audio files with missing duration and populate from file metadata.
+
+    Uses ffprobe to extract duration from actual audio files on disk.
+
+    Args:
+        db: Database instance
+        config: Configuration object
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    from src.core.waveform import get_audio_duration
+
+    try:
+        dry_run = getattr(args, 'dry_run', False)
+
+        # Get audiofile directory from config
+        audiofile_dir_str = config.get_audiofile_directory()
+        if not audiofile_dir_str:
+            print("Error: audiofile_directory not configured.", file=sys.stderr)
+            print("Run: voice config set audiofile_directory /path/to/audio/files", file=sys.stderr)
+            return 1
+        audio_dir = Path(audiofile_dir_str)
+
+        # Get audio files missing duration
+        missing = db.get_audio_files_missing_duration()
+        if not missing:
+            print("All audio files have duration set.")
+            return 0
+
+        print(f"Found {len(missing)} audio files with missing duration.")
+        if dry_run:
+            print("Dry run - no changes will be made.\n")
+
+        updated = 0
+        errors = 0
+        for audio_file in missing:
+            audio_id = audio_file["id"]
+            filename = audio_file["filename"]
+
+            # Build path to audio file: {audiofile_directory}/{uuid}.{extension}
+            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+            audio_path = audio_dir / f"{audio_id}.{ext}"
+            if not audio_path.exists():
+                print(f"  {audio_id[:8]}... {filename}: File not found at {audio_path}")
+                errors += 1
+                continue
+
+            # Get duration using ffprobe
+            duration_float = get_audio_duration(audio_path)
+            if duration_float is None:
+                print(f"  {audio_id[:8]}... {filename}: Could not extract duration")
+                errors += 1
+                continue
+
+            # Round to nearest second
+            duration = round(duration_float)
+
+            if dry_run:
+                print(f"  {audio_id[:8]}... {filename}: Would set duration to {format_duration(duration)}")
+            else:
+                db.update_audio_file_duration(audio_id, duration)
+                print(f"  {audio_id[:8]}... {filename}: Set duration to {format_duration(duration)}")
+                updated += 1
+
+        print(f"\nSummary: {updated} updated, {errors} errors, {len(missing) - updated - errors} skipped")
+        return 0 if errors == 0 else 1
+    except Exception as e:
+        print(f"Error rebuilding audio durations: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_new_tag(db: Database, args: argparse.Namespace) -> int:
     """Create a new tag.
 
@@ -2184,6 +2277,17 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Show cache registry info before rebuilding"
     )
 
+    # maintenance audio-rebuild-durations (find and set duration for audio files)
+    audio_duration_parser = maintenance_subparsers.add_parser(
+        "audio-rebuild-durations",
+        help="Find audio files with missing duration and populate from file metadata"
+    )
+    audio_duration_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes"
+    )
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -2278,6 +2382,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_maintenance_rebuild_cache(db, args)
             elif maint_cmd == "rebuild-all-caches":
                 return cmd_maintenance_rebuild_all_caches(db, args)
+            elif maint_cmd == "audio-rebuild-durations":
+                return cmd_maintenance_audio_rebuild_durations(db, config, args)
             else:
                 print(f"Error: Unknown maintenance command '{maint_cmd}'", file=sys.stderr)
                 return 1

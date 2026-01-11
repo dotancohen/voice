@@ -49,7 +49,7 @@ from src.ui.styles import BUTTON_STYLE
 logger = logging.getLogger(__name__)
 
 # Constants
-CONTENT_TRUNCATE_LENGTH = 100
+CONTENT_TRUNCATE_LENGTH = 200
 
 # Custom item data roles (typed to satisfy mypy)
 ROLE_NOTE_ID = Qt.ItemDataRole.UserRole
@@ -62,6 +62,46 @@ STAR_EMPTY = "☆"   # U+2606
 STAR_COLOR_GOLD = "#FFD700"
 STAR_COLOR_GRAY = "#888888"
 STAR_CLICK_REGION_WIDTH = 20  # pixels
+
+
+def format_duration(seconds: int) -> str:
+    """Format duration in seconds as [h:]mm:ss.
+
+    Args:
+        seconds: Duration in whole seconds
+
+    Returns:
+        Formatted string like "00:03", "01:30", or "1:07:00"
+    """
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes:02d}:{secs:02d}"
+
+
+def detect_text_direction(text: str) -> str:
+    """Detect text direction based on first strong directional character.
+
+    Args:
+        text: Text to analyze
+
+    Returns:
+        "rtl" if text starts with RTL characters (Hebrew, Arabic, etc.), "ltr" otherwise
+    """
+    import unicodedata
+    for char in text:
+        bidi_class = unicodedata.bidirectional(char)
+        # R = Right-to-Left, AL = Arabic Letter, AN = Arabic Number
+        if bidi_class in ('R', 'AL'):
+            return "rtl"
+        # L = Left-to-Right
+        elif bidi_class == 'L':
+            return "ltr"
+        # Skip neutral/weak characters and continue looking
+    return "ltr"  # Default to LTR if no strong characters found
 
 
 class SearchTextEdit(QTextEdit):
@@ -385,27 +425,34 @@ class NotesListPane(QWidget):
 
         logger.info(f"Loaded {len(notes)} notes into list")
 
-    def create_note_item(self, note: Dict[str, Any]) -> QListWidgetItem:
-        """Create a list item for a note with two-line format.
+    def _build_note_item_display(self, note: Dict[str, Any]) -> tuple:
+        """Build HTML and plain text display for a note item.
 
         Args:
             note: Note dictionary from database
 
         Returns:
-            QListWidgetItem configured with note data.
+            Tuple of (html_text, plain_text, is_marked)
         """
+        import json
+
         # Try to use cached data if available
         list_cache = note.get("list_display_cache")
+        duration_seconds = None
+        tags: List[str] = []
         if list_cache:
-            import json
             try:
                 cache_data = json.loads(list_cache)
                 created_at = cache_data.get("date", note.get("created_at", "Unknown"))
                 is_marked = cache_data.get("marked", False)
                 content = cache_data.get("content_preview", "")
-                # Add ellipsis if content was truncated
-                original_content = note.get("content", "")
-                if len(original_content) > CONTENT_TRUNCATE_LENGTH:
+                duration_seconds = cache_data.get("duration_seconds")
+                tags = cache_data.get("tags", [])
+                # Truncate cached preview if longer than display limit
+                if len(content) > CONTENT_TRUNCATE_LENGTH:
+                    content = content[:CONTENT_TRUNCATE_LENGTH] + "..."
+                elif len(note.get("content", "")) > len(content):
+                    # Original was truncated by cache, add ellipsis
                     content = content + "..."
             except (json.JSONDecodeError, TypeError):
                 # Fall back to computing values
@@ -421,25 +468,56 @@ class NotesListPane(QWidget):
             # Truncate if too long
             if len(content) > CONTENT_TRUNCATE_LENGTH:
                 content = content[:CONTENT_TRUNCATE_LENGTH] + "..."
+            # Tags not available without cache
+            tags = []
+
+        # Build star HTML
         if is_marked:
             star_html = f'<span style="color: {STAR_COLOR_GOLD};">{STAR_FILLED}</span>'
         else:
             star_html = f'<span style="color: {STAR_COLOR_GRAY};">{STAR_EMPTY}</span>'
 
-        # Create two-line text with star, then bold date
-        html_text = f"{star_html} <b>{created_at}</b><br>{content}"
+        # Format duration if available
+        duration_str = ""
+        if duration_seconds is not None and duration_seconds > 0:
+            duration_str = f" | {format_duration(duration_seconds)}"
+
+        # Format tags if available
+        tags_str = ""
+        if tags:
+            tags_str = f" | {', '.join(tags)}"
+
+        # Create two-line text with star, bold date/time, optional duration, optional tags
+        # Top row is forced LTR so date/duration/tags display correctly even with RTL content
+        # Bottom row: explicit direction, single line with overflow hidden
+        content_dir = detect_text_direction(content)
+        html_text = (
+            f'<div dir="ltr">{star_html} <b>{created_at}</b>{duration_str}{tags_str}</div>'
+            f'<div dir="{content_dir}" style="overflow: hidden;">{content}</div>'
+        )
+
+        # Plain text for accessibility
+        star_plain = STAR_FILLED if is_marked else STAR_EMPTY
+        plain_text = f"{star_plain} {created_at}\n{content}"
+
+        return html_text, plain_text, is_marked
+
+    def create_note_item(self, note: Dict[str, Any]) -> QListWidgetItem:
+        """Create a list item for a note with two-line format.
+
+        Args:
+            note: Note dictionary from database
+
+        Returns:
+            QListWidgetItem configured with note data.
+        """
+        html_text, plain_text, is_marked = self._build_note_item_display(note)
 
         # Create item
         item = QListWidgetItem()
         item.setData(ROLE_NOTE_ID, note["id"])  # Store note_id
         item.setData(ROLE_MARKED, is_marked)  # Store marked state
-
-        # Store the HTML for custom delegate rendering
         item.setData(ROLE_HTML_TEXT, html_text)
-
-        # Set plain text for display role (used by default rendering/accessibility)
-        star_plain = STAR_FILLED if is_marked else STAR_EMPTY
-        plain_text = f"{star_plain} {created_at}\n{content}"
         item.setText(plain_text)
 
         return item
@@ -468,33 +546,54 @@ class NotesListPane(QWidget):
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             if item and item.data(ROLE_NOTE_ID) == note_id:
-                # Update the item's marked state and HTML
-                item.setData(ROLE_MARKED, new_state)
-
-                # Rebuild the HTML with updated star
+                # Rebuild the item display from fresh note data
                 note = self.db.get_note(note_id)
                 if note:
-                    # Get current content from item text (second line)
-                    plain_text = item.text()
-                    content_line = plain_text.split("\n")[1] if "\n" in plain_text else ""
-
-                    # Build new HTML
-                    if new_state:
-                        star_html = f'<span style="color: {STAR_COLOR_GOLD};">{STAR_FILLED}</span>'
-                    else:
-                        star_html = f'<span style="color: {STAR_COLOR_GRAY};">{STAR_EMPTY}</span>'
-
-                    created_at = note.get("created_at", "Unknown")
-                    html_text = f"{star_html} <b>{created_at}</b><br>{content_line}"
-                    item.setData(ROLE_HTML_TEXT, html_text)
-
-                    # Update plain text for accessibility
-                    star_plain = STAR_FILLED if new_state else STAR_EMPTY
-                    item.setText(f"{star_plain} {created_at}\n{content_line}")
+                    self._refresh_item_display(item, note)
 
                 # Force repaint
                 self.list_widget.update()
                 break
+
+    def _refresh_item_display(self, item: QListWidgetItem, note: Dict[str, Any]) -> None:
+        """Refresh a list item's display from note data.
+
+        Args:
+            item: The list widget item to refresh
+            note: Note dictionary from database
+        """
+        html_text, plain_text, is_marked = self._build_note_item_display(note)
+        item.setData(ROLE_MARKED, is_marked)
+        item.setData(ROLE_HTML_TEXT, html_text)
+        item.setText(plain_text)
+
+    def refresh_note_item(self, note_id: str) -> bool:
+        """Refresh a specific note item in the list.
+
+        This is called when a note's tags or other display data changes
+        and the list item needs to be updated.
+
+        Args:
+            note_id: ID of the note to refresh
+
+        Returns:
+            True if the item was found and refreshed, False otherwise.
+        """
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item and item.data(ROLE_NOTE_ID) == note_id:
+                # Fetch fresh note data and rebuild display
+                note = self.db.get_note(note_id)
+                if note:
+                    self._refresh_item_display(item, note)
+                    self.list_widget.update()
+                    logger.info(f"Refreshed list item for note {note_id[:8]}...")
+                    return True
+                else:
+                    logger.warning(f"Note {note_id[:8]}... not found when refreshing")
+                    return False
+        logger.debug(f"Note {note_id[:8]}... not in current list view")
+        return False
 
     def select_note_by_id(self, note_id: int) -> bool:
         """Select a note in the list by its ID.

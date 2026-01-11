@@ -86,6 +86,7 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     dict.set_item("imported_at", &audio_file.imported_at)?;
     dict.set_item("filename", &audio_file.filename)?;
     dict.set_item("file_created_at", &audio_file.file_created_at)?;
+    dict.set_item("duration_seconds", &audio_file.duration_seconds)?;
     dict.set_item("summary", &audio_file.summary)?;
     dict.set_item("device_id", &audio_file.device_id)?;
     dict.set_item("modified_at", &audio_file.modified_at)?;
@@ -107,6 +108,14 @@ fn transcription_row_to_dict<'py>(py: Python<'py>, transcription: &database::Tra
     dict.set_item("created_at", &transcription.created_at)?;
     dict.set_item("modified_at", &transcription.modified_at)?;
     dict.set_item("deleted_at", &transcription.deleted_at)?;
+    Ok(dict)
+}
+
+fn tag_change_result_to_dict<'py>(py: Python<'py>, result: &database::TagChangeResult) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("changed", result.changed)?;
+    dict.set_item("note_id", &result.note_id)?;
+    dict.set_item("list_cache_rebuilt", result.list_cache_rebuilt)?;
     Ok(dict)
 }
 
@@ -297,16 +306,18 @@ impl PyDatabase {
         self.inner_ref()?.delete_tag(tag_id).map_err(voice_error_to_pyerr)
     }
 
-    fn add_tag_to_note(&self, note_id: &str, tag_id: &str) -> PyResult<bool> {
-        self.inner_ref()?
+    fn add_tag_to_note<'py>(&self, py: Python<'py>, note_id: &str, tag_id: &str) -> PyResult<PyObject> {
+        let result = self.inner_ref()?
             .add_tag_to_note(note_id, tag_id)
-            .map_err(voice_error_to_pyerr)
+            .map_err(voice_error_to_pyerr)?;
+        Ok(tag_change_result_to_dict(py, &result)?.into_any().unbind())
     }
 
-    fn remove_tag_from_note(&self, note_id: &str, tag_id: &str) -> PyResult<bool> {
-        self.inner_ref()?
+    fn remove_tag_from_note<'py>(&self, py: Python<'py>, note_id: &str, tag_id: &str) -> PyResult<PyObject> {
+        let result = self.inner_ref()?
             .remove_tag_from_note(note_id, tag_id)
-            .map_err(voice_error_to_pyerr)
+            .map_err(voice_error_to_pyerr)?;
+        Ok(tag_change_result_to_dict(py, &result)?.into_any().unbind())
     }
 
     fn get_note_tags<'py>(&self, py: Python<'py>, note_id: &str) -> PyResult<PyObject> {
@@ -908,6 +919,38 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
+    /// Create audio file with duration
+    #[pyo3(signature = (filename, file_created_at=None, duration_seconds=None))]
+    fn create_audio_file_with_duration(
+        &self,
+        filename: &str,
+        file_created_at: Option<&str>,
+        duration_seconds: Option<i64>,
+    ) -> PyResult<String> {
+        self.inner_ref()?
+            .create_audio_file_with_duration(filename, file_created_at, duration_seconds)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Update audio file duration
+    fn update_audio_file_duration(&self, audio_file_id: &str, duration_seconds: i64) -> PyResult<bool> {
+        self.inner_ref()?
+            .update_audio_file_duration(audio_file_id, duration_seconds)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Get audio files missing duration
+    fn get_audio_files_missing_duration<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let audio_files = self.inner_ref()?
+            .get_audio_files_missing_duration()
+            .map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for audio_file in &audio_files {
+            list.append(audio_file_row_to_dict(py, audio_file)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
     fn get_audio_file_raw<'py>(&self, py: Python<'py>, audio_file_id: &str) -> PyResult<Option<PyObject>> {
         let audio_file = self.inner_ref()?
             .get_audio_file_raw(audio_file_id)
@@ -918,19 +961,20 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, summary=None, modified_at=None, deleted_at=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
         imported_at: &str,
         filename: &str,
         file_created_at: Option<&str>,
+        duration_seconds: Option<i64>,
         summary: Option<&str>,
         modified_at: Option<&str>,
         deleted_at: Option<&str>,
     ) -> PyResult<()> {
         self.inner_ref()?
-            .apply_sync_audio_file(id, imported_at, filename, file_created_at, summary, modified_at, deleted_at)
+            .apply_sync_audio_file(id, imported_at, filename, file_created_at, duration_seconds, summary, modified_at, deleted_at)
             .map_err(voice_error_to_pyerr)
     }
 
