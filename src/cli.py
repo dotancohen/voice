@@ -753,7 +753,11 @@ def _transcribe_audio_file(
             proj_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT")
             if not proj_id:
                 transcription_cfg = config.get_transcription_config()
-                proj_id = transcription_cfg.get("providers", {}).get("google_cloud", {}).get("project_id")
+                # Try "google" first (config format), then "google_cloud"
+                google_cfg = transcription_cfg.get("providers", {}).get("google", {})
+                if not google_cfg:
+                    google_cfg = transcription_cfg.get("providers", {}).get("google_cloud", {})
+                proj_id = google_cfg.get("project_id")
             if not proj_id:
                 print("Error: Google Cloud project ID required. Use --project-id or set GOOGLE_CLOUD_PROJECT.", file=sys.stderr)
                 return None
@@ -762,9 +766,34 @@ def _transcribe_audio_file(
             service = "google_cloud"
             model_path = None
 
+        elif backend == "speechtext_ai":
+            # Get config for API key and options
+            transcription_cfg = config.get_transcription_config()
+            provider_cfg = transcription_cfg.get("providers", {}).get("speechtext_ai", {})
+
+            # Get API key from argument, environment, or config
+            key = api_key or os.environ.get("SPEECHTEXT_AI_API_KEY") or provider_cfg.get("api_key")
+            if not key:
+                print("Error: SpeechText.AI API key required. Use --api-key or set SPEECHTEXT_AI_API_KEY.", file=sys.stderr)
+                return None
+
+            # Get provider-specific options from config (defaults for Hebrew accuracy)
+            punctuation = provider_cfg.get("punctuation", True)
+            summary = provider_cfg.get("summary", False)
+            highlights = provider_cfg.get("highlights", False)
+
+            client = TranscriptionClient.with_speechtext_ai(
+                api_key=key,
+                punctuation=punctuation,
+                summary=summary,
+                highlights=highlights,
+            )
+            service = "speechtext_ai"
+            model_path = None
+
         else:
             print(f"Error: Unknown backend '{backend}'", file=sys.stderr)
-            print("Available backends: local_whisper, assemblyai, google_cloud", file=sys.stderr)
+            print("Available backends: local_whisper, assemblyai, google_cloud, speechtext_ai", file=sys.stderr)
             return None
 
     except Exception as e:
@@ -845,6 +874,11 @@ def cmd_transcribe_audiofile(db: Database, config: Config, args: argparse.Namesp
     Returns:
         Exit code (0 for success, 1 for error)
     """
+    # Enable debug logging if requested
+    if getattr(args, 'debug', False):
+        from voice_transcription import enable_debug_logging
+        enable_debug_logging()
+
     audio_file_id = args.audio_id
     language = getattr(args, 'language', None)
     speaker_count = getattr(args, 'speaker_count', None)
@@ -891,6 +925,11 @@ def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) 
     Returns:
         Exit code (0 for success, 1 for error)
     """
+    # Enable debug logging if requested
+    if getattr(args, 'debug', False):
+        from voice_transcription import enable_debug_logging
+        enable_debug_logging()
+
     note_id = args.note_id
     language = getattr(args, 'language', None)
     speaker_count = getattr(args, 'speaker_count', None)
@@ -1881,7 +1920,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     transcribe_audio_parser.add_argument(
         "--backend",
         type=str,
-        choices=["local_whisper", "assemblyai", "google_cloud"],
+        choices=["local_whisper", "assemblyai", "google_cloud", "speechtext_ai"],
         default="local_whisper",
         help="Transcription backend (default: local_whisper)"
     )
@@ -1896,6 +1935,11 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         dest="project_id",
         type=str,
         help="Google Cloud project ID (for google_cloud backend)"
+    )
+    transcribe_audio_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows HTTP requests/responses)"
     )
 
     # note-audiofiles-transcribe command
@@ -1927,7 +1971,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     transcribe_note_parser.add_argument(
         "--backend",
         type=str,
-        choices=["local_whisper", "assemblyai", "google_cloud"],
+        choices=["local_whisper", "assemblyai", "google_cloud", "speechtext_ai"],
         default="local_whisper",
         help="Transcription backend (default: local_whisper)"
     )
@@ -1942,6 +1986,11 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         dest="project_id",
         type=str,
         help="Google Cloud project ID (for google_cloud backend)"
+    )
+    transcribe_note_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows HTTP requests/responses)"
     )
 
     # sync command with subcommands

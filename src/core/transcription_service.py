@@ -4,6 +4,15 @@ This module provides async transcription capabilities using VoiceTranscription.
 It handles creating pending records, running transcription in background threads,
 and updating records when complete.
 
+Supported providers:
+- local_whisper: Local Whisper model (synchronous, blocking)
+- speechtext_ai: SpeechText.AI cloud service (async with polling)
+
+For cloud providers, the pattern is:
+1. Create pending record: "Pending...\nSubmitted to PROVIDER at DATE with options: JSON"
+2. Poll every 5 seconds until complete
+3. Update database with final result
+
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """
 
@@ -18,6 +27,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Cloud providers that use async polling pattern
+CLOUD_PROVIDERS = {"speechtext_ai"}
+
+# Default polling interval for cloud providers (seconds)
+DEFAULT_POLL_INTERVAL = 5
 
 
 class TranscriptionService:
@@ -56,10 +71,14 @@ class TranscriptionService:
         Args:
             audio_file_id: Audio file UUID hex string
             provider_config: Provider configuration dict with keys:
-                - provider_id: Provider identifier (e.g., "local_whisper")
-                - model: Model name or path
+                - provider_id: Provider identifier (e.g., "local_whisper", "speechtext_ai")
+                - model: Model name or path (local_whisper)
+                - api_key: API key (cloud providers)
                 - language: Optional language hint
                 - speaker_count: Optional speaker count
+                - punctuation: Enable punctuation (speechtext_ai)
+                - summary: Generate summary (speechtext_ai)
+                - highlights: Extract highlights (speechtext_ai)
             on_complete: Callback(transcription_id, result) when complete
             on_error: Callback(transcription_id, error_message) on failure
 
@@ -71,10 +90,21 @@ class TranscriptionService:
         if not audio_file:
             raise ValueError(f"Audio file not found: {audio_file_id}")
 
-        # Create pending record
-        pending_content = f"Pending... ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
+        # Create pending record with appropriate message format
         service_name = provider_config.get("provider_id", "unknown")
         service_args = json.dumps(provider_config)
+        submit_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        if service_name in CLOUD_PROVIDERS:
+            # Cloud provider format: detailed pending message
+            options_display = self._format_provider_options(provider_config)
+            pending_content = (
+                f"Pending...\n"
+                f"Submitted to {service_name} at {submit_time} with options: {options_display}"
+            )
+        else:
+            # Local provider format: simple pending message
+            pending_content = f"Pending... ({submit_time})"
 
         transcription_id = self.database.create_transcription(
             audio_file_id=audio_file_id,
@@ -138,19 +168,16 @@ class TranscriptionService:
             # Import here to avoid circular imports and lazy loading
             from voice_transcription import TranscriptionClient, TranscriptionConfig
 
-            # Get model path from config
+            # Get provider from config
             provider_id = provider_config.get("provider_id", "local_whisper")
 
-            if provider_id != "local_whisper":
+            # Create client based on provider
+            if provider_id == "local_whisper":
+                client = self._create_local_whisper_client(provider_config)
+            elif provider_id == "speechtext_ai":
+                client = self._create_speechtext_ai_client(provider_config)
+            else:
                 raise ValueError(f"Unsupported provider: {provider_id}")
-
-            # Resolve model path
-            model_path = self._resolve_model_path(provider_config)
-            if not model_path:
-                raise ValueError("No model path configured")
-
-            # Create client
-            client = TranscriptionClient.with_local_whisper(model_path)
 
             # Build config
             config = TranscriptionConfig(
@@ -235,6 +262,80 @@ class TranscriptionService:
             # Remove from active tasks
             with self._lock:
                 self._active_tasks.pop(transcription_id, None)
+
+    def _create_local_whisper_client(self, provider_config: Dict[str, Any]) -> Any:
+        """Create a local Whisper transcription client.
+
+        Args:
+            provider_config: Provider configuration
+
+        Returns:
+            TranscriptionClient instance
+        """
+        from voice_transcription import TranscriptionClient
+
+        model_path = self._resolve_model_path(provider_config)
+        if not model_path:
+            raise ValueError("No model path configured")
+
+        return TranscriptionClient.with_local_whisper(model_path)
+
+    def _create_speechtext_ai_client(self, provider_config: Dict[str, Any]) -> Any:
+        """Create a SpeechText.AI transcription client.
+
+        Args:
+            provider_config: Provider configuration
+
+        Returns:
+            TranscriptionClient instance
+        """
+        from voice_transcription import TranscriptionClient
+
+        api_key = provider_config.get("api_key")
+        if not api_key:
+            raise ValueError("API key is required for speechtext_ai provider")
+
+        punctuation = provider_config.get("punctuation", True)
+        summary = provider_config.get("summary", False)
+        highlights = provider_config.get("highlights", False)
+
+        return TranscriptionClient.with_speechtext_ai(
+            api_key=api_key,
+            punctuation=punctuation,
+            summary=summary,
+            highlights=highlights,
+        )
+
+    def _format_provider_options(self, provider_config: Dict[str, Any]) -> str:
+        """Format provider options for display in pending message.
+
+        Args:
+            provider_config: Provider configuration
+
+        Returns:
+            JSON string of relevant options
+        """
+        provider_id = provider_config.get("provider_id", "unknown")
+
+        # Extract display options based on provider
+        display_options: Dict[str, Any] = {}
+
+        # Common options
+        if "language" in provider_config:
+            display_options["language"] = provider_config["language"]
+        if "speaker_count" in provider_config:
+            display_options["speaker_count"] = provider_config["speaker_count"]
+
+        # Provider-specific options
+        if provider_id == "speechtext_ai":
+            if "punctuation" in provider_config:
+                display_options["punctuation"] = provider_config["punctuation"]
+            if "summary" in provider_config:
+                display_options["summary"] = provider_config["summary"]
+            if "highlights" in provider_config:
+                display_options["highlights"] = provider_config["highlights"]
+
+        return json.dumps(display_options)
 
     def _resolve_model_path(self, provider_config: Dict[str, Any]) -> Optional[str]:
         """Resolve the model path from provider config.
