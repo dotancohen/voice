@@ -1025,12 +1025,12 @@ class Database:
             note_id = uuid_module.UUID(bytes=note_id).hex
         return self._rust_db.toggle_note_marked(note_id)
 
-    def get_system_tag_id_hex(self) -> Optional[str]:
+    def get_system_tag_id_hex(self) -> str:
         """Get the _system tag ID as a hex string.
 
         Used for filtering system tags from UI display.
 
         Returns:
-            System tag ID hex string, or None if not found
+            System tag ID hex string
         """
         return self._rust_db.get_system_tag_id_hex()

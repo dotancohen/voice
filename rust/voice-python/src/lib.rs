@@ -1191,8 +1191,7 @@ impl PyDatabase {
     }
 
     /// Get the _system tag ID as a hex string for filtering in UI.
-    /// Returns None if _system tag doesn't exist.
-    fn get_system_tag_id_hex(&self) -> PyResult<Option<String>> {
+    fn get_system_tag_id_hex(&self) -> PyResult<String> {
         self.inner_ref()?
             .get_system_tag_id_hex()
             .map_err(voice_error_to_pyerr)
