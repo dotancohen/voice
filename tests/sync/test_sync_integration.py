@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Generator, Tuple
 
@@ -100,7 +101,8 @@ class TestTwoNodeSync:
         assert get_tag_count(node_b) == 3
 
         tags_b = node_b.db.get_all_tags()
-        tag_names = {t["name"] for t in tags_b}
+        # Filter out system tags (names starting with underscore)
+        tag_names = {t["name"] for t in tags_b if not t["name"].startswith("_")}
         assert tag_names == {"Work", "Projects", "Voice"}
 
     def test_note_with_tags_sync(
@@ -648,7 +650,7 @@ class TestAudioFileSyncIntegration:
         set_local_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Note with audio attachment")
         audio_id = node_a.db.create_audio_file(
-            "recording.ogg", file_created_at="2024-06-15 10:30:00"
+            "recording.ogg", file_created_at=int(datetime(2024, 6, 15, 10, 30, 0).timestamp())
         )
         node_a.db.attach_to_note(note_id, audio_id, "audio_file")
 
@@ -721,7 +723,7 @@ class TestAudioFileSyncIntegration:
         set_local_device_id(node_b.device_id)
         note_id = node_b.db.create_note("Server note with audio")
         audio_id = node_b.db.create_audio_file(
-            "server-recording.mp3", file_created_at="2024-07-20 14:00:00"
+            "server-recording.mp3", file_created_at=int(datetime(2024, 7, 20, 14, 0, 0).timestamp())
         )
         node_b.db.attach_to_note(note_id, audio_id, "audio_file")
 

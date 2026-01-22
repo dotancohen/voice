@@ -30,6 +30,7 @@ from src.core.conflicts import ConflictManager, ResolutionChoice
 from src.core.database import Database
 from src.core.models import AUDIO_FILE_FORMATS, UUID_SHORT_LEN
 from src.core.search import resolve_tag_term
+from src.core.timestamp_utils import format_timestamp, datetime_to_timestamp
 from voicecore import SyncClient, sync_all_peers, start_sync_server
 from src.core.validation import ValidationError
 
@@ -106,14 +107,15 @@ def format_note(note: Dict[str, Any], format_type: str = "text") -> str:
         # Simple CSV format: id,created_at,content,tags
         content = note["content"].replace('"', '""')  # Escape quotes
         tags = note.get("tag_names", "")
-        return f'{note["id"]},"{note["created_at"]}","{content}","{tags}"'
+        created_at = format_timestamp(note.get("created_at"))
+        return f'{note["id"]},"{created_at}","{content}","{tags}"'
     else:  # text
         lines = [
             f"ID: {note['id']}",
-            f"Created: {note['created_at']}",
+            f"Created: {format_timestamp(note.get('created_at'))}",
         ]
         if note.get("modified_at"):
-            lines.append(f"Modified: {note['modified_at']}")
+            lines.append(f"Modified: {format_timestamp(note['modified_at'])}")
         if note.get("tag_names"):
             lines.append(f"Tags: {note['tag_names']}")
         lines.append(f"\n{note['content']}")
@@ -153,7 +155,7 @@ def cmd_list_notes(db: Database, args: argparse.Namespace) -> int:
                 first_line = first_line[:100] + "..."
 
             # Format: ID | Created | Content
-            print(f"{note['id']} | {note['created_at']} | {first_line}")
+            print(f"{note['id']} | {format_timestamp(note.get('created_at'))} | {first_line}")
 
     return 0
 
@@ -455,12 +457,12 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
                 print(f"  Skipping (no valid extension): {audio_path.name}")
                 continue
 
-            # Get file creation time
+            # Get file creation time as Unix timestamp
             file_created_at = manager.get_file_created_at(audio_path)
-            file_created_at_str = file_created_at.strftime("%Y-%m-%d %H:%M:%S") if file_created_at else None
+            file_created_at_ts = datetime_to_timestamp(file_created_at)
 
             # Create AudioFile record in database
-            audio_file_id = db.create_audio_file(audio_path.name, file_created_at_str)
+            audio_file_id = db.create_audio_file(audio_path.name, file_created_at_ts)
 
             # Copy file to audiofile_directory
             manager.import_file(audio_path, audio_file_id, ext)
@@ -469,13 +471,13 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
             # Use file_created_at for note's created_at for chronological sorting
             note_content = f"Audio: {audio_path.name}"
 
-            if file_created_at_str:
+            if file_created_at_ts:
                 # Use apply_sync_note to create note with the correct created_at
                 # Generate a new UUID7 for the note
                 from uuid6 import uuid7
                 note_uuid = uuid7()
                 note_id = note_uuid.hex
-                db.apply_sync_note(note_id, file_created_at_str, note_content, None, None)
+                db.apply_sync_note(note_id, file_created_at_ts, note_content, None, None)
             else:
                 # No file timestamp, use current time
                 note_id = db.create_note(note_content)
@@ -531,9 +533,9 @@ def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) 
     for af in audio_files:
         print(f"ID: {af['id'][:UUID_SHORT_LEN]}...")
         print(f"  Filename: {af['filename']}")
-        print(f"  Imported: {af['imported_at']}")
+        print(f"  Imported: {format_timestamp(af.get('imported_at'))}")
         if af.get('file_created_at'):
-            print(f"  File created: {af['file_created_at']}")
+            print(f"  File created: {format_timestamp(af['file_created_at'])}")
         if af.get('summary'):
             print(f"  Summary: {af['summary']}")
         print()
@@ -559,15 +561,15 @@ def cmd_show_audiofile(db: Database, config: Config, args: argparse.Namespace) -
 
     print(f"ID: {audio_file['id']}")
     print(f"Filename: {audio_file['filename']}")
-    print(f"Imported: {audio_file['imported_at']}")
+    print(f"Imported: {format_timestamp(audio_file.get('imported_at'))}")
     if audio_file.get('file_created_at'):
-        print(f"File created: {audio_file['file_created_at']}")
+        print(f"File created: {format_timestamp(audio_file['file_created_at'])}")
     if audio_file.get('summary'):
         print(f"Summary: {audio_file['summary']}")
     if audio_file.get('modified_at'):
-        print(f"Modified: {audio_file['modified_at']}")
+        print(f"Modified: {format_timestamp(audio_file['modified_at'])}")
     if audio_file.get('deleted_at'):
-        print(f"Deleted: {audio_file['deleted_at']}")
+        print(f"Deleted: {format_timestamp(audio_file['deleted_at'])}")
 
     # Show file location
     audiofile_dir = config.get_audiofile_directory()
@@ -1324,7 +1326,7 @@ def cmd_sync_conflicts(db: Database, args: argparse.Namespace) -> int:
                 remote = c.remote_device_name or (c.remote_device_id[:UUID_SHORT_LEN] if c.remote_device_id else "unknown")
                 print(f"  [{c.id[:UUID_SHORT_LEN]}] Note {c.note_id[:UUID_SHORT_LEN]} - {local} vs {remote}")
                 if show_details:
-                    print(f"    Created: {c.created_at}")
+                    print(f"    Created: {format_timestamp(c.created_at)}")
                     print(f"    Local content:")
                     for line in (c.local_content or "").split("\n"):
                         print(f"      {line}")
@@ -1340,9 +1342,9 @@ def cmd_sync_conflicts(db: Database, args: argparse.Namespace) -> int:
                 deleting = c.deleting_device_name or (c.deleting_device_id[:UUID_SHORT_LEN] if c.deleting_device_id else "unknown")
                 print(f"  [{c.id[:UUID_SHORT_LEN]}] Note {c.note_id[:UUID_SHORT_LEN]} - edited by {surviving}, deleted by {deleting}")
                 if show_details:
-                    print(f"    Created: {c.created_at}")
-                    print(f"    Surviving modified at: {c.surviving_modified_at}")
-                    print(f"    Deleted at: {c.deleted_at}")
+                    print(f"    Created: {format_timestamp(c.created_at)}")
+                    print(f"    Surviving modified at: {format_timestamp(c.surviving_modified_at)}")
+                    print(f"    Deleted at: {format_timestamp(c.deleted_at)}")
                     print(f"    Surviving content:")
                     for line in (c.surviving_content or "").split("\n"):
                         print(f"      {line}")

@@ -43,7 +43,7 @@ class SyncChange:
     entity_id: str  # UUID hex string
     operation: str  # "create", "update", "delete"
     data: Dict[str, Any]  # Full entity data
-    timestamp: str  # ISO format datetime
+    timestamp: int  # Unix timestamp (seconds since epoch)
     device_id: str  # UUID hex of device that made change
     device_name: Optional[str] = None
 
@@ -53,8 +53,8 @@ class SyncBatch:
     """A batch of changes to sync."""
 
     changes: List[SyncChange] = field(default_factory=list)
-    from_timestamp: Optional[str] = None
-    to_timestamp: Optional[str] = None
+    from_timestamp: Optional[int] = None
+    to_timestamp: Optional[int] = None
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     is_complete: bool = True  # False if more changes available
@@ -76,8 +76,8 @@ class HandshakeResponse:
     device_id: str
     device_name: str
     protocol_version: str = "1.0"
-    last_sync_timestamp: Optional[str] = None
-    server_timestamp: Optional[str] = None  # For clock skew detection
+    last_sync_timestamp: Optional[int] = None
+    server_timestamp: Optional[int] = None  # For clock skew detection
     supports_audiofiles: bool = False  # Whether server supports audiofile sync
 
 
@@ -155,7 +155,7 @@ def create_sync_blueprint(
                 device_name=device_name,
                 protocol_version="1.0",
                 last_sync_timestamp=last_sync,
-                server_timestamp=datetime.now().isoformat(),
+                server_timestamp=int(datetime.now().timestamp()),
                 supports_audiofiles=audiofile_directory is not None,
             )
 
@@ -171,22 +171,32 @@ def create_sync_blueprint(
         """Get changes since a timestamp.
 
         Query params:
-            since: ISO timestamp to get changes after (optional)
+            since: Unix timestamp to get changes after (optional)
             limit: Maximum number of changes to return (default 1000)
 
         Response:
             {
                 "changes": [...],
-                "from_timestamp": "...",
-                "to_timestamp": "...",
+                "from_timestamp": <int>,
+                "to_timestamp": <int>,
                 "device_id": "...",
                 "device_name": "...",
                 "is_complete": true/false
             }
         """
         try:
-            since = request.args.get("since")
+            since_str = request.args.get("since")
             limit_str = request.args.get("limit", "1000")
+
+            # Convert since to int if provided
+            since: Optional[int] = None
+            if since_str:
+                try:
+                    since = int(since_str)
+                except ValueError:
+                    error_msg = f"Invalid since parameter: '{since_str}' - must be a Unix timestamp (integer)"
+                    logger.warning(f"Get changes rejected: {error_msg}")
+                    return jsonify({"error": error_msg}), 400
 
             try:
                 limit = min(int(limit_str), 10000)
@@ -341,7 +351,7 @@ def create_sync_blueprint(
                 "note_attachments": full_data.get("note_attachments", []),
                 "device_id": device_id,
                 "device_name": device_name,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": int(datetime.now().timestamp()),
             }), 200
 
         except Exception as e:
@@ -502,7 +512,7 @@ def create_sync_blueprint(
     return sync_bp
 
 
-def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[str]:
+def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[int]:
     """Get the last sync timestamp for a peer.
 
     Args:
@@ -510,7 +520,7 @@ def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[str]:
         peer_device_id: Peer's device UUID hex string
 
     Returns:
-        ISO timestamp of last sync, or None if never synced.
+        Unix timestamp of last sync, or None if never synced.
     """
     try:
         return db.get_peer_last_sync(peer_device_id)
@@ -520,13 +530,13 @@ def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[str]:
 
 
 def get_changes_since(
-    db: Database, since: Optional[str], limit: int = 1000
-) -> Tuple[List[SyncChange], Optional[str]]:
+    db: Database, since: Optional[int], limit: int = 1000
+) -> Tuple[List[SyncChange], Optional[int]]:
     """Get all changes since a timestamp.
 
     Args:
         db: Database instance
-        since: ISO timestamp to get changes after (None for all)
+        since: Unix timestamp to get changes after (None for all)
         limit: Maximum number of changes to return
 
     Returns:

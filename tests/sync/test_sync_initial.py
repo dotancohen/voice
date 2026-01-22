@@ -241,20 +241,21 @@ class TestInitialSyncRemoteEmpty:
     def test_initial_sync_with_empty_remote(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Initial sync works when remote has no data."""
+        """Initial sync works when remote has no user data."""
         node_a, node_b = two_nodes_with_servers
 
         # Create data on A only
         note = create_note_on_node(node_a, "Local note")
         tag = create_tag_on_node(node_a, "LocalTag")
 
-        # Initial sync - should just push
+        # Initial sync - should just push (plus pull system tags from B)
         set_local_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
-        assert result.pulled == 0
+        # Empty remote has 2 system tags (_system, _marked) that get pulled
+        assert result.pulled == 2
 
         # B should have A's data
         assert node_b.db.get_note(note) is not None
@@ -263,7 +264,7 @@ class TestInitialSyncRemoteEmpty:
     def test_initial_sync_both_empty(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Initial sync works when both are empty."""
+        """Initial sync works when both are empty of user data."""
         node_a, node_b = two_nodes_with_servers
 
         assert get_note_count(node_a) == 0
@@ -275,7 +276,9 @@ class TestInitialSyncRemoteEmpty:
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
-        assert result.pulled == 0
+        # Empty nodes each have 2 system tags (_system, _marked) that get exchanged
+        # pulled is 2 (B's system tags), pushed is 0 (A's tags already exist as same IDs)
+        assert result.pulled == 2
         assert result.pushed == 0
 
 

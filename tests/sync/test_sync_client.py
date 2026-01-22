@@ -93,7 +93,7 @@ class TestSyncClientPull:
     def test_pull_empty_peer(
         self, sync_node_a: SyncNode, running_server_b: SyncNode
     ):
-        """Pulling from empty peer returns no changes."""
+        """Pulling from empty peer returns only system tags."""
         sync_node_a.config.add_peer(
             peer_id=running_server_b.device_id_hex,
             peer_name=running_server_b.name,
@@ -103,7 +103,8 @@ class TestSyncClientPull:
         result = sync_nodes(sync_node_a, running_server_b)
 
         assert result["success"] is True
-        assert result["pulled"] == 0
+        # Empty peer has 2 system tags (_system, _marked) that get pulled
+        assert result["pulled"] == 2
 
     def test_pull_notes_from_peer(
         self, sync_node_a: SyncNode, running_server_b: SyncNode

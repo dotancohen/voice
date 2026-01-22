@@ -21,7 +21,7 @@ class AudioFileManager:
     """Manages audio file operations on disk.
 
     Audio files are stored as {audiofile_directory}/{uuid}.{extension}.
-    Deleted files are moved to {audiofile_directory}_trash/.
+    Deleted files are moved to {audiofile_directory}/_trash/.
     """
 
     def __init__(self, audiofile_directory: Path | str) -> None:
@@ -31,7 +31,7 @@ class AudioFileManager:
             audiofile_directory: Path to the directory where audio files are stored.
         """
         self.audiofile_directory = Path(audiofile_directory)
-        self.trash_directory = Path(f"{audiofile_directory}_trash")
+        self.trash_directory = self.audiofile_directory / "_trash"
 
     def ensure_directories(self) -> None:
         """Create the audiofile and trash directories if they don't exist."""

@@ -38,9 +38,9 @@ class TestSyncDependencyOrder:
                     "note_id": "bbbb0000000000000000000000000001",
                     "attachment_id": "cccc0000000000000000000000000001",
                     "attachment_type": "audio_file",
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                 },
-                timestamp="2025-01-01 10:00:03",
+                timestamp=1735725603,
                 device_id="00000000000070008000000000000002",
             ),
             # audio_file comes SECOND
@@ -50,11 +50,11 @@ class TestSyncDependencyOrder:
                 operation="create",
                 data={
                     "id": "cccc0000000000000000000000000001",
-                    "imported_at": "2025-01-01 10:00:00",
+                    "imported_at": 1735725600,
                     "filename": "recording.mp3",
-                    "file_created_at": "2024-12-15 08:30:00",
+                    "file_created_at": 1734252600,
                 },
-                timestamp="2025-01-01 10:00:02",
+                timestamp=1735725602,
                 device_id="00000000000070008000000000000002",
             ),
             # note comes LAST (wrong - should be first)
@@ -64,10 +64,10 @@ class TestSyncDependencyOrder:
                 operation="create",
                 data={
                     "id": "bbbb0000000000000000000000000001",
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                     "content": "Test note with audio",
                 },
-                timestamp="2025-01-01 10:00:01",
+                timestamp=1735725601,
                 device_id="00000000000070008000000000000002",
             ),
         ]
@@ -113,9 +113,9 @@ class TestSyncDependencyOrder:
                 data={
                     "note_id": note_id,
                     "tag_id": tag_id,
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                 },
-                timestamp="2025-01-01 10:00:03",
+                timestamp=1735725603,
                 device_id="00000000000070008000000000000002",
             ),
             SyncChange(
@@ -124,10 +124,10 @@ class TestSyncDependencyOrder:
                 operation="create",
                 data={
                     "id": note_id,
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                     "content": "Tagged note",
                 },
-                timestamp="2025-01-01 10:00:01",
+                timestamp=1735725601,
                 device_id="00000000000070008000000000000002",
             ),
             SyncChange(
@@ -137,9 +137,9 @@ class TestSyncDependencyOrder:
                 data={
                     "id": tag_id,
                     "name": "important",
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                 },
-                timestamp="2025-01-01 10:00:02",
+                timestamp=1735725602,
                 device_id="00000000000070008000000000000002",
             ),
         ]

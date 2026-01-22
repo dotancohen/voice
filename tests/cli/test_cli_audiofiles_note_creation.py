@@ -181,14 +181,18 @@ class TestNoteCreatedAtMatchesFileCreatedAt:
         note_created_at = note["created_at"]
 
         # The note's created_at should match the file's timestamp
-        # Expected: "2023-06-15 10:30:00" or similar
-        assert "2023-06-15" in note_created_at, (
+        # created_at is now a Unix timestamp (integer)
+        note_dt = datetime.fromtimestamp(note_created_at)
+        note_date_str = note_dt.strftime("%Y-%m-%d")
+        note_time_str = note_dt.strftime("%H:%M:%S")
+
+        assert note_date_str == "2023-06-15", (
             f"Note created_at should match file timestamp. "
-            f"Expected date 2023-06-15, got {note_created_at}"
+            f"Expected date 2023-06-15, got {note_date_str}"
         )
-        assert "10:30:00" in note_created_at, (
+        assert note_time_str == "10:30:00", (
             f"Note created_at should match file timestamp. "
-            f"Expected time 10:30:00, got {note_created_at}"
+            f"Expected time 10:30:00, got {note_time_str}"
         )
 
     def test_notes_sort_by_file_creation_time(
@@ -232,6 +236,7 @@ class TestNoteCreatedAtMatchesFileCreatedAt:
 
         # Notes should be sorted by created_at (which should be file_created_at)
         # get_all_notes returns sorted by created_at descending (newest first)
+        # created_at is now a Unix timestamp (integer)
         created_ats = [n["created_at"] for n in notes]
 
         # Verify they are sorted (descending - newest first)
@@ -239,7 +244,10 @@ class TestNoteCreatedAtMatchesFileCreatedAt:
             f"Notes should be sorted by file creation time (newest first). Got: {created_ats}"
         )
 
+        # Convert to dates for verification
+        created_dates = [datetime.fromtimestamp(ts).strftime("%Y-%m-%d") for ts in created_ats]
+
         # Verify the order matches expected (newest first)
-        assert "2023-12-31" in created_ats[0], "First note should be from Dec 31 (newest)"
-        assert "2023-06-15" in created_ats[1], "Second note should be from Jun 15"
-        assert "2023-01-01" in created_ats[2], "Third note should be from Jan 1 (oldest)"
+        assert created_dates[0] == "2023-12-31", f"First note should be from Dec 31 (newest), got {created_dates[0]}"
+        assert created_dates[1] == "2023-06-15", f"Second note should be from Jun 15, got {created_dates[1]}"
+        assert created_dates[2] == "2023-01-01", f"Third note should be from Jan 1 (oldest), got {created_dates[2]}"

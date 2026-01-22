@@ -206,6 +206,7 @@ class TestSyncRejectsWithoutAudiofileDirectory:
             raw["imported_at"],
             raw["filename"],
             raw.get("file_created_at"),
+            raw.get("duration_seconds"),
             raw.get("summary"),
             raw.get("modified_at"),
             raw.get("deleted_at"),

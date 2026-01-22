@@ -135,12 +135,17 @@ class TestSyncChanges:
     """Tests for GET /sync/changes endpoint."""
 
     def test_changes_empty_database(self, running_server_a: SyncNode):
-        """Changes endpoint returns empty list for empty database."""
+        """Changes endpoint returns empty list for empty database (except system tags)."""
         resp = requests.get(f"{running_server_a.url}/sync/changes")
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["changes"] == []
+        # Filter out system tags (names starting with underscore)
+        non_system_changes = [
+            c for c in data["changes"]
+            if c["entity_type"] != "tag" or not c["data"]["name"].startswith("_")
+        ]
+        assert non_system_changes == []
         assert data["device_id"] == running_server_a.device_id_hex
         assert data["is_complete"] is True
 
@@ -172,7 +177,11 @@ class TestSyncChanges:
         assert resp.status_code == 200
         data = resp.json()
 
-        tag_changes = [c for c in data["changes"] if c["entity_type"] == "tag"]
+        # Filter out system tags (names starting with underscore)
+        tag_changes = [
+            c for c in data["changes"]
+            if c["entity_type"] == "tag" and not c["data"]["name"].startswith("_")
+        ]
         assert len(tag_changes) == 1
         assert tag_changes[0]["entity_id"] == tag_id
         assert tag_changes[0]["operation"] == "create"
@@ -257,12 +266,12 @@ class TestSyncApply:
                         "operation": "create",
                         "data": {
                             "id": note_id,
-                            "created_at": "2025-01-01 10:00:00",
+                            "created_at": 1735725600,
                             "content": "Note from remote",
                             "modified_at": None,
                             "deleted_at": None,
                         },
-                        "timestamp": "2025-01-01 10:00:00",
+                        "timestamp": 1735725600,
                         "device_id": "00000000000070008000000000000099",
                     }
                 ],
@@ -298,10 +307,10 @@ class TestSyncApply:
                             "id": tag_id,
                             "name": "RemoteTag",
                             "parent_id": None,
-                            "created_at": "2025-01-01 10:00:00",
+                            "created_at": 1735725600,
                             "modified_at": None,
                         },
-                        "timestamp": "2025-01-01 10:00:00",
+                        "timestamp": 1735725600,
                         "device_id": "00000000000070008000000000000099",
                     }
                 ],
@@ -335,12 +344,12 @@ class TestSyncApply:
                         "operation": "update",
                         "data": {
                             "id": note_id,
-                            "created_at": "2025-01-01 10:00:00",
+                            "created_at": 1735725600,
                             "content": "Updated content",
                             "modified_at": "2099-01-01 10:00:00",
                             "deleted_at": None,
                         },
-                        "timestamp": "2099-01-01 10:00:00",
+                        "timestamp": 4070908800,
                         "device_id": "00000000000070008000000000000099",
                     }
                 ],
@@ -377,12 +386,12 @@ class TestSyncApply:
                         "operation": "update",
                         "data": {
                             "id": note_id,
-                            "created_at": "2020-01-01 10:00:00",
+                            "created_at": 1577872800,
                             "content": "Old remote content",
                             "modified_at": "2020-01-01 10:00:00",
                             "deleted_at": None,
                         },
-                        "timestamp": "2020-01-01 10:00:00",
+                        "timestamp": 1577872800,
                         "device_id": "00000000000070008000000000000099",
                     }
                 ],
@@ -443,10 +452,10 @@ class TestSyncApply:
                             "id": "00000000000070008000000000000501",
                             "name": "Tag1",
                             "parent_id": None,
-                            "created_at": "2025-01-01 10:00:00",
+                            "created_at": 1735725600,
                             "modified_at": None,
                         },
-                        "timestamp": "2025-01-01 10:00:00",
+                        "timestamp": 1735725600,
                         "device_id": "00000000000070008000000000000099",
                     },
                     {
@@ -455,12 +464,12 @@ class TestSyncApply:
                         "operation": "create",
                         "data": {
                             "id": "00000000000070008000000000000502",
-                            "created_at": "2025-01-01 10:00:00",
+                            "created_at": 1735725600,
                             "content": "Note with tag",
                             "modified_at": None,
                             "deleted_at": None,
                         },
-                        "timestamp": "2025-01-01 10:00:00",
+                        "timestamp": 1735725600,
                         "device_id": "00000000000070008000000000000099",
                     },
                 ],
@@ -476,13 +485,15 @@ class TestSyncFull:
     """Tests for GET /sync/full endpoint."""
 
     def test_full_empty_database(self, running_server_a: SyncNode):
-        """Full endpoint returns empty lists for empty database."""
+        """Full endpoint returns empty lists for empty database (except system tags)."""
         resp = requests.get(f"{running_server_a.url}/sync/full")
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["notes"] == []
-        assert data["tags"] == []
+        # Filter out system tags (names starting with underscore)
+        non_system_tags = [t for t in data["tags"] if not t["name"].startswith("_")]
+        assert non_system_tags == []
         assert data["note_tags"] == []
         assert data["device_id"] == running_server_a.device_id_hex
         assert "timestamp" in data
@@ -514,7 +525,9 @@ class TestSyncFull:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["tags"]) == 2
+        # Filter out system tags (names starting with underscore)
+        user_tags = [t for t in data["tags"] if not t["name"].startswith("_")]
+        assert len(user_tags) == 2
 
         # Verify hierarchy
         child_tag = next(t for t in data["tags"] if t["id"] == child_id)

@@ -315,7 +315,7 @@ class TestFutureProtocolVersion:
                         "entity_id": "00000000000070008000000000000099",
                         "operation": "create",
                         "data": {},
-                        "timestamp": "2024-01-01 00:00:00",  # Use space, not T
+                        "timestamp": 1704067200,  # Unix timestamp
                         "device_id": "00000000000070008000000000000099",
                     }
                 ],

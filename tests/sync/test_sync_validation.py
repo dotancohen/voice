@@ -47,9 +47,9 @@ class TestInvalidEntityId:
                 data={
                     "id": "not-a-valid-uuid",
                     "content": "Test",
-                    "created_at": "2024-01-01T00:00:00",
+                    "created_at": 1704067200,
                 },
-                timestamp="2024-01-01T00:00:00",
+                timestamp=1704067200,
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -72,8 +72,8 @@ class TestInvalidEntityId:
                 entity_type="note",
                 entity_id="",
                 operation="create",
-                data={"id": "", "content": "Test", "created_at": "2024-01-01T00:00:00"},
-                timestamp="2024-01-01T00:00:00",
+                data={"id": "", "content": "Test", "created_at": 1704067200},
+                timestamp=1704067200,
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -99,9 +99,9 @@ class TestInvalidEntityId:
                 data={
                     "note_id": "00000000000070008000000000000001",
                     "tag_id": "00000000000070008000000000000002",
-                    "created_at": "2024-01-01T00:00:00",
+                    "created_at": 1704067200,
                 },
-                timestamp="2024-01-01T00:00:00",
+                timestamp=1704067200,
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -173,6 +173,7 @@ class TestInvalidTimestamps:
         """Applying change with invalid timestamp format."""
         set_local_device_id(sync_node_a.device_id)
 
+        # With timestamps now as integers, we test with a negative value (invalid)
         changes = [
             SyncChange(
                 entity_type="note",
@@ -181,9 +182,9 @@ class TestInvalidTimestamps:
                 data={
                     "id": "00000000000070008000000000000099",
                     "content": "Test",
-                    "created_at": "not-a-timestamp",
+                    "created_at": -1,  # Invalid timestamp
                 },
-                timestamp="not-a-timestamp",
+                timestamp=-1,  # Invalid timestamp
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -210,9 +211,9 @@ class TestInvalidTimestamps:
                 data={
                     "id": "00000000000070008000000000000099",
                     "content": "Future note",
-                    "created_at": "2099-12-31T23:59:59",
+                    "created_at": 4102444799,  # 2099-12-31
                 },
-                timestamp="2099-12-31T23:59:59",
+                timestamp=4102444799,  # 2099-12-31
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -238,9 +239,9 @@ class TestInvalidTimestamps:
                 data={
                     "id": "00000000000070008000000000000099",
                     "content": "Old note",
-                    "created_at": "1970-01-01T00:00:01",
+                    "created_at": 1,  # 1970-01-01T00:00:01
                 },
-                timestamp="1970-01-01T00:00:01",
+                timestamp=1,  # 1970-01-01T00:00:01
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -293,9 +294,9 @@ class TestVeryLongContent:
                 data={
                     "id": "00000000000070008000000000000099",
                     "content": long_content,
-                    "created_at": "2024-01-01 00:00:00",  # Must use space, not T
+                    "created_at": 1704067200,  # 2024-01-01
                 },
-                timestamp="2024-01-01 00:00:00",  # Must use space, not T
+                timestamp=1704067200,  # 2024-01-01
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -347,9 +348,9 @@ class TestMissingRequiredFields:
                 data={
                     "id": "00000000000070008000000000000099",
                     # Missing "content"
-                    "created_at": "2024-01-01T00:00:00",
+                    "created_at": 1704067200,
                 },
-                timestamp="2024-01-01T00:00:00",
+                timestamp=1704067200,
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -376,7 +377,7 @@ class TestMissingRequiredFields:
                 entity_id="00000000000070008000000000000099",
                 operation="create",
                 data={"id": "00000000000070008000000000000099"},
-                timestamp="2024-01-01T00:00:00",
+                timestamp=1704067200,
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -472,9 +473,9 @@ class TestUnknownOperations:
                 data={
                     "id": "00000000000070008000000000000099",
                     "content": "Test",
-                    "created_at": "2024-01-01T00:00:00",
+                    "created_at": 1704067200,
                 },
-                timestamp="2024-01-01T00:00:00",
+                timestamp=1704067200,
                 device_id="00000000000070008000000000000001",
             )
         ]
@@ -504,9 +505,9 @@ class TestSpecialCharacters:
                 data={
                     "id": "00000000000070008000000000000099",
                     "content": "Hello\x00World",
-                    "created_at": "2024-01-01T00:00:00",
+                    "created_at": 1704067200,
                 },
-                timestamp="2024-01-01T00:00:00",
+                timestamp=1704067200,
                 device_id="00000000000070008000000000000001",
             )
         ]

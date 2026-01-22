@@ -10,6 +10,8 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
+
+from src.core.timestamp_utils import format_timestamp
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -179,9 +181,9 @@ class TranscriptionTextBox(QFrame):
         elif content.startswith("Error:"):
             return "Error"
         else:
-            # Get datetime from created_at
-            created = self._transcription.get("created_at", "")
-            return created
+            # Get datetime from created_at (Unix timestamp)
+            created = self._transcription.get("created_at")
+            return format_timestamp(created)
 
     def _toggle_fold(self) -> None:
         """Toggle fold state."""

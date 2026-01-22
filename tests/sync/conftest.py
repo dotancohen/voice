@@ -360,8 +360,12 @@ def get_note_count(node: SyncNode) -> int:
 
 
 def get_tag_count(node: SyncNode) -> int:
-    """Get the number of tags on a node."""
-    return len(node.db.get_all_tags())
+    """Get the number of non-system tags on a node.
+
+    Excludes system tags (names starting with underscore like _system, _marked).
+    """
+    all_tags = node.db.get_all_tags()
+    return len([t for t in all_tags if not t["name"].startswith("_")])
 
 
 def sync_nodes(source: SyncNode, target: SyncNode) -> Dict[str, Any]:

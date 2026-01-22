@@ -26,6 +26,7 @@ from src.core.conflicts import ConflictManager
 from src.core.database import Database
 from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
+from src.core.timestamp_utils import format_timestamp
 from src.ui.audio_player_widget import AudioPlayerWidget
 from src.ui.tag_management_dialog import TagManagementDialog
 from src.ui.transcription_widget import TranscriptionsContainer
@@ -206,14 +207,15 @@ class NotePane(QWidget, NoteEditorMixin):
         # Update Note ID
         self.note_id_label.setText(f"Note ID: {note_id}")
 
-        # Update created timestamp
-        created_at = note.get("created_at", "Unknown")
-        self.created_label.setText(f"Created: {created_at}")
+        # Update created timestamp (Unix timestamp)
+        created_at = note.get("created_at")
+        created_str = format_timestamp(created_at) if created_at else "Unknown"
+        self.created_label.setText(f"Created: {created_str}")
 
-        # Update modified timestamp
+        # Update modified timestamp (Unix timestamp)
         modified_at = note.get("modified_at")
         if modified_at:
-            self.modified_label.setText(f"Modified: {modified_at}")
+            self.modified_label.setText(f"Modified: {format_timestamp(modified_at)}")
         else:
             self.modified_label.setText("Modified: Never modified")
 
@@ -471,8 +473,7 @@ class NotePane(QWidget, NoteEditorMixin):
                     for af in audio_files:
                         id_short = af.get("id", "")[:UUID_SHORT_LEN]
                         filename = af.get("filename", "unknown")
-                        imported_at = af.get("imported_at", "unknown")
-                        file_created_at = af.get("file_created_at", "unknown")
+                        imported_at = format_timestamp(af.get("imported_at")) or "unknown"
                         t_count = transcription_counts.get(af.get("id", ""), 0)
 
                         item_text = f"{id_short}... | {filename} | T: {t_count} | Imported: {imported_at}"

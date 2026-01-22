@@ -361,7 +361,7 @@ impl PyDatabase {
     // Sync methods
     // ========================================================================
 
-    fn get_peer_last_sync(&self, peer_device_id: &str) -> PyResult<Option<String>> {
+    fn get_peer_last_sync(&self, peer_device_id: &str) -> PyResult<Option<i64>> {
         self.inner_ref()?
             .get_peer_last_sync(peer_device_id)
             .map_err(voice_error_to_pyerr)
@@ -386,7 +386,7 @@ impl PyDatabase {
     fn get_changes_since<'py>(
         &self,
         py: Python<'py>,
-        since: Option<&str>,
+        since: Option<i64>,
         limit: i64,
     ) -> PyResult<PyObject> {
         let (changes, latest) = self
@@ -422,45 +422,48 @@ impl PyDatabase {
     // Sync apply methods
     // ========================================================================
 
-    #[pyo3(signature = (note_id, created_at, content, modified_at=None, deleted_at=None))]
+    #[pyo3(signature = (note_id, created_at, content, modified_at=None, deleted_at=None, sync_received_at=None))]
     fn apply_sync_note(
         &self,
         note_id: &str,
-        created_at: &str,
+        created_at: i64,
         content: &str,
-        modified_at: Option<&str>,
-        deleted_at: Option<&str>,
+        modified_at: Option<i64>,
+        deleted_at: Option<i64>,
+        sync_received_at: Option<i64>,
     ) -> PyResult<bool> {
         self.inner_ref()?
-            .apply_sync_note(note_id, created_at, content, modified_at, deleted_at)
+            .apply_sync_note(note_id, created_at, content, modified_at, deleted_at, sync_received_at)
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (tag_id, name, parent_id, created_at, modified_at=None))]
+    #[pyo3(signature = (tag_id, name, parent_id, created_at, modified_at=None, sync_received_at=None))]
     fn apply_sync_tag(
         &self,
         tag_id: &str,
         name: &str,
         parent_id: Option<&str>,
-        created_at: &str,
-        modified_at: Option<&str>,
+        created_at: i64,
+        modified_at: Option<i64>,
+        sync_received_at: Option<i64>,
     ) -> PyResult<bool> {
         self.inner_ref()?
-            .apply_sync_tag(tag_id, name, parent_id, created_at, modified_at)
+            .apply_sync_tag(tag_id, name, parent_id, created_at, modified_at, sync_received_at)
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (note_id, tag_id, created_at, modified_at=None, deleted_at=None))]
+    #[pyo3(signature = (note_id, tag_id, created_at, modified_at=None, deleted_at=None, sync_received_at=None))]
     fn apply_sync_note_tag(
         &self,
         note_id: &str,
         tag_id: &str,
-        created_at: &str,
-        modified_at: Option<&str>,
-        deleted_at: Option<&str>,
+        created_at: i64,
+        modified_at: Option<i64>,
+        deleted_at: Option<i64>,
+        sync_received_at: Option<i64>,
     ) -> PyResult<bool> {
         self.inner_ref()?
-            .apply_sync_note_tag(note_id, tag_id, created_at, modified_at, deleted_at)
+            .apply_sync_note_tag(note_id, tag_id, created_at, modified_at, deleted_at, sync_received_at)
             .map_err(voice_error_to_pyerr)
     }
 
@@ -504,16 +507,16 @@ impl PyDatabase {
     // Conflict creation methods
     // ========================================================================
 
-    #[pyo3(signature = (note_id, local_content, local_modified_at, local_device_id=None, local_device_name=None, remote_content="", remote_modified_at="", remote_device_id=None, remote_device_name=None))]
+    #[pyo3(signature = (note_id, local_content, local_modified_at, local_device_id=None, local_device_name=None, remote_content="", remote_modified_at=0, remote_device_id=None, remote_device_name=None))]
     fn create_note_content_conflict(
         &self,
         note_id: &str,
         local_content: &str,
-        local_modified_at: &str,
+        local_modified_at: i64,
         local_device_id: Option<&str>,
         local_device_name: Option<&str>,
         remote_content: &str,
-        remote_modified_at: &str,
+        remote_modified_at: i64,
         remote_device_id: Option<&str>,
         remote_device_name: Option<&str>,
     ) -> PyResult<String> {
@@ -532,16 +535,16 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (note_id, surviving_content, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_content=None, deleted_at="", deleting_device_id=None, deleting_device_name=None))]
+    #[pyo3(signature = (note_id, surviving_content, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_content=None, deleted_at=0, deleting_device_id=None, deleting_device_name=None))]
     fn create_note_delete_conflict(
         &self,
         note_id: &str,
         surviving_content: &str,
-        surviving_modified_at: &str,
+        surviving_modified_at: i64,
         surviving_device_id: Option<&str>,
         surviving_device_name: Option<&str>,
         deleted_content: Option<&str>,
-        deleted_at: &str,
+        deleted_at: i64,
         deleting_device_id: Option<&str>,
         deleting_device_name: Option<&str>,
     ) -> PyResult<String> {
@@ -560,16 +563,16 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (tag_id, local_name, local_modified_at, local_device_id=None, local_device_name=None, remote_name="", remote_modified_at="", remote_device_id=None, remote_device_name=None))]
+    #[pyo3(signature = (tag_id, local_name, local_modified_at, local_device_id=None, local_device_name=None, remote_name="", remote_modified_at=0, remote_device_id=None, remote_device_name=None))]
     fn create_tag_rename_conflict(
         &self,
         tag_id: &str,
         local_name: &str,
-        local_modified_at: &str,
+        local_modified_at: i64,
         local_device_id: Option<&str>,
         local_device_name: Option<&str>,
         remote_name: &str,
-        remote_modified_at: &str,
+        remote_modified_at: i64,
         remote_device_id: Option<&str>,
         remote_device_name: Option<&str>,
     ) -> PyResult<String> {
@@ -593,14 +596,14 @@ impl PyDatabase {
         &self,
         note_id: &str,
         tag_id: &str,
-        local_created_at: Option<&str>,
-        local_modified_at: Option<&str>,
-        local_deleted_at: Option<&str>,
+        local_created_at: Option<i64>,
+        local_modified_at: Option<i64>,
+        local_deleted_at: Option<i64>,
         local_device_id: Option<&str>,
         local_device_name: Option<&str>,
-        remote_created_at: Option<&str>,
-        remote_modified_at: Option<&str>,
-        remote_deleted_at: Option<&str>,
+        remote_created_at: Option<i64>,
+        remote_modified_at: Option<i64>,
+        remote_deleted_at: Option<i64>,
         remote_device_id: Option<&str>,
         remote_device_name: Option<&str>,
     ) -> PyResult<String> {
@@ -622,16 +625,16 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (tag_id, local_parent_id, local_modified_at, local_device_id=None, local_device_name=None, remote_parent_id=None, remote_modified_at="", remote_device_id=None, remote_device_name=None))]
+    #[pyo3(signature = (tag_id, local_parent_id, local_modified_at, local_device_id=None, local_device_name=None, remote_parent_id=None, remote_modified_at=0, remote_device_id=None, remote_device_name=None))]
     fn create_tag_parent_conflict(
         &self,
         tag_id: &str,
         local_parent_id: Option<&str>,
-        local_modified_at: &str,
+        local_modified_at: i64,
         local_device_id: Option<&str>,
         local_device_name: Option<&str>,
         remote_parent_id: Option<&str>,
-        remote_modified_at: &str,
+        remote_modified_at: i64,
         remote_device_id: Option<&str>,
         remote_device_name: Option<&str>,
     ) -> PyResult<String> {
@@ -650,16 +653,16 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (tag_id, surviving_name, surviving_parent_id, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_at=None, deleting_device_id=None, deleting_device_name=None))]
+    #[pyo3(signature = (tag_id, surviving_name, surviving_parent_id, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_at=0, deleting_device_id=None, deleting_device_name=None))]
     fn create_tag_delete_conflict(
         &self,
         tag_id: &str,
         surviving_name: &str,
         surviving_parent_id: Option<&str>,
-        surviving_modified_at: &str,
+        surviving_modified_at: i64,
         surviving_device_id: Option<&str>,
         surviving_device_name: Option<&str>,
-        deleted_at: Option<&str>,
+        deleted_at: i64,
         deleting_device_id: Option<&str>,
         deleting_device_name: Option<&str>,
     ) -> PyResult<String> {
@@ -671,7 +674,7 @@ impl PyDatabase {
                 surviving_modified_at,
                 surviving_device_id,
                 surviving_device_name,
-                deleted_at.unwrap_or(""),
+                deleted_at,
                 deleting_device_id,
                 deleting_device_name,
             )
@@ -848,19 +851,20 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, note_id, attachment_id, attachment_type, created_at, modified_at=None, deleted_at=None))]
+    #[pyo3(signature = (id, note_id, attachment_id, attachment_type, created_at, modified_at=None, deleted_at=None, sync_received_at=None))]
     fn apply_sync_note_attachment(
         &self,
         id: &str,
         note_id: &str,
         attachment_id: &str,
         attachment_type: &str,
-        created_at: &str,
-        modified_at: Option<&str>,
-        deleted_at: Option<&str>,
+        created_at: i64,
+        modified_at: Option<i64>,
+        deleted_at: Option<i64>,
+        sync_received_at: Option<i64>,
     ) -> PyResult<()> {
         self.inner_ref()?
-            .apply_sync_note_attachment(id, note_id, attachment_id, attachment_type, created_at, modified_at, deleted_at)
+            .apply_sync_note_attachment(id, note_id, attachment_id, attachment_type, created_at, modified_at, deleted_at, sync_received_at)
             .map_err(voice_error_to_pyerr)
     }
 
@@ -869,7 +873,7 @@ impl PyDatabase {
     // ========================================================================
 
     #[pyo3(signature = (filename, file_created_at=None))]
-    fn create_audio_file(&self, filename: &str, file_created_at: Option<&str>) -> PyResult<String> {
+    fn create_audio_file(&self, filename: &str, file_created_at: Option<i64>) -> PyResult<String> {
         self.inner_ref()?
             .create_audio_file(filename, file_created_at)
             .map_err(voice_error_to_pyerr)
@@ -924,7 +928,7 @@ impl PyDatabase {
     fn create_audio_file_with_duration(
         &self,
         filename: &str,
-        file_created_at: Option<&str>,
+        file_created_at: Option<i64>,
         duration_seconds: Option<i64>,
     ) -> PyResult<String> {
         self.inner_ref()?
@@ -961,20 +965,21 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
-        imported_at: &str,
+        imported_at: i64,
         filename: &str,
-        file_created_at: Option<&str>,
+        file_created_at: Option<i64>,
         duration_seconds: Option<i64>,
         summary: Option<&str>,
-        modified_at: Option<&str>,
-        deleted_at: Option<&str>,
+        modified_at: Option<i64>,
+        deleted_at: Option<i64>,
+        sync_received_at: Option<i64>,
     ) -> PyResult<()> {
         self.inner_ref()?
-            .apply_sync_audio_file(id, imported_at, filename, file_created_at, duration_seconds, summary, modified_at, deleted_at)
+            .apply_sync_audio_file(id, imported_at, filename, file_created_at, duration_seconds, summary, modified_at, deleted_at, sync_received_at)
             .map_err(voice_error_to_pyerr)
     }
 
@@ -1562,10 +1567,11 @@ impl PySyncClient {
     }
 
     /// Debug method to see what changes would be pushed for a peer
-    fn debug_get_changes(&self, peer_id: &str, since: Option<&str>) -> PyResult<Vec<String>> {
+    #[pyo3(signature = (peer_id, since=None))]
+    fn debug_get_changes(&self, peer_id: &str, since: Option<i64>) -> PyResult<Vec<String>> {
         // Get local last_sync for peer
         let local_last_sync = self.inner.debug_get_local_last_sync(peer_id);
-        let effective_since = since.or(local_last_sync.as_deref());
+        let effective_since = since.or(local_last_sync);
 
         // Get changes since that timestamp
         let changes = self.inner.debug_get_changes_since(effective_since)
@@ -1761,7 +1767,7 @@ fn apply_sync_changes<'py>(
                     .get_item("operation")?
                     .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing operation"))?
                     .extract()?;
-                let timestamp: String = change_dict
+                let timestamp: i64 = change_dict
                     .get_item("timestamp")?
                     .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing timestamp"))?
                     .extract()?;
@@ -1782,7 +1788,7 @@ fn apply_sync_changes<'py>(
                 let entity_type: String = change_item.getattr("entity_type")?.extract()?;
                 let entity_id: String = change_item.getattr("entity_id")?.extract()?;
                 let operation: String = change_item.getattr("operation")?.extract()?;
-                let timestamp: String = change_item.getattr("timestamp")?.extract()?;
+                let timestamp: i64 = change_item.getattr("timestamp")?.extract()?;
                 let device_id: String = change_item.getattr("device_id")?.extract()?;
                 let device_name: Option<String> = change_item
                     .getattr("device_name")

@@ -53,8 +53,8 @@ class TestPeerLastSync:
         result = get_peer_last_sync(sync_node_a.db, peer_id)
 
         assert result is not None
-        # Should be a valid timestamp
-        assert len(result) > 0
+        # Should be a valid timestamp (Unix timestamp > 0)
+        assert result > 0
 
     def test_get_peer_last_sync_updates_on_each_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -240,18 +240,21 @@ class TestPeerSyncTimestampAccuracy:
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
         """Last sync timestamp is recent."""
+        import time
+
         node_a, node_b = two_nodes_with_servers
 
         sync_nodes(node_a, node_b)
 
         last_sync = get_peer_last_sync(node_a.db, node_b.device_id_hex)
 
-        # Should have a valid timestamp string
+        # Should have a valid Unix timestamp
         assert last_sync is not None
-        assert len(last_sync) >= 10  # At least date portion
-        # Should be a parseable date format
-        assert "-" in last_sync  # Has date separators
-        assert ":" in last_sync  # Has time separators
+        # Should be recent (within the last hour)
+        current_time = int(time.time())
+        assert last_sync > 0
+        assert last_sync <= current_time
+        assert current_time - last_sync < 3600  # Within the last hour
 
     def test_timestamp_updates_monotonically(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]

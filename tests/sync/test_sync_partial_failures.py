@@ -10,6 +10,7 @@ These tests verify that:
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Generator, Tuple
 
@@ -43,10 +44,10 @@ class TestPartialSyncFailures:
             operation="create",
             data={
                 "id": "aaaa0000000000000000000000000001",
-                "created_at": "2025-01-01 10:00:00",
+                "created_at": 1735725600,
                 "content": "Valid note",
             },
-            timestamp="2025-01-01 10:00:00",
+            timestamp=1735725600,
             device_id="00000000000070008000000000000002",
         )
 
@@ -58,9 +59,9 @@ class TestPartialSyncFailures:
             data={
                 "note_id": "bbbb0000000000000000000000000001",  # Does not exist
                 "tag_id": "cccc0000000000000000000000000001",   # Does not exist
-                "created_at": "2025-01-01 10:00:00",
+                "created_at": 1735725600,
             },
-            timestamp="2025-01-01 10:00:00",
+            timestamp=1735725600,
             device_id="00000000000070008000000000000002",
         )
 
@@ -225,9 +226,9 @@ class TestServerErrorResponses:
                             "data": {
                                 "note_id": "aaaa0000000000000000000000000001",
                                 "tag_id": "bbbb0000000000000000000000000001",
-                                "created_at": "2025-01-01 10:00:00",
+                                "created_at": 1735725600,
                             },
-                            "timestamp": "2025-01-01 10:00:00",
+                            "timestamp": 1735725600,
                             "device_id": "00000000000070008000000000000002",
                         }
                     ],
@@ -280,10 +281,10 @@ class TestServerErrorResponses:
                             "operation": "create",
                             "data": {
                                 "id": "aaaa0000000000000000000000000001",
-                                "created_at": "2025-01-01 10:00:00",
+                                "created_at": 1735725600,
                                 "content": "Valid note",
                             },
-                            "timestamp": "2025-01-01 10:00:00",
+                            "timestamp": 1735725600,
                             "device_id": "00000000000070008000000000000002",
                         },
                         # Invalid note_tag (references non-existent tag)
@@ -294,9 +295,9 @@ class TestServerErrorResponses:
                             "data": {
                                 "note_id": "aaaa0000000000000000000000000001",
                                 "tag_id": "bbbb0000000000000000000000000001",
-                                "created_at": "2025-01-01 10:00:00",
+                                "created_at": 1735725600,
                             },
-                            "timestamp": "2025-01-01 10:00:00",
+                            "timestamp": 1735725600,
                             "device_id": "00000000000070008000000000000002",
                         },
                     ],
@@ -340,10 +341,10 @@ class TestApplySyncChangesErrorHandling:
                 operation="create",
                 data={
                     "id": "aaaa0000000000000000000000000001",
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                     "content": "First note",
                 },
-                timestamp="2025-01-01 10:00:01",
+                timestamp=1735725601,
                 device_id="00000000000070008000000000000002",
             ),
             # Invalid - unknown entity type
@@ -352,7 +353,7 @@ class TestApplySyncChangesErrorHandling:
                 entity_id="bbbb0000000000000000000000000001",
                 operation="create",
                 data={},
-                timestamp="2025-01-01 10:00:02",
+                timestamp=1735725602,
                 device_id="00000000000070008000000000000002",
             ),
             # Valid note 2 - should still be processed
@@ -362,10 +363,10 @@ class TestApplySyncChangesErrorHandling:
                 operation="create",
                 data={
                     "id": "cccc0000000000000000000000000001",
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                     "content": "Second note",
                 },
-                timestamp="2025-01-01 10:00:03",
+                timestamp=1735725603,
                 device_id="00000000000070008000000000000002",
             ),
         ]
@@ -400,9 +401,9 @@ class TestApplySyncChangesErrorHandling:
                 data={
                     "note_id": "aaaa0000000000000000000000000001",
                     "tag_id": "bbbb0000000000000000000000000001",
-                    "created_at": "2025-01-01 10:00:00",
+                    "created_at": 1735725600,
                 },
-                timestamp="2025-01-01 10:00:00",
+                timestamp=1735725600,
                 device_id="00000000000070008000000000000002",
             ),
         ]
@@ -535,10 +536,10 @@ class TestServerSideSyncTimeUpdate:
                             "operation": "create",
                             "data": {
                                 "id": "aaaa0000000000000000000000000001",
-                                "created_at": "2025-01-01 10:00:00",
+                                "created_at": 1735725600,
                                 "content": "Valid note",
                             },
-                            "timestamp": "2025-01-01 10:00:00",
+                            "timestamp": 1735725600,
                             "device_id": peer_device_id,
                         }
                     ],
@@ -575,7 +576,7 @@ class TestServerSideSyncTimeUpdate:
                             "entity_id": "ffff0000000000000000000000000001",
                             "operation": "create",
                             "data": {"id": "ffff0000000000000000000000000001"},
-                            "timestamp": "2025-01-01 11:00:00",
+                            "timestamp": 1735729200,
                             "device_id": peer_device_id,
                         }
                     ],
@@ -722,7 +723,7 @@ class TestOneWaySyncMethods:
         # Create audio file on B
         set_local_device_id(node_b.device_id)
         audio_id = node_b.db.create_audio_file(
-            "test.mp3", "2025-01-01 10:00:00"
+            "test.mp3", int(datetime(2025, 1, 1, 10, 0, 0).timestamp())
         )
 
         # Write actual binary content
@@ -755,7 +756,7 @@ class TestOneWaySyncMethods:
         # Create audio file on A
         set_local_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file(
-            "test.mp3", "2025-01-01 10:00:00"
+            "test.mp3", int(datetime(2025, 1, 1, 10, 0, 0).timestamp())
         )
 
         # Write actual binary content

@@ -9,6 +9,7 @@ Tests sync operations including:
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,7 @@ class TestAudioFileSyncBasic:
         set_local_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file(
             "recording.mp3",
-            file_created_at="2024-06-15 10:30:00"
+            file_created_at=int(datetime(2024, 6, 15, 10, 30, 0).timestamp())
         )
 
         # Get raw data for sync
@@ -65,6 +66,7 @@ class TestAudioFileSyncBasic:
             raw["imported_at"],
             raw["filename"],
             raw.get("file_created_at"),
+            raw.get("duration_seconds"),
             raw.get("summary"),
             raw.get("modified_at"),
             raw.get("deleted_at"),
@@ -91,6 +93,7 @@ class TestAudioFileSyncBasic:
             raw["imported_at"],
             raw["filename"],
             raw.get("file_created_at"),
+            raw.get("duration_seconds"),
             raw.get("summary"),
             raw.get("modified_at"),
             raw.get("deleted_at"),
@@ -116,6 +119,7 @@ class TestAudioFileSyncBasic:
             raw["imported_at"],
             raw["filename"],
             raw.get("file_created_at"),
+            raw.get("duration_seconds"),
             raw.get("summary"),
             raw.get("modified_at"),
             raw.get("deleted_at"),
@@ -164,6 +168,7 @@ class TestNoteAttachmentSyncBasic:
             raw_audio["imported_at"],
             raw_audio["filename"],
             raw_audio.get("file_created_at"),
+            raw_audio.get("duration_seconds"),
             raw_audio.get("summary"),
             raw_audio.get("modified_at"),
             raw_audio.get("deleted_at"),
@@ -266,6 +271,7 @@ class TestAudioFileSyncUpdates:
             raw2["imported_at"],
             raw2["filename"],
             raw2.get("file_created_at"),
+            raw2.get("duration_seconds"),
             raw2.get("summary"),
             raw2.get("modified_at"),
             raw2.get("deleted_at"),
@@ -302,6 +308,7 @@ class TestAudioFileSyncUpdates:
             raw2["imported_at"],
             raw2["filename"],
             raw2.get("file_created_at"),
+            raw2.get("duration_seconds"),
             raw2.get("summary"),
             raw2.get("modified_at"),
             raw2.get("deleted_at"),
@@ -430,6 +437,7 @@ class TestSyncEdgeCases:
             raw["imported_at"],
             raw["filename"],
             raw.get("file_created_at"),
+            raw.get("duration_seconds"),
             raw.get("summary"),
             raw.get("modified_at"),
         )
@@ -454,6 +462,7 @@ class TestSyncEdgeCases:
             raw["imported_at"],
             raw["filename"],
             raw.get("file_created_at"),
+            raw.get("duration_seconds"),
             raw.get("summary"),
             raw.get("modified_at"),
         )

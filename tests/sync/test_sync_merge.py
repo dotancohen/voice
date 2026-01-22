@@ -143,8 +143,8 @@ class TestDiff3Merge:
 
         assert "\n" in result.merged_content
 
-    def test_conflict_markers_list(self):
-        """Conflict markers are recorded in result."""
+    def test_conflict_detected(self):
+        """Conflict is detected when both sides changed."""
         base = "Original"
         local = "Local"
         remote = "Remote"
@@ -152,12 +152,10 @@ class TestDiff3Merge:
         result = diff3_merge(base, local, remote)
 
         assert result.has_conflicts is True
-        assert len(result.conflict_markers) > 0
-        # Each marker is a (start, end) tuple
-        for start, end in result.conflict_markers:
-            assert isinstance(start, int)
-            assert isinstance(end, int)
-            assert end > start
+        # Verify conflict markers are present in the merged content
+        assert "<<<<<<< LOCAL" in result.merged_content
+        assert "=======" in result.merged_content
+        assert ">>>>>>> REMOTE" in result.merged_content
 
     def test_unicode_content(self):
         """Merge handles unicode content."""
@@ -248,14 +246,21 @@ class TestGetDiffPreview:
     """Tests for get_diff_preview function."""
 
     def test_identical_content_no_diff(self):
-        """Identical content produces minimal diff."""
+        """Identical content produces diff with no -/+ lines."""
         local = "Same content"
         remote = "Same content"
 
         diff = get_diff_preview(local, remote)
 
-        # Unified diff for identical content is empty or just headers
-        assert "Same content" not in diff or diff == ""
+        # Diff always includes headers, but identical content shows as equal (space prefix)
+        # No -/+ lines should appear for identical content
+        lines = diff.strip().split("\n")
+        # First two lines are headers: "--- Local", "+++ Remote"
+        # Remaining lines for identical content should be space-prefixed (equal)
+        content_lines = [l for l in lines if not l.startswith("---") and not l.startswith("+++")]
+        for line in content_lines:
+            assert not line.startswith("-"), f"Unexpected deletion in identical diff: {line}"
+            assert not line.startswith("+"), f"Unexpected addition in identical diff: {line}"
 
     def test_diff_shows_changes(self):
         """Diff shows changes between versions."""

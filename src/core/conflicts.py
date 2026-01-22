@@ -82,15 +82,15 @@ class NoteContentConflict:
     id: str  # Conflict ID (UUID hex)
     note_id: str  # Note ID (UUID hex)
     local_content: str
-    local_modified_at: str
+    local_modified_at: int  # Unix timestamp
     local_device_id: str
     local_device_name: Optional[str]
     remote_content: str
-    remote_modified_at: str
+    remote_modified_at: int  # Unix timestamp
     remote_device_id: str
     remote_device_name: Optional[str]
-    created_at: str
-    resolved_at: Optional[str] = None
+    created_at: int  # Unix timestamp
+    resolved_at: Optional[int] = None  # Unix timestamp
 
 
 @dataclass
@@ -100,14 +100,14 @@ class NoteDeleteConflict:
     id: str  # Conflict ID (UUID hex)
     note_id: str  # Note ID (UUID hex)
     surviving_content: str
-    surviving_modified_at: str
+    surviving_modified_at: int  # Unix timestamp
     surviving_device_id: str
     surviving_device_name: Optional[str]
-    deleted_at: str
+    deleted_at: int  # Unix timestamp
     deleting_device_id: str
     deleting_device_name: Optional[str]
-    created_at: str
-    resolved_at: Optional[str] = None
+    created_at: int  # Unix timestamp
+    resolved_at: Optional[int] = None  # Unix timestamp
 
 
 @dataclass
@@ -117,15 +117,15 @@ class TagRenameConflict:
     id: str  # Conflict ID (UUID hex)
     tag_id: str  # Tag ID (UUID hex)
     local_name: str
-    local_modified_at: str
+    local_modified_at: int  # Unix timestamp
     local_device_id: str
     local_device_name: Optional[str]
     remote_name: str
-    remote_modified_at: str
+    remote_modified_at: int  # Unix timestamp
     remote_device_id: str
     remote_device_name: Optional[str]
-    created_at: str
-    resolved_at: Optional[str] = None
+    created_at: int  # Unix timestamp
+    resolved_at: Optional[int] = None  # Unix timestamp
 
 
 @dataclass

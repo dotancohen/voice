@@ -75,6 +75,7 @@ from src.core.database import Database
 from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
 from src.core.search import build_tag_search_term, execute_search
+from src.core.timestamp_utils import format_timestamp
 from src.core.waveform import extract_waveform, waveform_with_progress, WAVEFORM_BAR_COUNT
 
 # Re-export for tests
@@ -705,7 +706,7 @@ class TUITranscriptionBox(Container):
         service = self._transcription.get("service", "Unknown")
         content = self._transcription.get("content", "")
         state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
-        created_at = self._transcription.get("created_at", "")
+        created_at = format_timestamp(self._transcription.get("created_at"))
 
         # Preview text (first 100 chars)
         preview = content[:100].replace("\n", " ")
@@ -1087,7 +1088,7 @@ class NoteDetail(Container, NoteEditorMixin):
 
             # Update header
             header = self.query_one("#note-header", Label)
-            header_text = f"Note #{note['id']} | {note['created_at']} | Tags: {tags or 'None'}"
+            header_text = f"Note #{note['id']} | {format_timestamp(note['created_at'])} | Tags: {tags or 'None'}"
             if self.is_rtl:
                 header.update(make_rtl_text(header_text))
                 header.add_class("rtl")
@@ -1150,8 +1151,8 @@ class NoteDetail(Container, NoteEditorMixin):
                             id_short = af.get("id", "")[:UUID_SHORT_LEN]
                             filename = af.get("filename", "unknown")
                             t_count = transcription_counts.get(af.get("id", ""), 0)
-                            imported_at = af.get("imported_at", "unknown")
-                            file_created_at = af.get("file_created_at", "unknown")
+                            imported_at = format_timestamp(af.get("imported_at")) or "unknown"
+                            file_created_at = format_timestamp(af.get("file_created_at")) or "unknown"
                             attachment_lines.append(
                                 f"  {id_short}... | {filename} | T:{t_count} | {imported_at} | {file_created_at}"
                             )

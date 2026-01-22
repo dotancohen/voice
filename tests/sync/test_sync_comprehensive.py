@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Generator, Tuple
 
@@ -1010,7 +1011,7 @@ class TestComplexWorkflows:
         # 4b: Create an AudioFile and attach to the note
         audio_id = node_c.db.create_audio_file(
             "recording_from_c.mp3",
-            file_created_at="2025-06-15 14:30:00"
+            file_created_at=int(datetime(2025, 6, 15, 14, 30, 0).timestamp())
         )
         node_c.db.attach_to_note(note_id, audio_id, "audio_file")
 

@@ -90,7 +90,6 @@ class TestChangesEndpointPagination:
     def test_changes_since_filters_correctly(self, running_server_a: SyncNode):
         """Changes since timestamp filters correctly."""
         import time
-        import urllib.parse
 
         # Create first batch
         for i in range(3):
@@ -105,18 +104,17 @@ class TestChangesEndpointPagination:
             timeout=5,
         )
         data = response.json()
-        cutoff_time = data.get("to_timestamp")
+        cutoff_time = data.get("to_timestamp")  # Now an integer (Unix timestamp)
 
         # Create second batch (wait another second for timestamp difference)
         time.sleep(1.1)
         for i in range(3):
             create_note_on_node(running_server_a, f"New note {i}")
 
-        # Get changes since cutoff (URL-encode the timestamp)
-        if cutoff_time:
-            encoded_time = urllib.parse.quote(cutoff_time)
+        # Get changes since cutoff
+        if cutoff_time is not None:
             response = requests.get(
-                f"{running_server_a.url}/sync/changes?since={encoded_time}",
+                f"{running_server_a.url}/sync/changes?since={cutoff_time}",
                 timeout=5,
             )
             data = response.json()
@@ -168,7 +166,6 @@ class TestGetChangesSinceFunction:
     def test_get_changes_since_timestamp(self, sync_node_a: SyncNode):
         """Get changes since a timestamp."""
         import time
-        from datetime import datetime, timezone
 
         # Create first note
         create_note_on_node(sync_node_a, "Old note")
@@ -176,8 +173,8 @@ class TestGetChangesSinceFunction:
         # Wait a full second to ensure timestamp difference
         time.sleep(1.1)
 
-        # Get a cutoff timestamp in UTC (database uses UTC)
-        cutoff = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        # Get a cutoff timestamp as Unix timestamp
+        cutoff = int(time.time())
 
         # Wait a full second to ensure new notes are after cutoff
         time.sleep(1.1)
@@ -201,7 +198,7 @@ class TestGetChangesSinceFunction:
         changes, latest = get_changes_since(sync_node_a.db, None)
 
         assert latest is not None
-        assert len(latest) > 0
+        assert latest > 0  # Unix timestamp should be positive
 
     def test_get_changes_includes_all_types(self, sync_node_a: SyncNode):
         """get_changes_since includes notes, tags, and note_tags."""

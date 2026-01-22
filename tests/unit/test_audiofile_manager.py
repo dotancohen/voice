@@ -26,7 +26,23 @@ class TestAudioFileManagerInit:
         manager = AudioFileManager(audio_dir)
 
         assert manager.audiofile_directory == audio_dir
-        assert manager.trash_directory == Path(f"{audio_dir}_trash")
+        assert manager.trash_directory == audio_dir / "_trash"
+
+    def test_trash_directory_is_inside_audiofile_directory(self, tmp_path: Path) -> None:
+        """Test that trash directory is a subdirectory of audiofile_directory.
+
+        This is a regression test for a bug where trash_directory was
+        incorrectly set to '{audiofile_directory}_trash' instead of
+        '{audiofile_directory}/_trash'.
+        """
+        audio_dir = tmp_path / "audiofiles"
+        manager = AudioFileManager(audio_dir)
+
+        # Trash should be INSIDE audiofile_directory, not a sibling
+        assert manager.trash_directory.parent == audio_dir
+        assert manager.trash_directory.name == "_trash"
+        # Ensure it's not the old buggy behavior
+        assert manager.trash_directory != Path(f"{audio_dir}_trash")
 
     def test_initializes_with_string_path(self, tmp_path: Path) -> None:
         """Test initialization with string path."""
@@ -50,15 +66,17 @@ class TestEnsureDirectories:
         assert audio_dir.is_dir()
 
     def test_creates_trash_directory(self, tmp_path: Path) -> None:
-        """Test that trash directory is created."""
+        """Test that trash directory is created inside audiofile_directory."""
         audio_dir = tmp_path / "audiofiles"
         manager = AudioFileManager(audio_dir)
 
         manager.ensure_directories()
 
-        trash_dir = Path(f"{audio_dir}_trash")
+        trash_dir = audio_dir / "_trash"
         assert trash_dir.exists()
         assert trash_dir.is_dir()
+        # Ensure it's not the old buggy location
+        assert not Path(f"{audio_dir}_trash").exists()
 
 
 class TestImportFile:

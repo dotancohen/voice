@@ -281,14 +281,14 @@ class Database:
     # Sync methods
     # ============================================================================
 
-    def get_peer_last_sync(self, peer_device_id: str) -> Optional[str]:
+    def get_peer_last_sync(self, peer_device_id: str) -> Optional[int]:
         """Get the last sync timestamp for a peer.
 
         Args:
             peer_device_id: Peer's device UUID hex string
 
         Returns:
-            ISO timestamp of last sync, or None if never synced.
+            Unix timestamp of last sync, or None if never synced.
         """
         return self._rust_db.get_peer_last_sync(peer_device_id)
 
@@ -313,12 +313,12 @@ class Database:
         self._rust_db.update_peer_sync_time(peer_device_id, peer_name)
 
     def get_changes_since(
-        self, since: Optional[str] = None, limit: int = 1000
+        self, since: Optional[int] = None, limit: int = 1000
     ) -> Dict[str, Any]:
         """Get all changes since a timestamp.
 
         Args:
-            since: ISO timestamp to get changes after (None for all)
+            since: Unix timestamp to get changes after (None for all)
             limit: Maximum number of changes to return
 
         Returns:
@@ -341,35 +341,39 @@ class Database:
     def apply_sync_note(
         self,
         note_id: str,
-        created_at: str,
+        created_at: int,
         content: str,
-        modified_at: Optional[str] = None,
-        deleted_at: Optional[str] = None,
+        modified_at: Optional[int] = None,
+        deleted_at: Optional[int] = None,
+        sync_received_at: Optional[int] = None,
     ) -> bool:
         """Apply a sync note change."""
-        return self._rust_db.apply_sync_note(note_id, created_at, content, modified_at, deleted_at)
+        return self._rust_db.apply_sync_note(note_id, created_at, content, modified_at, deleted_at, sync_received_at)
 
     def apply_sync_tag(
         self,
         tag_id: str,
         name: str,
         parent_id: Optional[str] = None,
-        created_at: str = "",
-        modified_at: Optional[str] = None,
+        created_at: int = 0,
+        modified_at: Optional[int] = None,
+        deleted_at: Optional[int] = None,
+        sync_received_at: Optional[int] = None,
     ) -> bool:
         """Apply a sync tag change."""
-        return self._rust_db.apply_sync_tag(tag_id, name, parent_id, created_at, modified_at)
+        return self._rust_db.apply_sync_tag(tag_id, name, parent_id, created_at, modified_at, deleted_at, sync_received_at)
 
     def apply_sync_note_tag(
         self,
         note_id: str,
         tag_id: str,
-        created_at: str,
-        modified_at: Optional[str] = None,
-        deleted_at: Optional[str] = None,
+        created_at: int,
+        modified_at: Optional[int] = None,
+        deleted_at: Optional[int] = None,
+        sync_received_at: Optional[int] = None,
     ) -> bool:
         """Apply a sync note_tag change."""
-        return self._rust_db.apply_sync_note_tag(note_id, tag_id, created_at, modified_at, deleted_at)
+        return self._rust_db.apply_sync_note_tag(note_id, tag_id, created_at, modified_at, deleted_at, sync_received_at)
 
     def get_note_raw(self, note_id: str) -> Optional[Dict[str, Any]]:
         """Get raw note data by ID (including deleted, for sync)."""
@@ -387,9 +391,9 @@ class Database:
         self,
         note_id: str,
         local_content: str,
-        local_modified_at: str,
+        local_modified_at: int,
         remote_content: str,
-        remote_modified_at: str,
+        remote_modified_at: int,
         remote_device_id: Optional[str] = None,
         remote_device_name: Optional[str] = None,
     ) -> str:
@@ -404,10 +408,10 @@ class Database:
         self,
         note_id: str,
         surviving_content: str,
-        surviving_modified_at: str,
+        surviving_modified_at: int,
         surviving_device_id: Optional[str] = None,
         deleted_content: Optional[str] = None,
-        deleted_at: str = "",
+        deleted_at: int = 0,
         deleting_device_id: Optional[str] = None,
         deleting_device_name: Optional[str] = None,
     ) -> str:
@@ -422,9 +426,9 @@ class Database:
         self,
         tag_id: str,
         local_name: str,
-        local_modified_at: str,
+        local_modified_at: int,
         remote_name: str,
-        remote_modified_at: str,
+        remote_modified_at: int,
         remote_device_id: Optional[str] = None,
         remote_device_name: Optional[str] = None,
     ) -> str:
@@ -439,12 +443,12 @@ class Database:
         self,
         note_id: str,
         tag_id: str,
-        local_created_at: Optional[str] = None,
-        local_modified_at: Optional[str] = None,
-        local_deleted_at: Optional[str] = None,
-        remote_created_at: Optional[str] = None,
-        remote_modified_at: Optional[str] = None,
-        remote_deleted_at: Optional[str] = None,
+        local_created_at: Optional[int] = None,
+        local_modified_at: Optional[int] = None,
+        local_deleted_at: Optional[int] = None,
+        remote_created_at: Optional[int] = None,
+        remote_modified_at: Optional[int] = None,
+        remote_deleted_at: Optional[int] = None,
         remote_device_id: Optional[str] = None,
         remote_device_name: Optional[str] = None,
     ) -> str:
@@ -460,9 +464,9 @@ class Database:
         self,
         tag_id: str,
         local_parent_id: Optional[str],
-        local_modified_at: str,
+        local_modified_at: int,
         remote_parent_id: Optional[str],
-        remote_modified_at: str,
+        remote_modified_at: int,
         remote_device_id: Optional[str] = None,
         remote_device_name: Optional[str] = None,
     ) -> str:
@@ -478,10 +482,10 @@ class Database:
         tag_id: str,
         surviving_name: str,
         surviving_parent_id: Optional[str],
-        surviving_modified_at: str,
+        surviving_modified_at: int,
         surviving_device_id: Optional[str] = None,
         surviving_device_name: Optional[str] = None,
-        deleted_at: str = "",
+        deleted_at: int = 0,
         deleting_device_id: Optional[str] = None,
         deleting_device_name: Optional[str] = None,
     ) -> str:
@@ -555,13 +559,13 @@ class Database:
     def create_audio_file(
         self,
         filename: str,
-        file_created_at: Optional[str] = None,
+        file_created_at: Optional[int] = None,
     ) -> str:
         """Create a new audio file record.
 
         Args:
             filename: Original filename
-            file_created_at: Optional file creation timestamp
+            file_created_at: Optional Unix timestamp for file creation time
 
         Returns:
             Audio file ID (hex string)
@@ -683,18 +687,19 @@ class Database:
     def apply_sync_audio_file(
         self,
         audio_id: str,
-        imported_at: str,
+        imported_at: int,
         filename: str,
-        file_created_at: Optional[str] = None,
+        file_created_at: Optional[int] = None,
         duration_seconds: Optional[int] = None,
         summary: Optional[str] = None,
-        modified_at: Optional[str] = None,
-        deleted_at: Optional[str] = None,
+        modified_at: Optional[int] = None,
+        deleted_at: Optional[int] = None,
+        sync_received_at: Optional[int] = None,
     ) -> bool:
         """Apply a sync audio file change."""
         return self._rust_db.apply_sync_audio_file(
             audio_id, imported_at, filename,
-            file_created_at, duration_seconds, summary, modified_at, deleted_at
+            file_created_at, duration_seconds, summary, modified_at, deleted_at, sync_received_at
         )
 
     def get_audio_files_missing_duration(self) -> List[Dict[str, Any]]:
@@ -717,14 +722,15 @@ class Database:
         note_id: str,
         attachment_id: str,
         attachment_type: str,
-        created_at: str,
-        modified_at: Optional[str] = None,
-        deleted_at: Optional[str] = None,
+        created_at: int,
+        modified_at: Optional[int] = None,
+        deleted_at: Optional[int] = None,
+        sync_received_at: Optional[int] = None,
     ) -> bool:
         """Apply a sync note attachment change."""
         return self._rust_db.apply_sync_note_attachment(
             association_id, note_id, attachment_id, attachment_type,
-            created_at, modified_at, deleted_at
+            created_at, modified_at, deleted_at, sync_received_at
         )
 
     # ============================================================================

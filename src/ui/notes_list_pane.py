@@ -44,6 +44,7 @@ from src.core.search import (
     find_ambiguous_tags,
     parse_search_input,
 )
+from src.core.timestamp_utils import format_timestamp
 from src.ui.styles import BUTTON_STYLE
 
 logger = logging.getLogger(__name__)
@@ -443,7 +444,8 @@ class NotesListPane(QWidget):
         if list_cache:
             try:
                 cache_data = json.loads(list_cache)
-                created_at = cache_data.get("date", note.get("created_at", "Unknown"))
+                # "date" in cache is pre-formatted string; fallback formats the integer timestamp
+                created_at = cache_data.get("date") or format_timestamp(note.get("created_at")) or "Unknown"
                 is_marked = cache_data.get("marked", False)
                 content = cache_data.get("content_preview", "")
                 duration_seconds = cache_data.get("duration_seconds")
@@ -460,7 +462,8 @@ class NotesListPane(QWidget):
 
         if not list_cache:
             # No cache or cache parse failed - compute values
-            created_at = note.get("created_at", "Unknown")
+            # Format Unix timestamp for display
+            created_at = format_timestamp(note.get("created_at")) or "Unknown"
             is_marked = self.db.is_note_marked(note["id"])
             content = note.get("content", "")
             # Replace newlines and carriage returns with spaces
