@@ -1,0 +1,23 @@
+# Test Configuration
+#
+# Copy this file to test_config.toml and fill in your credentials.
+# test_config.toml is gitignored and will not be committed.
+#
+# These credentials are only used for integration tests that require
+# external services (e.g., S3 storage, transcription APIs).
+
+[s3]
+# AWS S3 or S3-compatible storage credentials for file sync integration tests
+bucket = "your-test-bucket"
+region = "us-east-1"
+access_key_id = "AKIAIOSFODNN7EXAMPLE"
+secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+# Optional: prefix for test files (recommended to avoid polluting bucket)
+prefix = "voice-tests/"
+# Optional: custom endpoint for S3-compatible services (MinIO, DigitalOcean Spaces, etc.)
+# endpoint = "https://nyc3.digitaloceanspaces.com"
+
+# [transcription]
+# # Transcription service credentials (for future integration tests)
+# openai_api_key = "sk-..."
+# deepgram_api_key = "..."

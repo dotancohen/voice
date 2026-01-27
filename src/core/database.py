@@ -1040,3 +1040,82 @@ class Database:
             System tag ID hex string
         """
         return self._rust_db.get_system_tag_id_hex()
+
+    # ========================================================================
+    # File Storage Configuration
+    # ========================================================================
+
+    def get_file_storage_config(self) -> Optional[Dict[str, Any]]:
+        """Get the file storage configuration from the database.
+
+        Returns:
+            Configuration dict with 'provider' and 'config' keys, or None if not set.
+            Example: {"provider": "s3", "config": {"bucket": "my-bucket", ...}}
+        """
+        return self._rust_db.get_file_storage_config()
+
+    def set_file_storage_config(self, provider: str, config: Optional[str] = None) -> None:
+        """Set the file storage configuration in the database.
+
+        Args:
+            provider: Storage provider name ("s3", "none", etc.)
+            config: Optional JSON string with provider-specific configuration
+        """
+        self._rust_db.set_file_storage_config(provider, config)
+
+    def get_file_storage_provider(self) -> str:
+        """Get the file storage provider name.
+
+        Returns:
+            Provider name ("s3", "none", etc.)
+        """
+        return self._rust_db.get_file_storage_provider()
+
+    def is_file_storage_enabled(self) -> bool:
+        """Check if file storage is enabled.
+
+        Returns:
+            True if a cloud storage provider is configured.
+        """
+        return self._rust_db.is_file_storage_enabled()
+
+    # ========================================================================
+    # Audio File Storage Methods
+    # ========================================================================
+
+    def get_audio_files_pending_upload(self) -> List[Dict[str, Any]]:
+        """Get all audio files that need to be uploaded to cloud storage.
+
+        Returns:
+            List of audio file dicts with storage_provider=None.
+        """
+        return self._rust_db.get_audio_files_pending_upload()
+
+    def update_audio_file_storage(
+        self,
+        audio_file_id: str,
+        storage_provider: str,
+        storage_key: str,
+    ) -> bool:
+        """Update an audio file's cloud storage information after successful upload.
+
+        Args:
+            audio_file_id: Audio file UUID
+            storage_provider: Provider name ("s3", etc.)
+            storage_key: Object key/path in cloud storage
+
+        Returns:
+            True if the audio file was updated.
+        """
+        return self._rust_db.update_audio_file_storage(audio_file_id, storage_provider, storage_key)
+
+    def clear_audio_file_storage(self, audio_file_id: str) -> bool:
+        """Clear an audio file's cloud storage information.
+
+        Args:
+            audio_file_id: Audio file UUID
+
+        Returns:
+            True if the audio file was updated.
+        """
+        return self._rust_db.clear_audio_file_storage(audio_file_id)

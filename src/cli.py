@@ -1762,6 +1762,114 @@ def cmd_maintenance_audio_rebuild_durations(db: Database, config: Config, args: 
         return 1
 
 
+# ============================================================================
+# Storage commands
+# ============================================================================
+
+def cmd_storage_status(db: Database, args: argparse.Namespace) -> int:
+    """Show current cloud storage configuration.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        config = db.get_file_storage_config()
+        output_format = getattr(args, 'format', 'text')
+
+        if output_format == "json":
+            if config:
+                print(json.dumps(config))
+            else:
+                print(json.dumps({"provider": "none", "config": None}))
+        else:
+            if config:
+                provider = config.get("provider", "none")
+                if provider == "none":
+                    print("Cloud storage: Disabled")
+                    print("Audio files are stored locally only.")
+                else:
+                    print(f"Cloud storage: Enabled ({provider})")
+                    storage_config = config.get("config", {})
+                    if provider == "s3":
+                        print(f"  Bucket: {storage_config.get('bucket', 'N/A')}")
+                        print(f"  Region: {storage_config.get('region', 'N/A')}")
+                        if storage_config.get("prefix"):
+                            print(f"  Prefix: {storage_config.get('prefix')}")
+                        if storage_config.get("endpoint"):
+                            print(f"  Endpoint: {storage_config.get('endpoint')}")
+                        print(f"  Access Key ID: {storage_config.get('access_key_id', 'N/A')[:8]}...")
+            else:
+                print("Cloud storage: Not configured")
+                print("Audio files are stored locally only.")
+        return 0
+    except Exception as e:
+        print(f"Error getting storage configuration: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_storage_configure_s3(db: Database, args: argparse.Namespace) -> int:
+    """Configure S3 storage for audio files.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        s3_config = {
+            "bucket": args.bucket,
+            "region": args.region,
+            "access_key_id": args.access_key_id,
+            "secret_access_key": args.secret_access_key,
+        }
+
+        if args.prefix:
+            s3_config["prefix"] = args.prefix
+        if args.endpoint:
+            s3_config["endpoint"] = args.endpoint
+
+        db.set_file_storage_config("s3", json.dumps(s3_config))
+
+        print(f"S3 storage configured successfully.")
+        print(f"  Bucket: {args.bucket}")
+        print(f"  Region: {args.region}")
+        if args.prefix:
+            print(f"  Prefix: {args.prefix}")
+        if args.endpoint:
+            print(f"  Endpoint: {args.endpoint}")
+        print("\nThis configuration will sync to other devices.")
+        return 0
+    except Exception as e:
+        print(f"Error configuring S3 storage: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_storage_disable(db: Database, args: argparse.Namespace) -> int:
+    """Disable cloud storage.
+
+    Args:
+        db: Database instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        db.set_file_storage_config("none", None)
+        print("Cloud storage disabled.")
+        print("Audio files will be stored locally only.")
+        return 0
+    except Exception as e:
+        print(f"Error disabling storage: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_new_tag(db: Database, args: argparse.Namespace) -> int:
     """Create a new tag.
 
@@ -2290,6 +2398,55 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Show what would be done without making changes"
     )
 
+    # ========================================================================
+    # storage (cloud file storage configuration)
+    # ========================================================================
+    storage_parser = cli_subparsers.add_parser(
+        "storage",
+        help="Cloud file storage configuration for syncing audio files"
+    )
+    storage_subparsers = storage_parser.add_subparsers(dest="storage_command", help="Storage commands")
+
+    # storage status - show current configuration
+    storage_subparsers.add_parser("status", help="Show current cloud storage configuration")
+
+    # storage configure-s3 - configure S3 storage
+    storage_s3_parser = storage_subparsers.add_parser(
+        "configure-s3",
+        help="Configure AWS S3 (or S3-compatible) storage for audio files"
+    )
+    storage_s3_parser.add_argument(
+        "--bucket",
+        required=True,
+        help="S3 bucket name"
+    )
+    storage_s3_parser.add_argument(
+        "--region",
+        required=True,
+        help="AWS region (e.g., us-east-1, eu-west-1)"
+    )
+    storage_s3_parser.add_argument(
+        "--access-key-id",
+        required=True,
+        help="AWS access key ID"
+    )
+    storage_s3_parser.add_argument(
+        "--secret-access-key",
+        required=True,
+        help="AWS secret access key"
+    )
+    storage_s3_parser.add_argument(
+        "--prefix",
+        help="Optional path prefix for stored files (e.g., 'audio/')"
+    )
+    storage_s3_parser.add_argument(
+        "--endpoint",
+        help="Optional custom endpoint URL for S3-compatible services (e.g., DigitalOcean Spaces, MinIO)"
+    )
+
+    # storage disable - disable cloud storage
+    storage_subparsers.add_parser("disable", help="Disable cloud storage (keep files local only)")
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -2388,6 +2545,21 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_maintenance_audio_rebuild_durations(db, config, args)
             else:
                 print(f"Error: Unknown maintenance command '{maint_cmd}'", file=sys.stderr)
+                return 1
+        elif args.cli_command == "storage":
+            # Handle storage subcommands
+            storage_cmd = getattr(args, 'storage_command', None)
+            if not storage_cmd:
+                print("Error: No storage command specified. Use 'storage --help'.", file=sys.stderr)
+                return 1
+            if storage_cmd == "status":
+                return cmd_storage_status(db, args)
+            elif storage_cmd == "configure-s3":
+                return cmd_storage_configure_s3(db, args)
+            elif storage_cmd == "disable":
+                return cmd_storage_disable(db, args)
+            else:
+                print(f"Error: Unknown storage command '{storage_cmd}'", file=sys.stderr)
                 return 1
         else:
             print(f"Error: Unknown command '{args.cli_command}'", file=sys.stderr)

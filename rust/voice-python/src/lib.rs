@@ -91,6 +91,9 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     dict.set_item("device_id", &audio_file.device_id)?;
     dict.set_item("modified_at", &audio_file.modified_at)?;
     dict.set_item("deleted_at", &audio_file.deleted_at)?;
+    dict.set_item("storage_provider", &audio_file.storage_provider)?;
+    dict.set_item("storage_key", &audio_file.storage_key)?;
+    dict.set_item("storage_uploaded_at", &audio_file.storage_uploaded_at)?;
     Ok(dict)
 }
 
@@ -955,6 +958,43 @@ impl PyDatabase {
         Ok(list.into_any().unbind())
     }
 
+    // ========================================================================
+    // Cloud Storage methods
+    // ========================================================================
+
+    /// Get audio files that need to be uploaded to cloud storage.
+    ///
+    /// Returns files where storage_provider is NULL (not yet uploaded).
+    fn get_audio_files_pending_upload<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let audio_files = self.inner_ref()?
+            .get_audio_files_pending_upload()
+            .map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for audio_file in &audio_files {
+            list.append(audio_file_row_to_dict(py, audio_file)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    /// Update an audio file's cloud storage information after successful upload.
+    fn update_audio_file_storage(
+        &self,
+        audio_file_id: &str,
+        storage_provider: &str,
+        storage_key: &str,
+    ) -> PyResult<bool> {
+        self.inner_ref()?
+            .update_audio_file_storage(audio_file_id, storage_provider, storage_key)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Clear an audio file's cloud storage information.
+    fn clear_audio_file_storage(&self, audio_file_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .clear_audio_file_storage(audio_file_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
     fn get_audio_file_raw<'py>(&self, py: Python<'py>, audio_file_id: &str) -> PyResult<Option<PyObject>> {
         let audio_file = self.inner_ref()?
             .get_audio_file_raw(audio_file_id)
@@ -965,7 +1005,7 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
@@ -977,10 +1017,57 @@ impl PyDatabase {
         modified_at: Option<i64>,
         deleted_at: Option<i64>,
         sync_received_at: Option<i64>,
+        storage_provider: Option<&str>,
+        storage_key: Option<&str>,
+        storage_uploaded_at: Option<i64>,
     ) -> PyResult<()> {
         self.inner_ref()?
-            .apply_sync_audio_file(id, imported_at, filename, file_created_at, duration_seconds, summary, modified_at, deleted_at, sync_received_at)
+            .apply_sync_audio_file(id, imported_at, filename, file_created_at, duration_seconds, summary, modified_at, deleted_at, sync_received_at, storage_provider, storage_key, storage_uploaded_at)
             .map_err(voice_error_to_pyerr)
+    }
+
+    // ========================================================================
+    // File Storage Configuration
+    // ========================================================================
+
+    /// Get the file storage configuration from the database.
+    /// Returns None if no configuration has been set yet.
+    fn get_file_storage_config<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+        let config = self.inner_ref()?
+            .get_file_storage_config()
+            .map_err(voice_error_to_pyerr)?;
+        match config {
+            Some(c) => Ok(Some(json_value_to_pyobject(py, &c)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Set the file storage configuration in the database.
+    #[pyo3(signature = (provider, config=None))]
+    fn set_file_storage_config(&self, provider: &str, config: Option<&str>) -> PyResult<()> {
+        let config_value: Option<serde_json::Value> = config
+            .map(|c| serde_json::from_str(c))
+            .transpose()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
+        self.inner_ref()?
+            .set_file_storage_config(provider, config_value.as_ref())
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Get file storage configuration as a provider/config pair.
+    fn get_file_storage_provider(&self) -> PyResult<String> {
+        let config = self.inner_ref()?
+            .get_file_storage_config_struct()
+            .map_err(voice_error_to_pyerr)?;
+        Ok(config.provider)
+    }
+
+    /// Check if file storage is enabled (provider is not "none").
+    fn is_file_storage_enabled(&self) -> PyResult<bool> {
+        let config = self.inner_ref()?
+            .get_file_storage_config_struct()
+            .map_err(voice_error_to_pyerr)?;
+        Ok(config.is_enabled())
     }
 
     // ========================================================================

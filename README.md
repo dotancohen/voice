@@ -3,12 +3,12 @@
 - The Problem: Voice notes are a fast, effective way to _temporarily_ record information on the go, but are near impossible to actually work with in their raw format.
 - The Solution: VOICE provides the tools to transform data stuck in voice notes into plain text that can be used in Actionable Items, Calendars, Data Stores, or just Archived.
 
-## Features
+## Major Features
 
 - Note-taking application with hierarchical tags.
 - Sync notes between instances - fully decentralized self-hosted service.
 - GUI, TUI, CLI, and Web API interfaces.
-- Voice note transcription using local Whisper AI models.
+- Voice note transcription using local Whisper AI models and many online services.
 
 ### GUI
 
@@ -31,9 +31,13 @@
 
 - RESTful HTTP API with JSON responses.
 
+## Additional Features
+
+- Merge Notes
+- Compare transcriptoins across providers
+
 ## Roadmap
 
-- Add UI for Tag management (create, rename, delete).
 - Add UI for sync conflict management.
 - Web UI that uses Web API.
 - Multiple user accounts per server.
@@ -700,6 +704,93 @@ When using a reverse proxy, use HTTPS in the peer URL:
 ```bash
 python -m src.main cli sync add-peer <server-device-id> "Server" https://sync.example.com
 ```
+
+## Cloud Storage for Audio Files
+
+Audio files can be stored in cloud storage (AWS S3 or S3-compatible services) instead of being synced through the sync server. This is recommended for large audio collections to reduce sync server load.
+
+### Configuration
+
+Storage configuration is stored in the database and syncs between devices automatically.
+
+```bash
+# Check current storage configuration
+python -m src.main cli storage status
+
+# Configure AWS S3 storage
+python -m src.main cli storage configure-s3 \
+    --bucket my-voice-audio \
+    --region us-east-1 \
+    --access-key-id AKIAIOSFODNN7EXAMPLE \
+    --secret-access-key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
+    --prefix audio/
+
+# Configure S3-compatible storage (DigitalOcean Spaces, MinIO, etc.)
+python -m src.main cli storage configure-s3 \
+    --bucket my-voice-audio \
+    --region us-east-1 \
+    --access-key-id <access-key> \
+    --secret-access-key <secret-key> \
+    --endpoint https://nyc3.digitaloceanspaces.com
+
+# Disable cloud storage (keep files local only)
+python -m src.main cli storage disable
+```
+
+### AWS S3 Setup
+
+1. Create an S3 bucket
+   - S3 -> Create bucket
+   - Leave defaults (block public access ON)
+
+2. Create an IAM policy
+  - IAM -> Policies -> Create policy.
+  - Policy editor: JSON
+  - Paste the following JSON, adjusting the `Resource` names for your bucket:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::my-voice-audio",
+                "arn:aws:s3:::my-voice-audio/*"
+            ]
+        }
+    ]
+}
+```
+  - Policy name: VoiceFileSync
+
+3. Create an IAM user
+  - IAM -> Users -> Create user.
+  - User name: `voicefilesync`. Do NOT check "Provide user access to the AWS Management Console".
+  - Select "Attach policies directly" then select "VoiceFileSync".
+
+4. Create access key
+  - IAM -> Users -> select `voicefilesync` user.
+  - Security Credentials -> Access Keys -> Create access key
+  - Select "Application running outside AWS"
+  - Description tag value: `Voice-File-Sync`
+  - Copy your `Access key` and `Secret access key`. This information will be configured in Voice in the next step. If you loose this value, AWS can not show it to you again.
+
+5. Configure Voice with the bucket details and IAM credentials
+  - Use the `cli storage configure-s3` command. See previous section for details.
+
+### How It Works
+
+- When cloud storage is configured, new audio file uploads go to the cloud
+- Existing local files remain local until re-uploaded
+- On playback, files are downloaded on-demand if not present locally
+- Metadata (notes, tags, transcriptions) still syncs through the sync server
+- The storage configuration syncs to all connected devices
 
 ## Testing
 

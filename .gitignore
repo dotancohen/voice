@@ -47,6 +47,7 @@ dmypy.json
 .pytest_cache/
 .coverage
 htmlcov/
+tests/test_config.toml
 
 # OS
 .DS_Store
