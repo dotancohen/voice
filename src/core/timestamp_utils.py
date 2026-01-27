@@ -4,7 +4,7 @@ Provides functions to convert between Unix timestamps and formatted strings
 for display purposes.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -20,8 +20,11 @@ def format_timestamp(ts: Optional[int]) -> str:
     """
     if ts is None:
         return ""
-    # datetime.fromtimestamp() converts UTC to local timezone
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    # Create a timezone-aware UTC datetime, then convert to local time
+    # This ensures correct conversion regardless of system timezone settings
+    utc_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    local_dt = utc_dt.astimezone()  # Convert to local timezone
+    return local_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def datetime_to_timestamp(dt: Optional[datetime]) -> Optional[int]:

@@ -1870,6 +1870,39 @@ def cmd_storage_disable(db: Database, args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_storage_upload_pending(config: Config, args: argparse.Namespace) -> int:
+    """Upload pending audio files to cloud storage.
+
+    Args:
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    from voicecore import upload_pending_audio_files
+
+    try:
+        config_dir = config.config_dir
+        print(f"Uploading pending audio files to cloud storage...")
+
+        result = upload_pending_audio_files(str(config_dir) if config_dir else None)
+
+        print(f"\nUpload complete:")
+        print(f"  Uploaded: {result.uploaded}")
+        print(f"  Failed:   {result.failed}")
+
+        if result.errors:
+            print("\nErrors:")
+            for error in result.errors:
+                print(f"  - {error}")
+
+        return 0 if result.failed == 0 else 1
+    except Exception as e:
+        print(f"Error uploading files: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_new_tag(db: Database, args: argparse.Namespace) -> int:
     """Create a new tag.
 
@@ -2447,6 +2480,12 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # storage disable - disable cloud storage
     storage_subparsers.add_parser("disable", help="Disable cloud storage (keep files local only)")
 
+    # storage upload-pending - upload files that haven't been uploaded yet
+    storage_subparsers.add_parser(
+        "upload-pending",
+        help="Upload pending audio files to cloud storage (files not yet uploaded)"
+    )
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -2558,6 +2597,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_storage_configure_s3(db, args)
             elif storage_cmd == "disable":
                 return cmd_storage_disable(db, args)
+            elif storage_cmd == "upload-pending":
+                return cmd_storage_upload_pending(config, args)
             else:
                 print(f"Error: Unknown storage command '{storage_cmd}'", file=sys.stderr)
                 return 1

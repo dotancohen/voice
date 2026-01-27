@@ -136,7 +136,7 @@ class TestListTags:
         assert result.returncode == 0
         tags = json.loads(result.stdout)
         assert isinstance(tags, list)
-        assert len(tags) == 21  # All tags from fixture
+        assert len(tags) == 23  # All tags from fixture + 4 system tags
         assert all("id" in tag for tag in tags)
         assert all("name" in tag for tag in tags)
 
@@ -158,7 +158,7 @@ class TestListTags:
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")
         assert lines[0] == "id,name,parent_id"
-        assert len(lines) == 22  # Header + 21 tags
+        assert len(lines) == 24  # Header + 23 tags (19 fixture + 4 system)
 
     def test_list_tags_shows_hierarchy(
         self, test_db_path: Path, populated_db: Database

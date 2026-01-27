@@ -26,7 +26,7 @@ class TestGetTags:
 
         tags = json.loads(response.data)
         assert isinstance(tags, list)
-        assert len(tags) == 21  # 21 tags in fixture
+        assert len(tags) == 23  # 19 tags in fixture + 4 system tags
 
     def test_tags_have_required_fields(self, client: FlaskClient) -> None:
         """Test that tags have all required fields."""

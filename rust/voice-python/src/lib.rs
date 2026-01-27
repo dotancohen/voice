@@ -8,7 +8,7 @@ use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use voicecore_lib::{config, database, error, merge, models, search, sync_client, sync_server, validation};
+use voicecore_lib::{config, database, error, file_storage, merge, models, search, sync_client, sync_server, validation};
 
 // ============================================================================
 // Error types
@@ -1288,6 +1288,47 @@ impl PyDatabase {
             .get_system_tag_id_hex()
             .map_err(voice_error_to_pyerr)
     }
+
+    // ========================================================================
+    // Non-synced file tagging methods
+    // ========================================================================
+
+    /// Check if a note is tagged as too-big to sync.
+    fn is_note_too_big_to_sync(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .is_note_too_big_to_sync(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Tag a note as too-big to sync (add the _system/_nonsynced/_too-big tag).
+    /// Returns true if the tag was added, false if already tagged.
+    fn tag_note_too_big(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .tag_note_too_big(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Remove the too-big tag from a note.
+    /// Returns true if the tag was removed, false if not tagged.
+    fn untag_note_too_big(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .untag_note_too_big(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Get the _too-big tag ID as a hex string.
+    fn get_too_big_tag_id_hex(&self) -> PyResult<String> {
+        self.inner_ref()?
+            .get_too_big_tag_id_hex()
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Get all note IDs that have an audio file attached.
+    fn get_notes_for_audio_file(&self, audio_file_id: &str) -> PyResult<Vec<String>> {
+        self.inner_ref()?
+            .get_notes_for_audio_file(audio_file_id)
+            .map_err(voice_error_to_pyerr)
+    }
 }
 
 // ============================================================================
@@ -1349,6 +1390,18 @@ impl PyConfig {
     fn set_sync_server_port(&self, port: u16) -> PyResult<()> {
         let mut cfg = self.inner.lock().unwrap();
         cfg.set_sync_server_port(port).map_err(voice_error_to_pyerr)
+    }
+
+    /// Get the maximum sync file size in MB
+    fn get_max_sync_file_size_mb(&self) -> PyResult<u32> {
+        let cfg = self.inner.lock().unwrap();
+        Ok(cfg.max_sync_file_size_mb())
+    }
+
+    /// Set the maximum sync file size in MB
+    fn set_max_sync_file_size_mb(&self, size_mb: u32) -> PyResult<()> {
+        let mut cfg = self.inner.lock().unwrap();
+        cfg.set_max_sync_file_size_mb(size_mb).map_err(voice_error_to_pyerr)
     }
 
     #[pyo3(signature = (key, default=None))]
@@ -1713,6 +1766,68 @@ fn sync_all_peers<'py>(
         dict.set_item(peer_id, py_result.into_pyobject(py)?)?;
     }
     Ok(dict.into_any().unbind())
+}
+
+// ============================================================================
+// File Storage wrappers
+// ============================================================================
+
+/// Result of uploading pending audio files
+#[pyclass(name = "UploadPendingResult")]
+pub struct PyUploadPendingResult {
+    #[pyo3(get)]
+    uploaded: usize,
+    #[pyo3(get)]
+    failed: usize,
+    #[pyo3(get)]
+    errors: Vec<String>,
+}
+
+/// Upload pending audio files to cloud storage (S3).
+///
+/// This function uploads all audio files that have not yet been uploaded to
+/// cloud storage (storage_provider is NULL in the database).
+///
+/// Args:
+///     config_dir: Path to config directory (optional, uses default if None)
+///
+/// Returns:
+///     UploadPendingResult with counts of uploaded/failed files and error messages
+///
+/// Raises:
+///     RuntimeError: If cloud storage is not configured or upload fails
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPendingResult> {
+    // Create Tokio runtime
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    // Create Config and Database from config_dir
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+
+    // Get audiofile directory
+    let audiofile_dir = cfg.audiofile_directory().ok_or_else(|| {
+        pyo3::exceptions::PyRuntimeError::new_err(
+            "Audiofile directory not configured. Set it with 'cli config set audiofile_directory <path>'",
+        )
+    })?;
+    let audiofile_path = std::path::Path::new(audiofile_dir);
+
+    // Run the upload
+    let result: Result<file_storage::UploadPendingResult, file_storage::FileStorageError> =
+        runtime.block_on(file_storage::upload_pending_audio_files(&db, audiofile_path));
+
+    match result {
+        Ok(r) => Ok(PyUploadPendingResult {
+            uploaded: r.uploaded,
+            failed: r.failed,
+            errors: r.errors,
+        }),
+        Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
+    }
 }
 
 // ============================================================================
@@ -2256,6 +2371,10 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(start_sync_server, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
     m.add_function(wrap_pyfunction!(apply_sync_changes, m)?)?;
+
+    // Register file storage functions
+    m.add_class::<PyUploadPendingResult>()?;
+    m.add_function(wrap_pyfunction!(upload_pending_audio_files, m)?)?;
 
     // Register search classes and functions
     m.add_class::<PySearchResult>()?;
