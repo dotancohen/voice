@@ -786,11 +786,25 @@ python -m src.main cli storage disable
 
 ### How It Works
 
-- When cloud storage is configured, new audio file uploads go to the cloud
-- Existing local files remain local until re-uploaded
-- On playback, files are downloaded on-demand if not present locally
+- When cloud storage is configured, audio files are uploaded to S3 automatically during sync
+- On sync, files missing locally are downloaded from S3 automatically
+- Files are NOT synced through the sync server - only cloud storage (S3) is used for audio files
 - Metadata (notes, tags, transcriptions) still syncs through the sync server
 - The storage configuration syncs to all connected devices
+
+### Manual Upload
+
+To manually upload pending files without running a full sync:
+
+```bash
+# Upload all audio files that haven't been uploaded to cloud storage yet
+python -m src.main cli storage upload-pending
+```
+
+This is useful for:
+- Initial migration of existing audio files to cloud storage
+- Troubleshooting upload issues
+- Uploading files when sync server is not available
 
 ## Testing
 
