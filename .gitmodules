@@ -3,4 +3,4 @@
 	url = https://github.com/dotancohen/voicecore.git
 [submodule "submodules/voicetranscription"]
 	path = submodules/voicetranscription
-	url = /home/dotancohen/Projects/VoiceTranscription
+	url = https://github.com/dotancohen/voicetranscription.git
