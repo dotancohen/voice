@@ -72,6 +72,7 @@ class NotePane(QWidget, NoteEditorMixin):
         self,
         db: Database,
         audiofile_directory: Optional[Path | str] = None,
+        config_dir: Optional[Path | str] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         """Initialize the note pane.
@@ -79,11 +80,13 @@ class NotePane(QWidget, NoteEditorMixin):
         Args:
             db: Database connection
             audiofile_directory: Path to audiofile directory for playback
+            config_dir: Path to Voice config directory (for sync client)
             parent: Parent widget (default None)
         """
         super().__init__(parent)
         self.db = db
         self.audiofile_directory = Path(audiofile_directory) if audiofile_directory else None
+        self.config_dir = Path(config_dir) if config_dir else None
         self.init_editor_state()  # Initialize mixin state
 
         self.setup_ui()
@@ -156,6 +159,9 @@ class NotePane(QWidget, NoteEditorMixin):
         # Audio player widget (replaces simple list when audio files present)
         self.audio_player = AudioPlayerWidget()
         self.audio_player.hide()  # Hidden until audio files are loaded
+        self.audio_player.download_cloud_file_requested.connect(
+            self._on_download_cloud_file_requested
+        )
         layout.addWidget(self.audio_player)
 
         # Simple attachments list (fallback for non-audio)
@@ -571,6 +577,53 @@ class NotePane(QWidget, NoteEditorMixin):
             self.load_note(note_id)
             # Emit note_saved to refresh the notes list (tags may affect display)
             self.note_saved.emit(note_id)
+
+    def _on_download_cloud_file_requested(self, audio_file_id: str) -> None:
+        """Handle download request for a cloud-only audio file.
+
+        Downloads the file from S3 via the sync client, then refreshes the note.
+
+        Args:
+            audio_file_id: Audio file UUID hex string
+        """
+        import threading
+
+        if not self.config_dir or not self.audiofile_directory:
+            logger.error("Cannot download cloud file: config_dir or audiofile_directory not set")
+            return
+
+        logger.info(f"Downloading cloud audio file: {audio_file_id}")
+        self.audio_player.set_downloading_audio_id(audio_file_id)
+
+        config_dir = str(self.config_dir)
+        audiofile_dir = str(self.audiofile_directory)
+
+        def _do_download():
+            try:
+                from voicecore import SyncClient
+                sync_client = SyncClient(config_dir)
+
+                path = sync_client.download_audio_file_from_cloud(
+                    audio_file_id, audiofile_dir
+                )
+                logger.info(f"Downloaded cloud audio file to: {path}")
+
+                # Refresh note on the main thread
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._on_cloud_download_complete(audio_file_id))
+            except Exception as e:
+                logger.error(f"Failed to download cloud audio file {audio_file_id}: {e}")
+            finally:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self.audio_player.set_downloading_audio_id(None))
+
+        thread = threading.Thread(target=_do_download, daemon=True)
+        thread.start()
+
+    def _on_cloud_download_complete(self, audio_file_id: str) -> None:
+        """Handle successful cloud download — refresh the note display."""
+        if self.current_note_id:
+            self.load_note(self.current_note_id)
 
     def _on_transcribe_requested(self, audio_file_id: str) -> None:
         """Handle transcribe request from transcriptions container.

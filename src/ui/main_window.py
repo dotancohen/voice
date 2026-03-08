@@ -119,7 +119,11 @@ class MainWindow(QMainWindow):
         self.tags_pane = TagsPane(self.db)
         self.notes_list_pane = NotesListPane(self.config, self.db, theme=self.theme)
         audiofile_directory = self.config.get("audiofile_directory")
-        self.note_pane = NotePane(self.db, audiofile_directory=audiofile_directory)
+        self.note_pane = NotePane(
+            self.db,
+            audiofile_directory=audiofile_directory,
+            config_dir=self.config.get_config_dir(),
+        )
 
         # Add panes to splitter
         self.splitter.addWidget(self.tags_pane)

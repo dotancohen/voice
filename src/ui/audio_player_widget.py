@@ -146,10 +146,13 @@ class AudioPlayerWidget(QFrame):
     - Speed control button (placeholder)
     - Time display (MM:SS or HH:MM:SS)
     - Audio file list with selection and transcription count
+    - Cloud-only files shown with download indicator
     """
 
     # Emitted when user requests transcription of an audio file
     transcribe_requested = Signal(str)  # audio_file_id
+    # Emitted when user clicks a cloud-only file to download it
+    download_cloud_file_requested = Signal(str)  # audio_file_id
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -160,6 +163,10 @@ class AudioPlayerWidget(QFrame):
         self._audio_files: List[Dict] = []
         self._file_paths: List[Path] = []
         self._transcription_counts: Dict[str, int] = {}
+        # Maps audio file index to player index (-1 = cloud-only)
+        self._index_to_player_index: Dict[int, int] = {}
+        self._cloud_storage_enabled: bool = False
+        self._downloading_audio_id: Optional[str] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -239,6 +246,15 @@ class AudioPlayerWidget(QFrame):
         self._waveform_widget.seek_requested.connect(self._on_seek)
         self._player.set_on_state_change(self._on_state_change)
 
+    def set_cloud_storage_enabled(self, enabled: bool) -> None:
+        """Set whether cloud storage is enabled."""
+        self._cloud_storage_enabled = enabled
+
+    def set_downloading_audio_id(self, audio_id: Optional[str]) -> None:
+        """Set which audio file is currently being downloaded."""
+        self._downloading_audio_id = audio_id
+        self._update_file_list_display()
+
     def set_audio_files(
         self,
         audio_files: List[Dict],
@@ -261,41 +277,62 @@ class AudioPlayerWidget(QFrame):
         self._file_list.clear()
         self._file_paths = []
         self._waveforms = {}
+        self._index_to_player_index = {}
 
         cached_waveforms = cached_waveforms or {}
+        local_paths = []
 
         for i, af in enumerate(audio_files):
             audio_id = af.get("id", "")
             filename = af.get("filename", "Unknown")
             t_count = self._transcription_counts.get(audio_id, 0)
-
-            # Format: "filename | T: N"
-            display_text = f"{filename} | T: {t_count}"
-            item = QListWidgetItem(display_text)
-            item.setData(Qt.UserRole, audio_id)
-            self._file_list.addItem(item)
+            storage_key = af.get("storage_key")
 
             # Get file path
             path = get_file_path(audio_id)
+            is_cloud_only = path is None and storage_key is not None
+
+            # Format display text
+            if is_cloud_only:
+                display_text = f"☁ {filename} | T: {t_count}"
+            else:
+                display_text = f"{filename} | T: {t_count}"
+
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.UserRole, audio_id)
+            if is_cloud_only:
+                item.setForeground(QColor("#888888"))
+            self._file_list.addItem(item)
+
+            if path:
+                self._index_to_player_index[i] = len(local_paths)
+                local_paths.append(Path(path))
+            else:
+                self._index_to_player_index[i] = -1
+
             self._file_paths.append(Path(path) if path else Path())
 
             # Check for cached waveform
             if audio_id in cached_waveforms:
                 cached = cached_waveforms[audio_id]
                 if cached:
-                    # Convert from 0-255 to 0.0-1.0
-                    self._waveforms[i] = [v / 255.0 for v in cached]
+                    player_idx = self._index_to_player_index[i]
+                    if player_idx >= 0:
+                        self._waveforms[player_idx] = [v / 255.0 for v in cached]
 
-        # Set files in player
-        self._player.set_audio_files(self._file_paths)
+        # Set only local files in player
+        self._player.set_audio_files(local_paths)
 
-        # Extract waveforms only for files without cached data
+        # Extract waveforms only for local files without cached data
         for i, path in enumerate(self._file_paths):
-            if i in self._waveforms:
+            player_idx = self._index_to_player_index.get(i, -1)
+            if player_idx < 0:
+                continue  # Cloud-only, skip
+            if player_idx in self._waveforms:
                 continue  # Already have cached waveform
             if path.exists():
                 waveform = extract_waveform(path, WAVEFORM_BAR_COUNT)
-                self._waveforms[i] = waveform
+                self._waveforms[player_idx] = waveform
                 # Notify caller so they can update cache
                 if on_waveform_extracted and waveform:
                     audio_id = audio_files[i].get("id", "")
@@ -307,6 +344,25 @@ class AudioPlayerWidget(QFrame):
         # Update waveform display if we have files
         if self._waveforms:
             self._waveform_widget.set_waveform(self._waveforms.get(0, []))
+
+    def _update_file_list_display(self) -> None:
+        """Update file list display (e.g., downloading state)."""
+        for i in range(self._file_list.count()):
+            item = self._file_list.item(i)
+            audio_id = item.data(Qt.UserRole)
+            if i < len(self._audio_files):
+                af = self._audio_files[i]
+                filename = af.get("filename", "Unknown")
+                t_count = self._transcription_counts.get(audio_id, 0)
+                player_idx = self._index_to_player_index.get(i, -1)
+                is_cloud_only = player_idx == -1 and af.get("storage_key") is not None
+
+                if self._downloading_audio_id == audio_id:
+                    item.setText(f"⏳ {filename} | T: {t_count}")
+                elif is_cloud_only:
+                    item.setText(f"☁ {filename} | T: {t_count}")
+                else:
+                    item.setText(f"{filename} | T: {t_count}")
 
     def update_transcription_count(self, audio_file_id: str, count: int) -> None:
         """Update the transcription count for an audio file.
@@ -356,7 +412,15 @@ class AudioPlayerWidget(QFrame):
     def _on_file_selected(self, item: QListWidgetItem) -> None:
         """Handle file selection from list."""
         row = self._file_list.row(item)
-        self._player.play_file(row)
+        player_idx = self._index_to_player_index.get(row, -1)
+
+        if player_idx == -1:
+            # Cloud-only file — request download
+            audio_id = item.data(Qt.UserRole)
+            if audio_id and self._downloading_audio_id != audio_id:
+                self.download_cloud_file_requested.emit(audio_id)
+        else:
+            self._player.play_file(player_idx)
 
     def _on_state_change(self, state: PlaybackState) -> None:
         """Handle state change from player."""

@@ -8,7 +8,7 @@ use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use voicecore_lib::{config, database, error, file_storage, merge, models, search, sync_client, sync_server, validation};
+use voicecore_lib::{config, database, error, cloud_storage, merge, models, search, sync_client, sync_server, validation};
 
 // ============================================================================
 // Error types
@@ -1706,6 +1706,22 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
+    /// Download a single audio file from cloud storage on demand.
+    ///
+    /// Returns the local file path as a string on success.
+    fn download_audio_file_from_cloud(&self, audio_file_id: &str, audiofile_directory: &str) -> PyResult<String> {
+        let dir = std::path::Path::new(audiofile_directory);
+        let path = self.runtime.block_on(
+            self.inner.download_single_audio_file_from_cloud(audio_file_id, dir)
+        ).map_err(voice_error_to_pyerr)?;
+        Ok(path.to_string_lossy().to_string())
+    }
+
+    /// Check if cloud storage is enabled.
+    fn is_cloud_storage_enabled(&self) -> PyResult<bool> {
+        Ok(self.inner.is_cloud_storage_enabled())
+    }
+
     /// Debug method to see what changes would be pushed for a peer
     #[pyo3(signature = (peer_id, since=None))]
     fn debug_get_changes(&self, peer_id: &str, since: Option<i64>) -> PyResult<Vec<String>> {
@@ -1817,8 +1833,8 @@ fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPend
     let audiofile_path = std::path::Path::new(audiofile_dir);
 
     // Run the upload
-    let result: Result<file_storage::UploadPendingResult, file_storage::FileStorageError> =
-        runtime.block_on(file_storage::upload_pending_audio_files(&db, audiofile_path));
+    let result: Result<cloud_storage::UploadPendingResult, cloud_storage::FileStorageError> =
+        runtime.block_on(cloud_storage::upload_pending_audio_files(&db, audiofile_path));
 
     match result {
         Ok(r) => Ok(PyUploadPendingResult {
