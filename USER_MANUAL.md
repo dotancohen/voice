@@ -796,6 +796,13 @@ and it is deliberate: `account move --to <id> --current <id>` proceeds only when
 the full id of the account being given up is typed by hand. A snapshot is taken
 first, and every peer is forgotten so the next sync exchanges everything.
 
+### Listening for peers
+
+A device is reachable only while it **listens**: File → Listen for peers in
+the desktop, the switch on the phone's sync screen, or `sync serve` on a
+server. About shows the account, the device id, the addresses and the
+certificate fingerprint of this device, which another device may need typed.
+
 ### Moving recordings between devices
 
 A sync moves notes, tags and the list of recordings, never a recording's

@@ -891,7 +891,12 @@ recording reach a second place soonest:
    and retries, free-space check. Not needed after all: the "recording in
    progress" mark, because the phone imports a recording only after the
    recorder has closed the file, so no row exists while it records. Still to
-   come: cancel and progress in the interfaces.
+   come: cancel and progress in the interfaces. **Stage 6 done 2026-09-13**:
+   `start_listener`/`stop_listener` on the phone with a foreground service
+   and a switch, a "Listen for peers" switch in the desktop's File menu, the
+   card's `listens` and `addresses` kept by the core, the address and the
+   fingerprint shown in About and on the sync screen. Not yet: the idle
+   stop, mDNS (Stage 7).
 
 At this point the owner's phone delivers to the owner's desktop. Then:
 

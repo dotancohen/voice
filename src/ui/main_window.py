@@ -160,6 +160,14 @@ class MainWindow(QMainWindow):
         self.sync_now_action.triggered.connect(self.sync_now)
         file_menu.addAction(self.sync_now_action)
 
+        # Listen for peers: the listener runs only while this is checked
+        self.listen_action = QAction("&Listen for peers", self)
+        self.listen_action.setCheckable(True)
+        self.listen_action.setStatusTip("Let other devices of the account reach this computer to sync")
+        self.listen_action.toggled.connect(self._toggle_listener)
+        file_menu.addAction(self.listen_action)
+        self._listener_thread = None
+
         # Track unsynced state
         self._has_unsynced_changes = False
 
@@ -724,10 +732,53 @@ class MainWindow(QMainWindow):
 
         dialog.exec()
 
+    def _toggle_listener(self, checked: bool) -> None:
+        """Start or stop the listener; it runs on a thread of its own."""
+        import threading
+        from voicecore import start_sync_server, stop_sync_server
+
+        if checked:
+            config_dir = str(self.config.get_config_dir())
+            port = self.config.get_sync_server_port()
+
+            def serve() -> None:
+                try:
+                    start_sync_server(config_dir=config_dir, port=port)
+                except Exception as e:  # noqa: BLE001 - reported on the status bar
+                    logger.error(f"The listener stopped: {e}")
+
+            self._listener_thread = threading.Thread(target=serve, daemon=True, name="voice-listener")
+            self._listener_thread.start()
+            self.statusBar().showMessage(f"Listening for peers on port {port}", 5000)
+        else:
+            stop_sync_server()
+            self.statusBar().showMessage("No longer listening for peers", 5000)
+
+    def _this_device_lines(self) -> str:
+        """The account, the device and the address a peer would type, for About."""
+        from voicecore import certificate_fingerprint, listen_urls
+
+        config_dir = str(self.config.get_config_dir())
+        port = self.config.get_sync_server_port()
+        urls = listen_urls(port)
+        try:
+            fingerprint = certificate_fingerprint(config_dir)
+        except Exception:  # noqa: BLE001
+            fingerprint = "(not made yet)"
+        return (
+            f"<b>Account:</b> {self.db.account_id()}<br>"
+            f"<b>Device:</b> {self.config.get_device_id_hex()} ({self.config.get_device_name()})<br>"
+            f"<b>Address:</b> {', '.join(urls) or 'unknown'}<br>"
+            f"<b>Certificate:</b> {fingerprint}"
+        )
+
     def show_about(self) -> None:
         """Show the About dialog."""
         about_text = f"""<h2>Voice</h2>
 <p>Version {__version__}</p>
+
+<h3>This device</h3>
+<p>{self._this_device_lines()}</p>
 
 <p>A note-taking application with audio transcription support
 and peer-to-peer synchronization.</p>
