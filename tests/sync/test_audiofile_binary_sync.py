@@ -374,6 +374,7 @@ class TestMissingAudioFileDownload:
     need to check for missing files and download them.
     """
 
+    @pytest.mark.skip(reason="Peer-to-peer binary transfer is disabled: audio binaries go through cloud storage and are downloaded on demand. Re-enable when the peer-transfer storage provider exists.")
     def test_missing_audio_file_downloaded_on_second_sync(
         self,
         server_node_with_audiofiles: SyncNode,

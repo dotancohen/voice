@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt
 
 from core.config import Config
 from core.database import Database
-from ui.notes_list_pane import NotesListPane
+from ui.notes_list_pane import CONTENT_TRUNCATE_LENGTH, NotesListPane
 from tests.helpers import get_note_uuid_hex, get_tag_uuid_hex
 
 
@@ -75,27 +75,54 @@ class TestNoteDisplay:
     def test_long_content_truncated(
         self, qapp, test_config: Config, populated_db: Database
     ) -> None:
-        """Test that long content is truncated with ellipsis."""
-        # Add a note with very long content
-        long_content = "A" * 200  # Much longer than 100 char limit
+        """A note longer than the row can show ends in an ellipsis.
+
+        The length comes from the pane itself, so changing the limit changes
+        the test with it instead of leaving a number behind that no longer
+        matches the code.
+        """
+        long_content = "A" * (CONTENT_TRUNCATE_LENGTH + 50)
         populated_db.create_note(long_content)
 
         pane = NotesListPane(test_config, populated_db)
 
-        # Find the note with long content
         found_truncated = False
         for i in range(pane.list_widget.count()):
             item = pane.list_widget.item(i)
             text = item.text()
             if "AAAA" in text:  # Part of our long content
                 assert text.endswith("...")
-                # Content line should be truncated
                 lines = text.split("\n")
-                assert len(lines[1]) <= 103  # 100 chars + "..."
+                assert len(lines[1]) == CONTENT_TRUNCATE_LENGTH + len("...")
                 found_truncated = True
                 break
 
         assert found_truncated
+
+    def test_content_at_the_limit_is_not_truncated(
+        self, qapp, test_config: Config, populated_db: Database
+    ) -> None:
+        """A note exactly as long as the limit is shown whole.
+
+        The off-by-one at the boundary is what an earlier version of this
+        test got wrong: it wrote exactly the limit and expected an ellipsis.
+        """
+        exact_content = "B" * CONTENT_TRUNCATE_LENGTH
+        populated_db.create_note(exact_content)
+
+        pane = NotesListPane(test_config, populated_db)
+
+        found = False
+        for i in range(pane.list_widget.count()):
+            text = pane.list_widget.item(i).text()
+            if "BBBB" in text:
+                lines = text.split("\n")
+                assert lines[1] == exact_content
+                assert not text.endswith("...")
+                found = True
+                break
+
+        assert found
 
     def test_hebrew_text_displays(
         self, qapp, test_config: Config, populated_db: Database

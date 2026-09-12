@@ -9,6 +9,7 @@ Tests file operations for audio files including:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -388,3 +389,104 @@ class TestIsSupportedAudioFormat:
     def test_no_extension_is_not_supported(self) -> None:
         """Test filename without extension is not supported."""
         assert is_supported_audio_format("filename") is False
+
+
+class TestAudioFileExtensionRule:
+    """The on-disk name rule must match voicecore models.rs::audio_file_extension."""
+
+    def test_lowercases_extension(self) -> None:
+        from core.audiofile_manager import audio_file_extension
+
+        assert audio_file_extension("REC.MP3") == "mp3"
+        assert audio_file_extension("Voice Memo.M4A") == "m4a"
+
+    def test_last_dot_wins(self) -> None:
+        from core.audiofile_manager import audio_file_extension
+
+        assert audio_file_extension("my.recording.OGG") == "ogg"
+
+    def test_hebrew_filename(self) -> None:
+        from core.audiofile_manager import audio_file_extension
+
+        assert audio_file_extension("הקלטה של פגישה.WAV") == "wav"
+
+    def test_missing_or_empty_extension_falls_back_to_bin(self) -> None:
+        from core.audiofile_manager import audio_file_extension
+
+        assert audio_file_extension("noextension") == "bin"
+        assert audio_file_extension("trailingdot.") == "bin"
+        assert audio_file_extension(".hidden") == "bin"
+        assert audio_file_extension("") == "bin"
+
+    def test_record_path_uses_the_rule(self, tmp_path: Path) -> None:
+        manager = AudioFileManager(tmp_path)
+        record = {"id": "0123abcd", "filename": "REC.MP3"}
+        assert manager.get_record_path(record) == tmp_path / "0123abcd.mp3"
+        assert not manager.record_file_exists(record)
+        (tmp_path / "0123abcd.mp3").write_bytes(b"x")
+        assert manager.record_file_exists(record)
+
+    def test_imported_file_is_found_by_record_path(self, tmp_path: Path) -> None:
+        """Importing writes lowercase; lookup by record must agree."""
+        source = tmp_path / "SOURCE.MP3"
+        source.write_bytes(b"data")
+        manager = AudioFileManager(tmp_path / "store")
+        manager.import_file(source, "abc", "MP3")
+        assert manager.record_file_exists({"id": "abc", "filename": "SOURCE.MP3"})
+
+
+class TestFilenameDates:
+    """The date a recorder writes into a file name, and when it is believed."""
+
+    def test_reads_the_shapes_recorders_write(self):
+        from core.audiofile_manager import parse_date_from_filename
+
+        expected = datetime(2026, 9, 8, 14, 53, 14)
+        assert parse_date_from_filename("Recording 2026-09-08 14-53-14.ogg") == expected
+        assert parse_date_from_filename("2026-09-08T14:53:14.m4a") == expected
+        assert parse_date_from_filename("20260908_145314.mp3") == expected
+        assert parse_date_from_filename("REC_20260908_145314.wav") == expected
+        # A Hebrew name around the date is still a date
+        assert parse_date_from_filename("הקלטה 2026-09-08 14-53-14.ogg") == expected
+
+    def test_ignores_what_is_not_a_date(self):
+        from core.audiofile_manager import parse_date_from_filename
+
+        assert parse_date_from_filename("שיחה עם דוד.mp3") is None
+        assert parse_date_from_filename("notes.mp3") is None
+        # A date with no time is not enough to overrule the filesystem
+        assert parse_date_from_filename("2026-09-08.mp3") is None
+        # Digits in the right shape that are not a real date
+        assert parse_date_from_filename("2026-13-45 99-99-99.mp3") is None
+
+    def test_filesystem_date_wins_unless_the_name_is_much_older(self, tmp_path):
+        """A copy made without preserving dates is what the name is for."""
+        from core.audiofile_manager import AudioFileManager
+
+        manager = AudioFileManager(str(tmp_path))
+
+        # Copied without its dates: the filesystem says today, the name a week ago
+        stale = tmp_path / "Recording 2026-09-01 09-05-00.ogg"
+        stale.write_bytes(b"")
+        os.utime(stale, (datetime(2026, 9, 8, 12, 0).timestamp(),) * 2)
+        assert manager.get_file_created_at(stale) == datetime(2026, 9, 1, 9, 5, 0)
+
+        # Dates intact: the name and the filesystem agree, so the filesystem stands
+        intact = tmp_path / "Recording 2026-09-08 09-05-00.ogg"
+        intact.write_bytes(b"")
+        filesystem = datetime(2026, 9, 8, 9, 6, 30)
+        os.utime(intact, (filesystem.timestamp(),) * 2)
+        assert manager.get_file_created_at(intact) == filesystem
+
+        # Just inside the margin: still the filesystem
+        edge = tmp_path / "Recording 2026-09-06 09-05-00.ogg"
+        edge.write_bytes(b"")
+        filesystem = datetime(2026, 9, 8, 8, 0, 0)
+        os.utime(edge, (filesystem.timestamp(),) * 2)
+        assert manager.get_file_created_at(edge) == filesystem
+
+        # No date in the name: the filesystem, as before
+        plain = tmp_path / "הקלטה.ogg"
+        plain.write_bytes(b"")
+        os.utime(plain, (filesystem.timestamp(),) * 2)
+        assert manager.get_file_created_at(plain) == filesystem

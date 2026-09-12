@@ -31,7 +31,7 @@ class TestCLIErrorHandling:
         """CLI handles nonexistent note gracefully."""
         # Use valid UUID format but nonexistent
         nonexistent_id = "00000000000070008000000000009999"
-        returncode, stdout, stderr = cli_runner("show-note", nonexistent_id)
+        returncode, stdout, stderr = cli_runner("note-show", nonexistent_id)
         assert returncode == 1
         assert "not found" in stderr.lower() or "not found" in stdout.lower()
 
@@ -42,7 +42,7 @@ class TestCLIErrorHandling:
         cli_runner,
     ) -> None:
         """CLI handles nonexistent tag search gracefully."""
-        returncode, stdout, stderr = cli_runner("--format", "json", "search", "--tag", "NonexistentTag")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search", "--tag", "NonexistentTag")
         assert returncode == 0  # Returns empty results, not error
         notes = json.loads(stdout)
         assert notes == []
@@ -55,7 +55,7 @@ class TestCLIErrorHandling:
         cli_runner,
     ) -> None:
         """CLI handles invalid note ID type."""
-        returncode, stdout, stderr = cli_runner("show-note", "abc")
+        returncode, stdout, stderr = cli_runner("note-show", "abc")
         assert returncode != 0  # validation error
         assert "invalid" in stderr.lower() or "error" in stderr.lower()
 
@@ -66,7 +66,7 @@ class TestCLIErrorHandling:
         cli_runner,
     ) -> None:
         """CLI handles missing required argument."""
-        returncode, stdout, stderr = cli_runner("show-note")
+        returncode, stdout, stderr = cli_runner("note-show")
         assert returncode != 0
         assert "required" in stderr.lower() or "argument" in stderr.lower()
 
@@ -77,7 +77,7 @@ class TestCLIErrorHandling:
         cli_runner,
     ) -> None:
         """CLI handles search with no criteria (returns all notes)."""
-        returncode, stdout, stderr = cli_runner("--format", "json", "search")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search")
         assert returncode == 0
         notes = json.loads(stdout)
         assert len(notes) == 9  # All notes returned
@@ -196,9 +196,9 @@ class TestEdgeCaseHandling:
         notes = empty_db.get_all_notes()
         assert notes == []
 
-        # Get all tags - should be empty
+        # Get all tags - only the system ones a new database is created with
         tags = empty_db.get_all_tags()
-        assert tags == []
+        assert [t for t in tags if not t["name"].startswith("_")] == []
 
         # Search should return empty
         results = empty_db.search_notes(text_query="anything")
@@ -214,7 +214,7 @@ class TestEdgeCaseHandling:
         """Search handles special characters gracefully."""
         # CLI with special characters
         returncode, stdout, stderr = cli_runner(
-            "--format", "json", "search", "--text", "test%20with%special"
+            "--format", "json", "notes-search", "--text", "test%20with%special"
         )
         assert returncode == 0
         notes = json.loads(stdout)
@@ -233,7 +233,7 @@ class TestEdgeCaseHandling:
     ) -> None:
         """All interfaces handle Unicode correctly."""
         # CLI search for Hebrew text
-        returncode, stdout, stderr = cli_runner("--format", "json", "search", "--text", "שלום")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search", "--text", "שלום")
         assert returncode == 0
         notes = json.loads(stdout)
         assert len(notes) == 1
@@ -254,7 +254,7 @@ class TestEdgeCaseHandling:
     ) -> None:
         """CLI handles very long tag paths."""
         long_path = "/".join(["level"] * 60)  # Exceeds max depth
-        returncode, stdout, stderr = cli_runner("--format", "json", "search", "--tag", long_path)
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search", "--tag", long_path)
         # Should fail validation or return empty results
         # Either is acceptable error handling
         if returncode == 0:

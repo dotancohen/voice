@@ -309,18 +309,23 @@ class TestTimestampEdgeCases:
     """Test edge cases for timestamp handling."""
 
     def test_file_created_at_edge_dates(self, empty_db: Database) -> None:
-        """Test various edge case dates for file_created_at."""
+        """Timestamps at the ends of the range are stored and read back.
+
+        Times are whole seconds since the epoch, so the epoch itself is 0 and
+        anything before it is negative. Zero must survive the round trip: a
+        column that treats it as "no value" would lose the epoch second.
+        """
         edge_dates = [
-            "1970-01-01 00:00:00",  # Unix epoch
-            "2000-01-01 00:00:00",  # Y2K
-            "2099-12-31 23:59:59",  # Far future
+            0,  # The Unix epoch itself
+            946684800,  # 2000-01-01 00:00:00 UTC
+            4102444799,  # 2099-12-31 23:59:59 UTC
+            -2208988800,  # 1900-01-01 00:00:00 UTC, before the epoch
         ]
 
         for date in edge_dates:
             audio_id = empty_db.create_audio_file("test.mp3", file_created_at=date)
             audio_file = empty_db.get_audio_file(audio_id)
-            assert date.replace(" ", "T") in audio_file["file_created_at"] or \
-                   date in audio_file["file_created_at"]
+            assert audio_file["file_created_at"] == date
 
     def test_null_file_created_at(self, empty_db: Database) -> None:
         """Test that file_created_at can be None."""

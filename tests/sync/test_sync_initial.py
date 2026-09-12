@@ -230,7 +230,7 @@ class TestInitialSyncLocalHasData:
 
         # A should have conflict markers
         note_a = node_a.db.get_note(note_id)
-        assert "<<<<<<< LOCAL" in note_a["content"]
+        assert "<<<<<<< VERSION A" in note_a["content"]
         assert "A's edit" in note_a["content"]
         assert "B's edit" in note_a["content"]
 
@@ -254,8 +254,9 @@ class TestInitialSyncRemoteEmpty:
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
-        # Empty remote has 2 system tags (_system, _marked) that get pulled
-        assert result.pulled == 2
+        # The remote's system tags (and their history) are pulled; the exact
+        # count depends on the number of system tags and their versions
+        assert result.pulled > 0
 
         # B should have A's data
         assert node_b.db.get_note(note) is not None
@@ -276,10 +277,13 @@ class TestInitialSyncRemoteEmpty:
         result = client.initial_sync(node_b.device_id_hex)
 
         assert result.success is True
-        # Empty nodes each have 2 system tags (_system, _marked) that get exchanged
-        # pulled is 2 (B's system tags), pushed is 0 (A's tags already exist as same IDs)
-        assert result.pulled == 2
-        assert result.pushed == 0
+        # Both sides hold the same system tags with the same deterministic
+        # ids and roots, so the exchange changes nothing on either side
+        assert result.conflicts == 0
+        assert get_note_count(node_a) == 0
+        assert get_note_count(node_b) == 0
+        assert get_tag_count(node_a) == 0
+        assert get_tag_count(node_b) == 0
 
 
 class TestInitialSyncLargeDatasets:

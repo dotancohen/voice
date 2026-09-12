@@ -128,7 +128,8 @@ class TestGetAllTags:
     def test_returns_all_tags(self, populated_db: Database) -> None:
         """Test that all tags are returned."""
         tags = populated_db.get_all_tags()
-        assert len(tags) == 21  # We created 21 tags in fixture
+        # The fixture's own tags; the system tags are counted separately below
+        assert len([t for t in tags if not t["name"].startswith("_")]) == 21
 
     def test_returns_hierarchy_info(self, populated_db: Database) -> None:
         """Test that parent_id is included."""
@@ -141,10 +142,15 @@ class TestGetAllTags:
         projects_tag = next(t for t in tags if t["name"] == "Projects")
         assert projects_tag["parent_id"] == work_tag["id"]
 
-    def test_returns_empty_for_empty_db(self, empty_db: Database) -> None:
-        """Test empty list for database with no tags."""
+    def test_returns_only_system_tags_for_empty_db(self, empty_db: Database) -> None:
+        """A new database holds no tags of the user's own.
+
+        It does hold the system tags every database is created with, which is
+        why this counts what the user would see rather than the whole table.
+        """
         tags = empty_db.get_all_tags()
-        assert tags == []
+        assert [t for t in tags if not t["name"].startswith("_")] == []
+        assert {t["name"] for t in tags} == {"_system", "_marked", "_nonsynced", "_too-big"}
 
 
 class TestGetTagDescendants:

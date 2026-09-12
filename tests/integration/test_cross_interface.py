@@ -51,7 +51,7 @@ class TestSearchConsistency:
         )
 
         # CLI search
-        returncode, stdout, stderr = cli_runner("--format", "json", "search", "--text", search_query)
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search", "--text", search_query)
         assert returncode == 0, f"CLI failed: {stderr}"
         cli_notes = json.loads(stdout)
         cli_note_ids = sorted([n["id"] for n in cli_notes])
@@ -93,7 +93,7 @@ class TestSearchConsistency:
         )
 
         # CLI search
-        returncode, stdout, stderr = cli_runner("--format", "json", "search", "--tag", "Work")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search", "--tag", "Work")
         assert returncode == 0, f"CLI failed: {stderr}"
         cli_notes = json.loads(stdout)
         cli_note_ids = sorted([n["id"] for n in cli_notes])
@@ -136,7 +136,7 @@ class TestSearchConsistency:
 
         # CLI search
         returncode, stdout, stderr = cli_runner(
-            "--format", "json", "search", "--text", "reunion", "--tag", "Personal"
+            "--format", "json", "notes-search", "--text", "reunion", "--tag", "Personal"
         )
         assert returncode == 0, f"CLI failed: {stderr}"
         cli_notes = json.loads(stdout)
@@ -180,7 +180,7 @@ class TestSearchConsistency:
         )
 
         # CLI search
-        returncode, stdout, stderr = cli_runner("--format", "json", "search", "--tag", "Paris")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search", "--tag", "Paris")
         assert returncode == 0
         cli_notes = json.loads(stdout)
         cli_note_ids = sorted([n["id"] for n in cli_notes])
@@ -220,7 +220,7 @@ class TestDataConsistency:
         gui_count = pane.list_widget.count()
 
         # CLI
-        returncode, stdout, stderr = cli_runner("--format", "json", "list-notes")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-list")
         assert returncode == 0
         cli_notes = json.loads(stdout)
         cli_count = len(cli_notes)
@@ -247,7 +247,7 @@ class TestDataConsistency:
         db_count = len(db_tags)
 
         # CLI
-        returncode, stdout, stderr = cli_runner("--format", "json", "list-tags")
+        returncode, stdout, stderr = cli_runner("--format", "json", "tags-list")
         assert returncode == 0
         cli_tags = json.loads(stdout)
         cli_count = len(cli_tags)
@@ -278,7 +278,7 @@ class TestDataConsistency:
         db_content = db_note["content"]
 
         # CLI
-        returncode, stdout, stderr = cli_runner("--format", "json", "show-note", note_id_hex)
+        returncode, stdout, stderr = cli_runner("--format", "json", "note-show", note_id_hex)
         assert returncode == 0
         cli_note = json.loads(stdout)
         cli_content = cli_note["content"]
@@ -320,7 +320,7 @@ class TestHierarchicalSearchConsistency:
         gui_count = pane.list_widget.count()
 
         # CLI
-        returncode, stdout, _ = cli_runner("--format", "json", "search", "--tag", "Personal")
+        returncode, stdout, _ = cli_runner("--format", "json", "notes-search", "--tag", "Personal")
         assert returncode == 0
         cli_count = len(json.loads(stdout))
 
@@ -353,7 +353,7 @@ class TestHierarchicalSearchConsistency:
 
         # CLI
         returncode, stdout, _ = cli_runner(
-            "--format", "json", "search", "--tag", "Geography/Europe/France/Paris"
+            "--format", "json", "notes-search", "--tag", "Geography/Europe/France/Paris"
         )
         assert returncode == 0
         cli_count = len(json.loads(stdout))

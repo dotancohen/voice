@@ -196,3 +196,28 @@ class TestDefaultConfig:
         assert db_file is not None
         db_path = Path(db_file)
         assert db_path.is_absolute()
+
+
+class TestMirrorAudioFiles:
+    """Local-only option: download every cloud audio file on sync."""
+
+    def test_defaults_to_disabled(self, test_config: Config) -> None:
+        assert test_config.get_mirror_audio_files() is False
+
+    def test_enable_and_persist(self, test_config_dir: Path) -> None:
+        config = Config(config_dir=test_config_dir)
+        config.set_mirror_audio_files(True)
+        assert config.get_mirror_audio_files() is True
+
+        reloaded = Config(config_dir=test_config_dir)
+        assert reloaded.get_mirror_audio_files() is True
+
+        with open(test_config_dir / "config.json", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["sync"]["mirror_audio_files"] is True
+
+    def test_disable(self, test_config_dir: Path) -> None:
+        config = Config(config_dir=test_config_dir)
+        config.set_mirror_audio_files(True)
+        config.set_mirror_audio_files(False)
+        assert Config(config_dir=test_config_dir).get_mirror_audio_files() is False

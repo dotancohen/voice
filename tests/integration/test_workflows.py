@@ -139,7 +139,7 @@ class TestCLIWorkflows:
     ) -> None:
         """List notes, then show details of a specific note."""
         # Step 1: List all notes
-        returncode, stdout, stderr = cli_runner("--format", "json", "list-notes")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-list")
         assert returncode == 0
         notes = json.loads(stdout)
         assert len(notes) == 9
@@ -148,7 +148,7 @@ class TestCLIWorkflows:
         first_note_id = notes[0]["id"]
 
         # Step 3: Show note details
-        returncode, stdout, stderr = cli_runner("--format", "json", "show-note", str(first_note_id))
+        returncode, stdout, stderr = cli_runner("--format", "json", "note-show", str(first_note_id))
         assert returncode == 0
         note = json.loads(stdout)
         assert note["id"] == first_note_id
@@ -162,19 +162,19 @@ class TestCLIWorkflows:
     ) -> None:
         """Search and output in different formats."""
         # Step 1: Search in text format
-        returncode, stdout, _ = cli_runner("search", "--text", "Doctor")
+        returncode, stdout, _ = cli_runner("notes-search", "--text", "Doctor")
         assert returncode == 0
         assert "Doctor" in stdout
         assert "Found 1 note" in stdout
 
         # Step 2: Same search in JSON format
-        returncode, stdout, _ = cli_runner("--format", "json", "search", "--text", "Doctor")
+        returncode, stdout, _ = cli_runner("--format", "json", "notes-search", "--text", "Doctor")
         assert returncode == 0
         notes = json.loads(stdout)
         assert len(notes) == 1
 
         # Step 3: Same search in CSV format
-        returncode, stdout, _ = cli_runner("--format", "csv", "search", "--text", "Doctor")
+        returncode, stdout, _ = cli_runner("--format", "csv", "notes-search", "--text", "Doctor")
         assert returncode == 0
         assert "id,created_at,content,tags" in stdout
         assert "Doctor" in stdout
@@ -187,14 +187,14 @@ class TestCLIWorkflows:
     ) -> None:
         """Explore tag hierarchy and search by specific path."""
         # Step 1: List all tags to see hierarchy
-        returncode, stdout, _ = cli_runner("list-tags")
+        returncode, stdout, _ = cli_runner("tags-list")
         assert returncode == 0
         assert "Geography" in stdout
         assert "Europe" in stdout
         assert "Paris" in stdout
 
         # Step 2: Search by ambiguous tag (Paris)
-        returncode, stdout, stderr = cli_runner("--format", "json", "search", "--tag", "Paris")
+        returncode, stdout, stderr = cli_runner("--format", "json", "notes-search", "--tag", "Paris")
         assert returncode == 0
         notes = json.loads(stdout)
         assert len(notes) == 2  # Both Paris locations
@@ -202,7 +202,7 @@ class TestCLIWorkflows:
 
         # Step 3: Search by specific path
         returncode, stdout, _ = cli_runner(
-            "--format", "json", "search", "--tag", "Geography/Europe/France/Paris"
+            "--format", "json", "notes-search", "--tag", "Geography/Europe/France/Paris"
         )
         assert returncode == 0
         notes = json.loads(stdout)
@@ -250,7 +250,7 @@ class TestWebAPIWorkflows:
         response = web_client.get("/api/tags")
         assert response.status_code == 200
         tags = response.get_json()
-        assert len(tags) == 21
+        assert len([t for t in tags if not t["name"].startswith("_")]) == 21
 
         # Step 2: Find Work tag and search by it
         work_tags = [t for t in tags if t["name"] == "Work"]

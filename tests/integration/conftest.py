@@ -84,7 +84,7 @@ def large_db(test_config_dir: Path) -> Generator[Database, None, None]:
                 tag_id=tag_id_hex,
                 name=f"Tag_B{branch}_L{level}",
                 parent_id=parent_id_hex,
-                created_at=tag_time.strftime("%Y-%m-%d %H:%M:%S"),
+                created_at=int(tag_time.timestamp()),
             )
             parent_id_hex = tag_id_hex
             tag_index += 1
@@ -101,7 +101,7 @@ def large_db(test_config_dir: Path) -> Generator[Database, None, None]:
 
         db.apply_sync_note(
             note_id=note_id_hex,
-            created_at=created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            created_at=int(created_at.timestamp()),
             content=content,
         )
 
@@ -115,7 +115,7 @@ def large_db(test_config_dir: Path) -> Generator[Database, None, None]:
                 db.apply_sync_note_tag(
                     note_id=note_id_hex,
                     tag_id=assigned_tag_id_hex,
-                    created_at=created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    created_at=int(created_at.timestamp()),
                 )
             except Exception:
                 pass  # Ignore duplicate key errors
@@ -150,7 +150,7 @@ def cli_runner(test_config_dir: Path):
         """Run CLI command with given arguments.
 
         Args:
-            *args: CLI arguments (e.g., "list-notes", "--format", "json")
+            *args: CLI arguments (e.g., "notes-list", "--format", "json")
 
         Returns:
             Tuple of (return_code, stdout, stderr).

@@ -198,7 +198,6 @@ class TestCacheRebuildOnTranscriptionChanges:
         assert len(audio_file.get("transcriptions", [])) == 1, \
             "Cache should be rebuilt after create_transcription() - transcription count should be 1"
 
-    @pytest.mark.xfail(reason="update_transcription doesn't rebuild cache for attached notes yet")
     def test_update_transcription_rebuilds_cache(self) -> None:
         """Updating a transcription should rebuild the note's cache."""
         db = Database(":memory:")
@@ -286,80 +285,64 @@ class TestCacheRebuildOnAudioFileChanges:
 
 @pytest.mark.unit
 class TestCacheRebuildOnConflictResolution:
-    """Test cache is rebuilt when conflicts are resolved.
+    """The display cache lists a note's unresolved conflicts and is rebuilt
+    when they appear (during sync) and when they are resolved."""
 
-    NOTE: The resolve_note_*_conflict functions DO call rebuild_note_cache
-    (verified in database.rs lines 3472 and 3514). These tests verify the
-    cache rebuild behavior works correctly.
-    """
+    DEV_A = "0000000000007000800000000000000a"
+    DEV_B = "0000000000007000800000000000000b"
 
-    def test_resolve_note_content_conflict_rebuilds_cache(self) -> None:
-        """Resolving a note content conflict should rebuild the cache."""
-        db = Database(":memory:")
+    @staticmethod
+    def _push_all(src: Database, dst: Database, device_id: str) -> None:
+        from voicecore import apply_sync_changes
+        changes = src.get_changes_since(None, 100000)["changes"]
+        for c in changes:
+            c.setdefault("device_id", device_id)
+        apply_sync_changes(dst._rust_db, changes, device_id, "Device " + device_id[-1])
 
-        # Create note and content conflict
-        # Note: Using the raw Rust binding since Python wrapper has parameter mismatch
-        # Timestamps are Unix integers after timestamp migration
-        note_id = db.create_note("local content")
-        conflict_id = db._rust_db.create_note_content_conflict(
-            note_id,
-            "local content",
-            1704106800,  # 2025-01-01 12:00:00 UTC
-            None,  # local_device_id
-            None,  # local_device_name
-            "remote content",
-            1704107100,  # 2025-01-01 12:05:00 UTC
-            None,  # remote_device_id
-            None,  # remote_device_name
-        )
-        db.rebuild_note_cache(note_id)
+    def _conflicting_note(self) -> tuple:
+        a = Database(":memory:")
+        b = Database(":memory:")
+        note_id = a.create_note("שורה ראשונה")
+        self._push_all(a, b, self.DEV_A)
+        a.update_note(note_id, "שורה ראשונה מהמחשב")
+        b.update_note(note_id, "שורה ראשונה מהטלפון")
+        self._push_all(b, a, self.DEV_B)
+        return a, b, note_id
 
-        initial_cache = get_cache(db, note_id)
-        assert initial_cache is not None
-        assert "content" in initial_cache["conflicts"]
+    def test_sync_conflict_appears_in_cache(self) -> None:
+        a, _b, note_id = self._conflicting_note()
+        cache = get_cache(a, note_id)
+        assert cache is not None
+        assert "content" in cache["conflicts"]
 
-        # Resolve the conflict
-        db.resolve_note_content_conflict(conflict_id, "merged content")
+    def test_accept_conflict_rebuilds_cache(self) -> None:
+        a, _b, note_id = self._conflicting_note()
+        conflicts = a.get_entity_conflicts("note", note_id)
+        assert len(conflicts) == 1
+        assert a.accept_conflict(conflicts[0]["id"])
 
-        # Cache should NOT include the conflict (proving rebuild happened)
-        new_cache = get_cache(db, note_id)
+        new_cache = get_cache(a, note_id)
         assert new_cache is not None
         assert "content" not in new_cache["conflicts"], \
-            "Cache should be rebuilt after resolve_note_content_conflict() - conflict should be removed"
+            "Cache should be rebuilt after accept_conflict() - conflict should be removed"
 
-    def test_resolve_note_delete_conflict_rebuilds_cache(self) -> None:
-        """Resolving a note delete conflict should rebuild the cache (when restoring)."""
-        db = Database(":memory:")
+    def test_resolve_with_content_rebuilds_cache(self) -> None:
+        a, _b, note_id = self._conflicting_note()
+        conflicts = a.get_entity_conflicts("note", note_id)
+        assert a.resolve_conflict_with_content(conflicts[0]["id"], "שורה ראשונה מהמחשב ומהטלפון")
 
-        # Create note and delete conflict
-        # Note: Using the raw Rust binding since Python wrapper has parameter mismatch
-        # Timestamps are Unix integers after timestamp migration
-        note_id = db.create_note("some content")
-        conflict_id = db._rust_db.create_note_delete_conflict(
-            note_id,
-            "some content",
-            1704106800,  # 2025-01-01 12:00:00 UTC
-            None,  # surviving_device_id
-            None,  # surviving_device_name
-            None,  # deleted_content
-            1704107100,  # 2025-01-01 12:05:00 UTC
-            None,  # deleting_device_id
-            None,  # deleting_device_name
-        )
-        db.rebuild_note_cache(note_id)
-
-        initial_cache = get_cache(db, note_id)
-        assert initial_cache is not None
-        assert "delete" in initial_cache["conflicts"]
-
-        # Resolve the conflict by restoring the note
-        db.resolve_note_delete_conflict(conflict_id, restore_note=True)
-
-        # Cache should NOT include the conflict (proving rebuild happened)
-        new_cache = get_cache(db, note_id)
+        new_cache = get_cache(a, note_id)
         assert new_cache is not None
-        assert "delete" not in new_cache["conflicts"], \
-            "Cache should be rebuilt after resolve_note_delete_conflict() - conflict should be removed"
+        assert "content" not in new_cache["conflicts"]
+        assert a.get_note(note_id)["content"] == "שורה ראשונה מהמחשב ומהטלפון"
+
+    def test_saving_note_rebuilds_cache(self) -> None:
+        a, _b, note_id = self._conflicting_note()
+        a.update_note(note_id, "שורה ראשונה מתוקנת")
+
+        new_cache = get_cache(a, note_id)
+        assert new_cache is not None
+        assert new_cache["conflicts"] == []
 
 
 @pytest.mark.unit
@@ -530,3 +513,90 @@ class TestCacheTimestampTypes:
         created_at = transcriptions[0].get("created_at")
         assert created_at is not None, "created_at should be in transcription cache"
         assert isinstance(created_at, int), f"created_at should be int, got {type(created_at)}"
+
+
+@pytest.mark.unit
+class TestCacheRebuildOnTagItselfChanging:
+    """A Tag that is renamed, moved or deleted reaches every Note carrying it.
+
+    Each Note's cache keeps a copy of the name of every Tag on it. Renaming a
+    Tag therefore has to rebuild the cache of every Note that carries it, or
+    those Notes go on showing the old name — to the user, the rename simply
+    did not happen. This was the bug of 2026-09-10, and the same shape of
+    mistake is easy to repeat with any denormalised copy.
+    """
+
+    def test_renaming_a_tag_reaches_the_notes_that_carry_it(self) -> None:
+        db = Database(":memory:")
+        note_id = db.create_note("פגישה עם הצוות")
+        tag_id = db.create_tag("עבודה")
+        db.add_tag_to_note(note_id, tag_id)
+
+        assert get_cache(db, note_id)["tags"][0]["name"] == "עבודה"
+
+        db.rename_tag(tag_id, "עבודה חדשה")
+
+        assert get_cache(db, note_id)["tags"][0]["name"] == "עבודה חדשה", \
+            "the Note's cache must show the new name at once"
+
+    def test_renaming_a_tag_reaches_every_note_that_carries_it(self) -> None:
+        db = Database(":memory:")
+        tag_id = db.create_tag("עבודה")
+        notes = [db.create_note(f"פגישה {i}") for i in range(5)]
+        for note_id in notes:
+            db.add_tag_to_note(note_id, tag_id)
+
+        db.rename_tag(tag_id, "ארכיון")
+
+        for note_id in notes:
+            assert get_cache(db, note_id)["tags"][0]["name"] == "ארכיון"
+
+    def test_renaming_a_tag_leaves_other_notes_alone(self) -> None:
+        db = Database(":memory:")
+        tagged = db.create_note("עם תגית")
+        untagged = db.create_note("בלי תגית")
+        tag_id = db.create_tag("עבודה")
+        db.add_tag_to_note(tagged, tag_id)
+        db.rebuild_note_cache(untagged)
+
+        before = get_cache(db, untagged)
+        db.rename_tag(tag_id, "ארכיון")
+
+        assert get_cache(db, untagged) == before
+
+    def test_moving_a_tag_reaches_the_notes_beneath_it(self) -> None:
+        """A move changes the path of the whole subtree, not only the Tag."""
+        db = Database(":memory:")
+        parent = db.create_tag("עבודה")
+        child = db.create_tag("נסיעות", parent)
+        grandchild = db.create_tag("אתונה", child)
+        note_id = db.create_note("הרצאה")
+        db.add_tag_to_note(note_id, grandchild)
+
+        cached_at = get_cache(db, note_id)["cached_at"]
+
+        elsewhere = db.create_tag("פרויקטים")
+        db.reparent_tag(child, elsewhere)
+
+        # The cache was rebuilt: the Tag on this Note is two levels below the
+        # one that moved, and its path changed with it.
+        cache = get_cache(db, note_id)
+        assert cache is not None
+        assert len(cache["tags"]) == 1
+        assert cache["tags"][0]["name"] == "אתונה"
+        assert cache["cached_at"] >= cached_at
+
+    def test_deleting_a_tag_reaches_the_notes_that_carried_it(self) -> None:
+        db = Database(":memory:")
+        note_id = db.create_note("פגישה")
+        keep = db.create_tag("עבודה")
+        drop = db.create_tag("זמני")
+        db.add_tag_to_note(note_id, keep)
+        db.add_tag_to_note(note_id, drop)
+        assert len(get_cache(db, note_id)["tags"]) == 2
+
+        db.delete_tag(drop)
+
+        names = [t["name"] for t in get_cache(db, note_id)["tags"]]
+        assert names == ["עבודה"], "a deleted Tag must leave the Note's cache at once"
+

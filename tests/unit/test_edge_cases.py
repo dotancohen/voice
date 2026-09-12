@@ -305,7 +305,7 @@ class TestTagHierarchyEdgeCases:
 
     def test_tag_path_traversal(self, populated_db: Database) -> None:
         """Full path correctly traverses hierarchy."""
-        path = get_tag_full_path(populated_db, get_tag_uuid("Paris_France"))
+        path = get_tag_full_path(populated_db, get_tag_uuid_hex("Paris_France"))
         assert path == "Geography/Europe/France/Paris"
 
     def test_search_parent_includes_deep_children(self, populated_db: Database) -> None:

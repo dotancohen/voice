@@ -57,7 +57,8 @@ class TestLargeDatabasePerformance:
         tags = large_db.get_all_tags()
         elapsed = time.perf_counter() - start
 
-        assert len(tags) == 100
+        # 100 tags plus the system tags (_system, _marked, ...)
+        assert len([t for t in tags if not t["name"].startswith("_")]) == 100
         assert elapsed < 0.5, f"get_all_tags took {elapsed:.2f}s, should be < 0.5s"
 
     def test_text_search_performance(
@@ -219,5 +220,5 @@ class TestNormalDatabasePerformance:
         elapsed = time.perf_counter() - start
 
         assert len(notes) == 9
-        assert len(tags) == 21
+        assert len([t for t in tags if not t["name"].startswith("_")]) == 21
         assert elapsed < 0.1, f"Getting all data took {elapsed:.3f}s, should be < 0.1s"

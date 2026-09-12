@@ -412,10 +412,17 @@ class TestSyncConflictsCLI:
 
         assert code == 0
         data = json.loads(stdout)
-        assert "note_content" in data
-        assert "note_delete" in data
-        assert "tag_rename" in data
-        assert len(data["note_content"]) == 0
+        assert data == []
+
+    def test_conflicts_for_unknown_note_fails(self, sync_node_a: SyncNode):
+        """Filtering by a note that does not exist is an error, not an empty list."""
+        code, stdout, stderr = run_cli_command(
+            sync_node_a.config_dir,
+            ["sync", "conflicts", "--note", "00000000000070008000000000000099"],
+        )
+
+        assert code == 1
+        assert "not found" in stderr.lower()
 
 
 class TestSyncResolveCLI:
@@ -425,21 +432,77 @@ class TestSyncResolveCLI:
         """Resolve non-existent conflict fails."""
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["sync", "resolve", "00000000000070008000000000000099", "local"],
+            ["sync", "resolve", "00000000000070008000000000000099"],
         )
 
         assert code == 1
         assert "not found" in stderr.lower()
 
-    def test_resolve_invalid_choice(self, sync_node_a: SyncNode):
-        """Resolve with invalid choice fails."""
+    def test_resolve_rejects_two_content_sources(self, sync_node_a: SyncNode):
+        """--content and --content-file together are rejected."""
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["sync", "resolve", "00000000000070008000000000000099", "invalid"],
+            ["sync", "resolve", "00000000000070008000000000000099",
+             "--content", "א", "--content-file", "/nonexistent"],
         )
 
-        # argparse should reject invalid choice
-        assert code != 0
+        assert code == 1
+        assert "either" in stderr.lower()
+
+    def test_resolve_missing_content_file(self, sync_node_a: SyncNode):
+        """An unreadable --content-file is reported before touching the database."""
+        code, stdout, stderr = run_cli_command(
+            sync_node_a.config_dir,
+            ["sync", "resolve", "00000000000070008000000000000099",
+             "--content-file", str(sync_node_a.config_dir / "missing.txt")],
+        )
+
+        assert code == 1
+        assert "cannot read" in stderr.lower()
+
+
+class TestSettingsCLI:
+    """Tests for the 'settings' command (synced settings)."""
+
+    def test_settings_list_empty(self, sync_node_a: SyncNode):
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["settings", "list"])
+        assert code == 0
+        assert "No synced settings" in stdout
+
+    def test_settings_set_get_list(self, sync_node_a: SyncNode):
+        code, stdout, stderr = run_cli_command(
+            sync_node_a.config_dir,
+            ["settings", "set", "transcription.preferred_languages", '["he", "en"]'],
+        )
+        assert code == 0, stderr
+
+        code, stdout, stderr = run_cli_command(
+            sync_node_a.config_dir,
+            ["--format", "json", "settings", "get", "transcription.preferred_languages"],
+        )
+        assert code == 0, stderr
+        assert json.loads(json.loads(stdout)["transcription.preferred_languages"]) == ["he", "en"]
+
+        # The local config file mirrors the synced value
+        with open(sync_node_a.config_dir / "config.json", encoding="utf-8") as f:
+            cfg = json.load(f)
+        assert cfg["transcription"]["preferred_languages"] == ["he", "en"]
+
+    def test_settings_api_key_is_masked_in_list(self, sync_node_a: SyncNode):
+        code, stdout, stderr = run_cli_command(
+            sync_node_a.config_dir,
+            ["settings", "set", "transcription.providers.assemblyai.api_key", "secret-key-1234"],
+        )
+        assert code == 0, stderr
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["settings", "list"])
+        assert code == 0
+        assert "secret-key-1234" not in stdout
+        assert "transcription.providers.assemblyai.api_key" in stdout
+
+    def test_settings_get_unset_fails(self, sync_node_a: SyncNode):
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["settings", "get", "nothing.here"])
+        assert code == 1
+        assert "not set" in stderr
 
 
 class TestSyncServeCLI:
@@ -621,3 +684,136 @@ class TestCLIEdgeCases:
         # All should succeed
         for code, stdout, stderr in results:
             assert code == 0
+
+
+class TestNoteHistoryCLI:
+    """Tests for 'note-history' and 'note-restore'."""
+
+    def test_history_lists_versions_and_restore(self, sync_node_a: SyncNode):
+        note_id = sync_node_a.db.create_note("גרסה ראשונה")
+        sync_node_a.db.update_note(note_id, "גרסה שנייה")
+        sync_node_a.db.close()
+
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["--format", "json", "note-history", note_id])
+        assert code == 0, stderr
+        versions = json.loads(stdout)
+        assert [v["content"] for v in versions] == ["גרסה ראשונה", "גרסה שנייה"]
+
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["note-history", note_id])
+        assert code == 0, stderr
+        assert "2 versions" in stdout
+        assert "גרסה שנייה" in stdout
+
+        first = versions[0]["id"]
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["note-history", note_id, "--show", first[:8]])
+        assert code == 0, stderr
+        assert stdout.strip().splitlines()[-1] == "גרסה ראשונה"
+
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["note-restore", note_id, first[:8]])
+        assert code == 0, stderr
+        assert "Restored" in stdout
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["note-show", note_id])
+        assert "גרסה ראשונה" in stdout
+
+        sync_node_a.reload_db()
+
+    def test_restore_unknown_version_fails(self, sync_node_a: SyncNode):
+        note_id = sync_node_a.db.create_note("פתק")
+        sync_node_a.db.close()
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["note-restore", note_id, "ffffffff"])
+        assert code == 1
+        assert "No version" in stderr
+        sync_node_a.reload_db()
+
+
+class TestNoteDeleteAndTagCommands:
+    def test_note_delete_is_soft(self, sync_node_a: SyncNode):
+        note_id = sync_node_a.db.create_note("למחיקה")
+        sync_node_a.db.close()
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["note-delete", note_id[:8]])
+        assert code == 0, stderr
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["--format", "json", "note-history", note_id])
+        assert code == 0, stderr
+        assert json.loads(stdout)[0]["content"] == "למחיקה"
+        sync_node_a.reload_db()
+        assert sync_node_a.db.get_note(note_id) is None
+
+    def test_tag_rename_and_move(self, sync_node_a: SyncNode):
+        parent = sync_node_a.db.create_tag("הורה")
+        child = sync_node_a.db.create_tag("ילד")
+        sync_node_a.db.close()
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["tag-rename", child, "ילדה"])
+        assert code == 0, stderr
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["tag-move", child, parent])
+        assert code == 0, stderr
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["tag-move", child, "--root"])
+        assert code == 0, stderr
+        code, stdout, stderr = run_cli_command(sync_node_a.config_dir, ["tag-move", child])
+        assert code == 1
+        sync_node_a.reload_db()
+        tag = sync_node_a.db.get_tag(child)
+        assert tag["name"] == "ילדה" and tag["parent_id"] is None
+
+
+class TestConfigDirAndConfigCommands:
+    """VOICE_CONFIG_DIR, the first-line banner, and 'config get/set/show'."""
+
+    def _run(self, config_dir, args, env_extra=None):
+        import subprocess
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
+        env.pop("VOICE_CONFIG_DIR", None)
+        if env_extra:
+            env.update(env_extra)
+        proc = subprocess.run(
+            [sys.executable, "-m", "src.main"] + args,
+            env=env, capture_output=True, text=True, timeout=60,
+            cwd=str(Path(__file__).parent.parent.parent),
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+
+    def test_env_var_selects_config_dir_and_banner_is_first_line(self, sync_node_a: SyncNode):
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "get", "config_dir"],
+                                         {"VOICE_CONFIG_DIR": str(sync_node_a.config_dir)})
+        assert code == 0, stderr
+        lines = [l for l in stdout.splitlines() if l.strip()]
+        assert lines[0] == f"Using CONFIG_DIR: {sync_node_a.config_dir}"
+        assert lines[1] == str(sync_node_a.config_dir)
+
+    def test_dash_d_wins_over_env_var(self, sync_node_a: SyncNode, tmp_path: Path):
+        other = tmp_path / "other"
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["-d", str(sync_node_a.config_dir), "cli", "config", "get", "config_dir"],
+                                         {"VOICE_CONFIG_DIR": str(other)})
+        assert code == 0, stderr
+        assert stdout.splitlines()[-1] == str(sync_node_a.config_dir)
+
+    def test_json_format_keeps_stdout_clean(self, sync_node_a: SyncNode):
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "--format", "json", "config", "show"],
+                                         {"VOICE_CONFIG_DIR": str(sync_node_a.config_dir)})
+        assert code == 0, stderr
+        assert json.loads(stdout)["config_dir"] == str(sync_node_a.config_dir)
+        assert "Using CONFIG_DIR" in stderr
+
+    def test_config_set_and_get(self, sync_node_a: SyncNode, tmp_path: Path):
+        env = {"VOICE_CONFIG_DIR": str(sync_node_a.config_dir)}
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "set", "device_name", "מחשב"], env)
+        assert code == 0, stderr
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "get", "device_name"], env)
+        assert stdout.splitlines()[-1] == "מחשב"
+        audio = tmp_path / "audio-דיר"
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "set", "audiofile_directory", str(audio)], env)
+        assert code == 0, stderr
+        assert audio.is_dir()
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "get", "audiofile_directory"], env)
+        assert stdout.splitlines()[-1] == str(audio.resolve())
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "set", "nonsense", "x"], env)
+        assert code == 1 and "unknown key" in stderr
+
+    def test_voice_wrapper_script(self, sync_node_a: SyncNode):
+        import subprocess
+        env = os.environ.copy()
+        env["VOICE_CONFIG_DIR"] = str(sync_node_a.config_dir)
+        script = Path(__file__).parent.parent.parent / "bin" / "voice"
+        proc = subprocess.run([str(script), "cli", "config", "get", "device_id"], env=env, capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.splitlines()[-1] == sync_node_a.device_id_hex

@@ -15,6 +15,7 @@ from typing import Any, Dict
 
 import pytest
 import requests
+import uuid
 
 from .conftest import (
     SyncNode,
@@ -37,7 +38,7 @@ class TestSyncStatus:
         assert data["status"] == "ok"
         assert data["device_id"] == running_server_a.device_id_hex
         assert data["device_name"] == running_server_a.name
-        assert data["protocol_version"] == "1.0"
+        assert data["protocol_version"] == "1.1"
 
     def test_status_json_content_type(self, running_server_a: SyncNode):
         """Status endpoint returns JSON content type."""
@@ -64,7 +65,7 @@ class TestSyncHandshake:
         data = resp.json()
         assert data["device_id"] == running_server_a.device_id_hex
         assert data["device_name"] == running_server_a.name
-        assert data["protocol_version"] == "1.0"
+        assert data["protocol_version"] == "1.1"
 
     def test_handshake_missing_device_id(self, running_server_a: SyncNode):
         """Handshake fails without device_id."""
@@ -140,10 +141,16 @@ class TestSyncChanges:
 
         assert resp.status_code == 200
         data = resp.json()
-        # Filter out system tags (names starting with underscore)
+        # Filter out system tags (names starting with underscore) and their
+        # field versions (name and parent history of each system tag)
+        system_tag_ids = {
+            c["entity_id"] for c in data["changes"]
+            if c["entity_type"] == "tag" and c["data"]["name"].startswith("_")
+        }
         non_system_changes = [
             c for c in data["changes"]
-            if c["entity_type"] != "tag" or not c["data"]["name"].startswith("_")
+            if not (c["entity_type"] == "tag" and c["entity_id"] in system_tag_ids)
+            and not (c["entity_type"] == "field_version" and c["data"]["entity_id"] in system_tag_ids)
         ]
         assert non_system_changes == []
         assert data["device_id"] == running_server_a.device_id_hex
@@ -228,7 +235,14 @@ class TestSyncChanges:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["changes"]) <= 2
+        # The limit applies per entity type (see CLAUDE.md): 2 notes at most,
+        # while the tags are still returned rather than starved.
+        by_type = {}
+        for change in data["changes"]:
+            by_type.setdefault(change["entity_type"], []).append(change)
+        assert len(by_type["note"]) == 2
+        assert "tag" in by_type
+        assert all(len(changes) <= 2 for changes in by_type.values())
         assert data["is_complete"] is False
 
     def test_changes_includes_hierarchy(self, running_server_a: SyncNode):
@@ -326,34 +340,64 @@ class TestSyncApply:
         tag_names = [t["name"] for t in tags]
         assert "RemoteTag" in tag_names
 
-    def test_apply_updates_note(self, running_server_a: SyncNode):
-        """Apply endpoint creates conflict when content differs (no LWW)."""
-        # Create a note locally
-        note_id = create_note_on_node(running_server_a, "Original content")
+    @staticmethod
+    def _remote_edit(node: SyncNode, note_id: str, content: str, device_id: str, created_at: int) -> list:
+        """The changes a protocol 1.1 peer sends for an edit: the version plus the row."""
+        history = node.db.get_field_history("note", note_id, "content")
+        parent = history[-1]["id"]
+        version_id = uuid.uuid4().hex
+        return [
+            {
+                "entity_type": "field_version",
+                "entity_id": version_id,
+                "operation": "create",
+                "data": {
+                    "id": version_id,
+                    "entity_type": "note",
+                    "entity_id": note_id,
+                    "field": "content",
+                    "parent_id": parent,
+                    "merge_parent_id": None,
+                    "content": content,
+                    "context": None,
+                    "conflict_kind": None,
+                    "device_id": device_id,
+                    "device_name": "RemoteDevice",
+                    "created_at": created_at,
+                },
+                "timestamp": created_at,
+                "device_id": device_id,
+            },
+            {
+                "entity_type": "note",
+                "entity_id": note_id,
+                "operation": "update",
+                "data": {
+                    "id": note_id,
+                    "created_at": 1735725600,
+                    "content": content,
+                    "modified_at": created_at,
+                    "deleted_at": None,
+                },
+                "timestamp": created_at,
+                "device_id": device_id,
+            },
+        ]
 
-        # Apply update - creates conflict because content differs
+    def test_apply_updates_note(self, running_server_a: SyncNode):
+        """A concurrent remote edit is merged and flagged, never applied over the local edit."""
+        note_id = create_note_on_node(running_server_a, "Original content")
+        running_server_a.db.update_note(note_id, "Local content")
+        remote = "00000000000070008000000000000099"
+        # The remote edited from the original: its version's parent is the root
+        history = running_server_a.db.get_field_history("note", note_id, "content")
+        root = history[0]["id"]
+        changes = self._remote_edit(running_server_a, note_id, "Updated content", remote, 4070908800)
+        changes[0]["data"]["parent_id"] = root
+
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
-            json={
-                "device_id": "00000000000070008000000000000099",
-                "device_name": "RemoteDevice",
-                "changes": [
-                    {
-                        "entity_type": "note",
-                        "entity_id": note_id,
-                        "operation": "update",
-                        "data": {
-                            "id": note_id,
-                            "created_at": 1735725600,
-                            "content": "Updated content",
-                            "modified_at": "2099-01-01 10:00:00",
-                            "deleted_at": None,
-                        },
-                        "timestamp": 4070908800,
-                        "device_id": "00000000000070008000000000000099",
-                    }
-                ],
-            },
+            json={"device_id": remote, "device_name": "RemoteDevice", "changes": changes},
         )
 
         assert resp.status_code == 200
@@ -362,18 +406,16 @@ class TestSyncApply:
 
         # Verify both versions are preserved in conflict markers
         note = running_server_a.db.get_note(note_id)
-        assert "<<<<<<< LOCAL" in note["content"]
-        assert "Original content" in note["content"]
+        assert "<<<<<<< VERSION A" in note["content"]
+        assert "Local content" in note["content"]
         assert "Updated content" in note["content"]
-        assert ">>>>>>> REMOTE" in note["content"]
+        assert ">>>>>>> VERSION B" in note["content"]
 
-    def test_apply_skips_older_update(self, running_server_a: SyncNode):
-        """Apply endpoint creates conflict even with older timestamp (no LWW)."""
-        # Create a note locally with recent modification
+    def test_apply_row_without_version_is_ignored(self, running_server_a: SyncNode):
+        """A bare row with a different value (no version) neither overwrites nor conflicts."""
         note_id = create_note_on_node(running_server_a, "Original content")
         running_server_a.db.update_note(note_id, "Local update")
 
-        # Apply update with older timestamp - still creates conflict (no LWW)
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
             json={
@@ -388,7 +430,7 @@ class TestSyncApply:
                             "id": note_id,
                             "created_at": 1577872800,
                             "content": "Old remote content",
-                            "modified_at": "2020-01-01 10:00:00",
+                            "modified_at": 1577872800,
                             "deleted_at": None,
                         },
                         "timestamp": 1577872800,
@@ -399,14 +441,24 @@ class TestSyncApply:
         )
 
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["conflicts"] == 1  # Conflict created
-
-        # Verify both versions preserved
+        assert resp.json()["conflicts"] == 0
         note = running_server_a.db.get_note(note_id)
-        assert "<<<<<<< LOCAL" in note["content"]
-        assert "Local update" in note["content"]
-        assert "Old remote content" in note["content"]
+        assert note["content"] == "Local update"
+
+    def test_apply_sequential_remote_edit_replaces_content(self, running_server_a: SyncNode):
+        """A remote edit that builds on the current head simply becomes the content."""
+        note_id = create_note_on_node(running_server_a, "Original content")
+        remote = "00000000000070008000000000000099"
+        changes = self._remote_edit(running_server_a, note_id, "Edited remotely", remote, 4070908800)
+
+        resp = requests.post(
+            f"{running_server_a.url}/sync/apply",
+            json={"device_id": remote, "device_name": "RemoteDevice", "changes": changes},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["conflicts"] == 0
+        assert running_server_a.db.get_note(note_id)["content"] == "Edited remotely"
 
     def test_apply_missing_device_id(self, running_server_a: SyncNode):
         """Apply endpoint fails without device_id."""

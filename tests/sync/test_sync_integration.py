@@ -487,7 +487,7 @@ class TestComplexWorkflows:
         note_a = node_a.db.get_note(note_id)
         assert "Edit from A" in note_a["content"]
         assert "Edit from B" in note_a["content"]
-        assert "<<<<<<< LOCAL" in note_a["content"]
+        assert "<<<<<<< VERSION A" in note_a["content"]
 
     def test_tag_reorganization_sync(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -847,6 +847,7 @@ class TestAudioFileSyncIntegration:
             audio_b = node_b.db.get_audio_file(audio_id)
             assert audio_b is not None, f"Audio file {audio_id} should exist"
 
+    @pytest.mark.skip(reason="Peer-to-peer binary transfer is disabled: audio binaries go through cloud storage and are downloaded on demand. Re-enable when the peer-transfer storage provider exists.")
     def test_automatic_binary_sync_on_push(
         self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
     ) -> None:
@@ -881,6 +882,7 @@ class TestAudioFileSyncIntegration:
         )
         assert binary_b.read_bytes() == test_content
 
+    @pytest.mark.skip(reason="Peer-to-peer binary transfer is disabled: audio binaries go through cloud storage and are downloaded on demand. Re-enable when the peer-transfer storage provider exists.")
     def test_automatic_binary_sync_on_pull(
         self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
     ) -> None:

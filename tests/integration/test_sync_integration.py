@@ -16,7 +16,7 @@ from flask.testing import FlaskClient
 from uuid6 import uuid7
 
 from core.config import Config
-from core.conflicts import ConflictManager, ResolutionChoice
+from core.conflicts import ConflictManager, has_conflict_markers
 from core.database import Database, set_local_device_id
 from core.sync import create_sync_blueprint
 from core.validation import uuid_to_hex
@@ -219,168 +219,91 @@ class TestSyncWorkflow:
 
 
 class TestConflictResolution:
-    """Test conflict resolution workflow."""
+    """Conflict resolution workflow over the sync feed."""
 
-    def test_resolve_content_conflict_keep_local(
+    REMOTE = "0000000000007000800000000000000b"
+
+    def _conflicted_note(self, db: Database):
+        """A note edited here and, concurrently, on a remote device."""
+        from voicecore import apply_sync_changes
+
+        set_local_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
+        remote = Database(":memory:")
+        note_id = db.create_note("גרסה מקורית")
+        changes = db.get_changes_since(None, 100000)["changes"]
+        for c in changes:
+            c.setdefault("device_id", "0000000000007000800000000000000a")
+        apply_sync_changes(remote._rust_db, changes, "0000000000007000800000000000000a", "Local")
+        db.update_note(note_id, "גרסה מקומית")
+        remote.update_note(note_id, "גרסה מרוחקת")
+        changes = remote.get_changes_since(None, 100000)["changes"]
+        for c in changes:
+            c.setdefault("device_id", self.REMOTE)
+        result = apply_sync_changes(db._rust_db, changes, self.REMOTE, "Remote")
+        remote.close()
+        assert result["conflicts"] == 1
+        return note_id
+
+    def test_concurrent_edit_keeps_both_versions(
         self, device_a: Tuple[Database, Config]
     ) -> None:
-        """Resolve content conflict by keeping local."""
-        from datetime import datetime, timezone
-
         db, config = device_a
-        device_id = uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes
-        set_local_device_id(device_id)
+        note_id = self._conflicted_note(db)
+        text = db.get_note(note_id)["content"]
+        assert "גרסה מקומית" in text and "גרסה מרוחקת" in text
+        assert has_conflict_markers(text)
+        mgr = ConflictManager(db)
+        assert mgr.get_unresolved_count()["total"] == 1
+        c = mgr.get_conflicts()[0]
+        # Both databases live in this process and share its device name
+        assert "unknown device" not in (c.device_a_label, c.device_b_label)
 
-        # Create a note
-        note_id = db.create_note("Local content")
-
-        now = datetime.now(timezone.utc).isoformat()
-        remote_device_id = "00000000000070008000000000000b"
-
-        # Create a conflict using Database method
-        conflict_id = db.create_note_content_conflict(
-            note_id=note_id,
-            local_content="Local version",
-            local_modified_at=now,
-            remote_content="Remote version",
-            remote_modified_at=now,
-            remote_device_id=remote_device_id,
-        )
-
-        # Resolve conflict
-        conflict_mgr = ConflictManager(db)
-        result = conflict_mgr.resolve_note_content_conflict(
-            conflict_id, ResolutionChoice.KEEP_LOCAL
-        )
-
-        assert result is True
-
-        # Verify note has local content
-        note = db.get_note(note_id)
-        assert note["content"] == "Local version"
-
-        # Verify conflict is resolved
-        counts = conflict_mgr.get_unresolved_count()
-        assert counts["note_content"] == 0
-
-    def test_resolve_content_conflict_keep_remote(
+    def test_resolve_by_accepting_merge(
         self, device_a: Tuple[Database, Config]
     ) -> None:
-        """Resolve content conflict by keeping remote."""
-        from datetime import datetime, timezone
-
         db, config = device_a
-        device_id = uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes
-        set_local_device_id(device_id)
+        note_id = self._conflicted_note(db)
+        mgr = ConflictManager(db)
+        assert mgr.accept(mgr.get_conflicts()[0].id) is True
+        assert mgr.get_unresolved_count()["total"] == 0
+        assert has_conflict_markers(db.get_note(note_id)["content"])
 
-        # Create a note
-        note_id = db.create_note("Original")
-
-        now = datetime.now(timezone.utc).isoformat()
-        remote_device_id = "00000000000070008000000000000b"
-
-        # Create a conflict using Database method
-        conflict_id = db.create_note_content_conflict(
-            note_id=note_id,
-            local_content="Local version",
-            local_modified_at=now,
-            remote_content="Remote version",
-            remote_modified_at=now,
-            remote_device_id=remote_device_id,
-        )
-
-        # Resolve conflict
-        conflict_mgr = ConflictManager(db)
-        result = conflict_mgr.resolve_note_content_conflict(
-            conflict_id, ResolutionChoice.KEEP_REMOTE
-        )
-
-        assert result is True
-
-        # Verify note has remote content
-        note = db.get_note(note_id)
-        assert note["content"] == "Remote version"
-
-    def test_resolve_delete_conflict_restore(
+    def test_resolve_by_editing(
         self, device_a: Tuple[Database, Config]
     ) -> None:
-        """Resolve delete conflict by restoring note."""
-        from datetime import datetime, timezone
+        db, config = device_a
+        note_id = self._conflicted_note(db)
+        mgr = ConflictManager(db)
+        assert mgr.resolve_with_content(mgr.get_conflicts()[0].id, "גרסה מאוחדת") is True
+        assert db.get_note(note_id)["content"] == "גרסה מאוחדת"
+        assert mgr.get_unresolved_count()["total"] == 0
+
+    def test_edit_vs_delete_restores_note(
+        self, device_a: Tuple[Database, Config]
+    ) -> None:
+        from voicecore import apply_sync_changes
 
         db, config = device_a
-        device_id = uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes
-        set_local_device_id(device_id)
-
-        # Create a note and delete it
-        note_id = db.create_note("Deleted content")
+        set_local_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
+        remote = Database(":memory:")
+        note_id = db.create_note("תוכן")
+        changes = db.get_changes_since(None, 100000)["changes"]
+        for c in changes:
+            c.setdefault("device_id", "0000000000007000800000000000000a")
+        apply_sync_changes(remote._rust_db, changes, "0000000000007000800000000000000a", "Local")
         db.delete_note(note_id)
+        remote.update_note(note_id, "תוכן לשחזור")
+        changes = remote.get_changes_since(None, 100000)["changes"]
+        for c in changes:
+            c.setdefault("device_id", self.REMOTE)
+        apply_sync_changes(db._rust_db, changes, self.REMOTE, "Remote")
+        remote.close()
 
-        now = datetime.now(timezone.utc).isoformat()
-        surviving_device_id = "00000000000070008000000000000b"
-        deleting_device_id = uuid.UUID(bytes=device_id).hex
-
-        # Create delete conflict using Database method
-        conflict_id = db.create_note_delete_conflict(
-            note_id=note_id,
-            surviving_content="Content to restore",
-            surviving_modified_at=now,
-            surviving_device_id=surviving_device_id,
-            deleted_at=now,
-            deleting_device_id=deleting_device_id,
-        )
-
-        # Resolve by keeping both (restore)
-        conflict_mgr = ConflictManager(db)
-        result = conflict_mgr.resolve_note_delete_conflict(
-            conflict_id, ResolutionChoice.KEEP_BOTH
-        )
-
-        assert result is True
-
-        # Verify note is restored
         note = db.get_note(note_id)
         assert note is not None
-        assert note["content"] == "Content to restore"
+        assert note["content"] == "תוכן לשחזור"
         assert note.get("deleted_at") is None
-
-    def test_resolve_tag_rename_conflict(
-        self, device_a: Tuple[Database, Config]
-    ) -> None:
-        """Resolve tag rename conflict."""
-        from datetime import datetime, timezone
-
-        db, config = device_a
-        device_id = uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes
-        set_local_device_id(device_id)
-
-        # Create a tag
-        tag_id = db.create_tag("original_name")
-
-        now = datetime.now(timezone.utc).isoformat()
-        remote_device_id = "00000000000070008000000000000b"
-
-        # Create a rename conflict using Database method
-        conflict_id = db.create_tag_rename_conflict(
-            tag_id=tag_id,
-            local_name="local_renamed",
-            local_modified_at=now,
-            remote_name="remote_renamed",
-            remote_modified_at=now,
-            remote_device_id=remote_device_id,
-        )
-
-        # Resolve by keeping remote
-        conflict_mgr = ConflictManager(db)
-        result = conflict_mgr.resolve_tag_rename_conflict(
-            conflict_id, ResolutionChoice.KEEP_REMOTE
-        )
-
-        assert result is True
-
-        # Verify tag has remote name
-        tags = db.get_all_tags()
-        tag = next(t for t in tags if t["id"] == tag_id)
-        assert tag["name"] == "remote_renamed"
+        assert "delete" in ConflictManager(db).get_note_conflict_types(note_id)
 
 
 class TestEdgeCases:

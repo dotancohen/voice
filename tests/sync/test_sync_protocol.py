@@ -44,7 +44,7 @@ class TestProtocolVersionHandshake:
         assert response.status_code == 200
         data = response.json()
         assert "protocol_version" in data
-        assert data["protocol_version"] == "1.0"
+        assert data["protocol_version"] == "1.1"
 
     def test_status_includes_protocol_version(self, running_server_a: SyncNode):
         """Status endpoint includes protocol version."""
@@ -267,7 +267,7 @@ class TestProtocolVersionNegotiation:
 
         data = response.json()
         # Server responds with its version (should be 1.0)
-        assert data["protocol_version"] == "1.0"
+        assert data["protocol_version"] == "1.1"
 
 
 class TestFutureProtocolVersion:

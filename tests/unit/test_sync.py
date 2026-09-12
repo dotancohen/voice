@@ -61,6 +61,49 @@ def sync_client(sync_app: Flask) -> FlaskClient:
     return sync_app.test_client()
 
 
+@pytest.fixture
+def peer_db(test_config_dir: Path) -> Generator[Database, None, None]:
+    """A second device, so that sync can be tested as it really happens."""
+    set_local_device_id(PEER_DEVICE.bytes)
+    db = Database(test_config_dir / "sync_peer.db")
+    yield db
+    db.close()
+    set_local_device_id(LOCAL_DEVICE.bytes)
+
+
+LOCAL_DEVICE = uuid.UUID("00000000-0000-7000-8000-000000000001")
+PEER_DEVICE = uuid.UUID("00000000-0000-7000-8000-000000000002")
+
+
+def on_device(device: uuid.UUID) -> None:
+    """Write as this device from here on.
+
+    The device identity is process-wide, so a test with two databases has to
+    say which one is acting before every write.
+    """
+    set_local_device_id(device.bytes)
+
+
+def push(
+    source: Database,
+    source_device: uuid.UUID,
+    target: Database,
+    target_device: uuid.UUID,
+    cursor: object = None,
+) -> tuple:
+    """Send everything the source has learned since `cursor` to the target.
+
+    Returns (applied, conflicts, errors, cursor for the next push).
+    """
+    on_device(source_device)
+    changes, next_cursor = get_changes_since(source, cursor)
+    on_device(target_device)
+    applied, conflicts, errors = apply_sync_changes(
+        target, changes, source_device.hex, "Test Peer"
+    )
+    return applied, conflicts, errors, next_cursor
+
+
 class TestSyncStatus:
     """Test sync status endpoint."""
 
@@ -72,7 +115,7 @@ class TestSyncStatus:
         assert data["status"] == "ok"
         assert "device_id" in data
         assert "device_name" in data
-        assert data["protocol_version"] == "1.0"
+        assert data["protocol_version"] == "1.1"
 
 
 class TestHandshake:
@@ -93,7 +136,7 @@ class TestHandshake:
         data = response.get_json()
         assert "device_id" in data
         assert "device_name" in data
-        assert data["protocol_version"] == "1.0"
+        assert data["protocol_version"] == "1.1"
 
     def test_handshake_missing_device_id(self, sync_client: FlaskClient) -> None:
         """Handshake fails without device_id."""
@@ -126,7 +169,9 @@ class TestGetChanges:
         response = sync_client.get("/sync/changes")
         assert response.status_code == 200
         data = response.get_json()
-        assert data["changes"] == []
+        # A new database is created with its system tags, so the feed is never
+        # truly empty; what matters is that it holds nothing of the user's
+        assert [c for c in data["changes"] if c["entity_type"] == "note"] == []
         assert data["is_complete"] is True
 
     def test_get_changes_with_notes(
@@ -183,7 +228,9 @@ class TestGetChanges:
         for i in range(5):
             sync_db.create_note(f"Note {i}")
 
-        response = sync_client.get("/sync/changes?limit=2")
+        # The cursor feed is the one with a single limit across every type;
+        # the timestamp feed deliberately limits each type separately (PROTO-7)
+        response = sync_client.get("/sync/changes?cursor=0&limit=2")
         assert response.status_code == 200
         data = response.get_json()
 
@@ -201,7 +248,7 @@ class TestFullSync:
         data = response.get_json()
 
         assert data["notes"] == []
-        assert data["tags"] == []
+        assert [t for t in data["tags"] if not t["name"].startswith("_")] == []
         assert data["note_tags"] == []
         assert "device_id" in data
         assert "timestamp" in data
@@ -220,8 +267,9 @@ class TestFullSync:
 
         assert len(data["notes"]) == 1
         assert data["notes"][0]["content"] == "Test note"
-        assert len(data["tags"]) == 1
-        assert data["tags"][0]["name"] == "TestTag"
+        own_tags = [t for t in data["tags"] if not t["name"].startswith("_")]
+        assert len(own_tags) == 1
+        assert own_tags[0]["name"] == "TestTag"
 
 
 class TestApplyChanges:
@@ -244,12 +292,12 @@ class TestApplyChanges:
                         "operation": "create",
                         "data": {
                             "id": note_id,
-                            "created_at": "2025-01-15 10:00:00",
+                            "created_at": 1736935200,
                             "content": "Remote note",
                             "modified_at": None,
                             "deleted_at": None,
                         },
-                        "timestamp": "2025-01-15 10:00:00",
+                        "timestamp": 1736935200,
                         "device_id": peer_id,
                     }
                 ],
@@ -270,15 +318,19 @@ class TestApplyChanges:
         )
         assert response.status_code == 400
 
-    def test_apply_update_note_creates_conflict(
+    def test_apply_row_only_update_keeps_the_local_text(
         self, sync_db: Database, sync_client: FlaskClient
     ) -> None:
-        """Apply creates conflict when content differs (no LWW - preserve both)."""
-        # Create local note
-        note_id = sync_db.create_note("Local content")
+        """A bare row never overwrites a field that has history (VER-4).
+
+        Rows in the feed are denormalised hints so that a reader without the
+        version graph still sees a value. The value itself travels as a
+        version, so a row whose content differs from the head is ignored
+        rather than written: no last-write-wins, and nothing to merge yet.
+        """
+        note_id = sync_db.create_note("תוכן מקומי")
         peer_id = uuid.uuid4().hex
 
-        # Apply remote update - should create conflict, not overwrite
         response = sync_client.post(
             "/sync/apply",
             json={
@@ -291,14 +343,78 @@ class TestApplyChanges:
                         "operation": "update",
                         "data": {
                             "id": note_id,
-                            "created_at": "2025-01-15 10:00:00",
-                            "content": "Remote content - newer",
-                            "modified_at": "2099-01-01 00:00:00",
+                            "created_at": 1736935200,
+                            "content": "תוכן מרוחק",
+                            "modified_at": 4070908800,
                             "deleted_at": None,
                         },
-                        "timestamp": "2099-01-01 00:00:00",
+                        "timestamp": 4070908800,
                         "device_id": peer_id,
                     }
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["applied"] == 1
+        assert data["conflicts"] == 0
+        assert sync_db.get_note(note_id)["content"] == "תוכן מקומי"
+
+    def test_apply_update_note_creates_conflict(
+        self, sync_db: Database, sync_client: FlaskClient
+    ) -> None:
+        """Two texts written apart are both kept, and a conflict is recorded.
+
+        This is the shape a real peer sends: the row plus the version that
+        carries the text. The two versions have no common ancestor, so
+        neither can win; both are kept in the note and a conflict record is
+        created for the reader to resolve.
+        """
+        note_id = sync_db.create_note("תוכן מקומי")
+        peer_id = uuid.uuid4().hex
+        version_id = uuid.uuid4().hex
+
+        response = sync_client.post(
+            "/sync/apply",
+            json={
+                "device_id": peer_id,
+                "device_name": "Test Peer",
+                "changes": [
+                    {
+                        "entity_type": "note",
+                        "entity_id": note_id,
+                        "operation": "update",
+                        "data": {
+                            "id": note_id,
+                            "created_at": 1736935200,
+                            "content": "תוכן מרוחק",
+                            "modified_at": 4070908800,
+                            "deleted_at": None,
+                        },
+                        "timestamp": 4070908800,
+                        "device_id": peer_id,
+                    },
+                    {
+                        "entity_type": "field_version",
+                        "entity_id": version_id,
+                        "operation": "create",
+                        "data": {
+                            "id": version_id,
+                            "entity_type": "note",
+                            "entity_id": note_id,
+                            "field": "content",
+                            "parent_id": None,
+                            "merge_parent_id": None,
+                            "content": "תוכן מרוחק",
+                            "device_id": peer_id,
+                            "device_name": "Test Peer",
+                            "created_at": 4070908800,
+                            "published": True,
+                        },
+                        "timestamp": 4070908800,
+                        "device_id": peer_id,
+                    },
                 ],
             },
         )
@@ -310,18 +426,21 @@ class TestApplyChanges:
 
         # Verify BOTH versions are preserved in merged content
         note = sync_db.get_note(note_id)
-        assert "Local content" in note["content"]
-        assert "Remote content - newer" in note["content"]
+        assert "תוכן מקומי" in note["content"]
+        assert "תוכן מרוחק" in note["content"]
 
 
 class TestGetChangesSince:
     """Test get_changes_since function."""
 
-    def test_returns_empty_for_empty_db(self, sync_db: Database) -> None:
-        """Returns empty list for empty database."""
+    def test_returns_only_the_system_tags_for_empty_db(self, sync_db: Database) -> None:
+        """A database with nothing of the user's in it offers nothing of the
+        user's, though the tags it was created with are there."""
         changes, timestamp = get_changes_since(sync_db, None)
-        assert changes == []
-        assert timestamp is None
+        assert [c for c in changes if c.entity_type == "note"] == []
+        assert all(
+            c.entity_type != "tag" or c.data["name"].startswith("_") for c in changes
+        )
 
     def test_returns_note_changes(self, sync_db: Database) -> None:
         """Returns note create changes."""
@@ -351,12 +470,12 @@ class TestApplySyncChanges:
                 operation="create",
                 data={
                     "id": note_id,
-                    "created_at": "2025-01-15 10:00:00",
+                    "created_at": 1736935200,
                     "content": "Remote note",
                     "modified_at": None,
                     "deleted_at": None,
                 },
-                timestamp="2025-01-15 10:00:00",
+                timestamp=1736935200,
                 device_id=peer_id,
             )
         ]
@@ -388,10 +507,10 @@ class TestApplySyncChanges:
                     "id": tag_id,
                     "name": "RemoteTag",
                     "parent_id": None,
-                    "created_at": "2025-01-15 10:00:00",
+                    "created_at": 1736935200,
                     "modified_at": None,
                 },
-                timestamp="2025-01-15 10:00:00",
+                timestamp=1736935200,
                 device_id=peer_id,
             )
         ]
@@ -410,174 +529,134 @@ class TestApplySyncChanges:
 
 
 class TestApplySyncChangesDeleteConflicts:
-    """Test apply_sync_changes handles edit-delete conflicts."""
+    """A delete that did not see an edit never destroys the edit.
 
-    def test_create_on_deleted_note_resurrects(self, sync_db: Database) -> None:
-        """Create operation on deleted note resurrects it and creates conflict."""
-        # Create and delete a note locally
-        note_id = sync_db.create_note("Original content")
+    These use a second real database rather than hand-written rows, because
+    the value of a field travels as a version and a bare row is only a hint
+    (VER-4). A test that sends rows alone proves nothing about what a peer
+    would really do.
+    """
+
+    def test_edit_arriving_after_a_local_delete_keeps_the_note(
+        self, sync_db: Database, peer_db: Database
+    ) -> None:
+        """Here the note is deleted, there it is edited: the edit wins."""
+        on_device(LOCAL_DEVICE)
+        note_id = sync_db.create_note("תוכן מקורי")
+        _, _, _, to_peer = push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
+        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
+
+        on_device(LOCAL_DEVICE)
         sync_db.delete_note(note_id)
+        on_device(PEER_DEVICE)
+        peer_db.update_note(note_id, "עריכה חשובה מאוד")
 
-        # Verify it's deleted
-        note = sync_db.get_note(note_id)
-        assert note["deleted_at"] is not None
-
-        peer_id = uuid.uuid4().hex
-
-        # Remote sends "create" for the same note ID with different content
-        changes = [
-            SyncChange(
-                entity_type="note",
-                entity_id=note_id,
-                operation="create",
-                data={
-                    "id": note_id,
-                    "created_at": "2025-01-15 10:00:00",
-                    "content": "Content from remote",
-                    "modified_at": "2025-01-15 11:00:00",
-                    "deleted_at": None,
-                },
-                timestamp="2025-01-15 11:00:00",
-                device_id=peer_id,
-            )
-        ]
-
-        applied, conflicts, errors = apply_sync_changes(
-            sync_db, changes, peer_id, "Test Peer"
+        _, conflicts, errors, _ = push(
+            peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local
         )
 
-        # Should create conflict (resurrect the note)
-        assert conflicts == 1
         assert errors == []
-
-        # Note should be resurrected with remote content
-        note = sync_db.get_note(note_id)
-        assert note is not None
-        assert note["deleted_at"] is None, "Note should not be deleted"
-        assert "Content from remote" in note["content"]
-
-    def test_update_on_deleted_note_resurrects(self, sync_db: Database) -> None:
-        """Update operation on deleted note resurrects it and creates conflict."""
-        # Create and delete a note locally
-        note_id = sync_db.create_note("Original content")
-        sync_db.delete_note(note_id)
-
-        # Verify it's deleted
-        note = sync_db.get_note(note_id)
-        assert note["deleted_at"] is not None
-
-        peer_id = uuid.uuid4().hex
-
-        # Remote sends "update" for the deleted note
-        changes = [
-            SyncChange(
-                entity_type="note",
-                entity_id=note_id,
-                operation="update",
-                data={
-                    "id": note_id,
-                    "created_at": "2025-01-15 10:00:00",
-                    "content": "Updated content from remote",
-                    "modified_at": "2025-01-15 12:00:00",
-                    "deleted_at": None,
-                },
-                timestamp="2025-01-15 12:00:00",
-                device_id=peer_id,
-            )
-        ]
-
-        applied, conflicts, errors = apply_sync_changes(
-            sync_db, changes, peer_id, "Test Peer"
-        )
-
-        # Should create conflict (resurrect the note)
         assert conflicts == 1
-        assert errors == []
-
-        # Note should be resurrected with remote content
-        note = sync_db.get_note(note_id)
+        on_device(LOCAL_DEVICE)
+        note = sync_db.get_note_raw(note_id)
         assert note is not None
-        assert note["deleted_at"] is None, "Note should not be deleted"
-        assert "Updated content from remote" in note["content"]
+        assert note["deleted_at"] is None, "The edit must keep the note alive"
+        assert note["content"] == "עריכה חשובה מאוד"
+        assert sync_db.get_note_conflict_types(note_id) == ["delete"]
 
-    def test_delete_on_edited_note_creates_conflict(self, sync_db: Database) -> None:
-        """Delete operation on locally-edited note creates conflict."""
-        # Create a note locally and edit it
-        note_id = sync_db.create_note("Original content")
-        sync_db.update_note(note_id, "Edited locally - important changes")
+        # And the device that deleted tells the other, so both agree.
+        push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE, to_peer)
+        on_device(PEER_DEVICE)
+        peer_note = peer_db.get_note_raw(note_id)
+        assert peer_note is not None
+        assert peer_note["deleted_at"] is None
+        assert peer_note["content"] == "עריכה חשובה מאוד"
+        assert peer_db.get_note_conflict_types(note_id) == ["delete"]
 
-        peer_id = uuid.uuid4().hex
+    def test_delete_arriving_after_a_local_edit_keeps_the_note(
+        self, sync_db: Database, peer_db: Database
+    ) -> None:
+        """The same disagreement seen from the other side."""
+        on_device(LOCAL_DEVICE)
+        note_id = sync_db.create_note("תוכן מקורי")
+        push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
+        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
 
-        # Remote sends "delete" with the OLD content (before local edit)
-        changes = [
-            SyncChange(
-                entity_type="note",
-                entity_id=note_id,
-                operation="delete",
-                data={
-                    "id": note_id,
-                    "created_at": "2025-01-15 10:00:00",
-                    "content": "Original content",  # Remote has old content
-                    "modified_at": None,
-                    "deleted_at": "2025-01-15 12:00:00",
-                },
-                timestamp="2025-01-15 12:00:00",
-                device_id=peer_id,
-            )
-        ]
+        on_device(LOCAL_DEVICE)
+        sync_db.update_note(note_id, "עריכה מקומית חשובה")
+        on_device(PEER_DEVICE)
+        peer_db.delete_note(note_id)
 
-        applied, conflicts, errors = apply_sync_changes(
-            sync_db, changes, peer_id, "Test Peer"
+        _, conflicts, errors, _ = push(
+            peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local
         )
 
-        # Should create conflict (local edited, so don't silently delete)
+        assert errors == []
         assert conflicts == 1
-        assert errors == []
-
-        # Note should NOT be deleted - local edit preserved
-        note = sync_db.get_note(note_id)
+        on_device(LOCAL_DEVICE)
+        note = sync_db.get_note_raw(note_id)
         assert note is not None
-        assert note["deleted_at"] is None, "Note should not be deleted"
-        assert "Edited locally" in note["content"]
+        assert note["deleted_at"] is None, "The local edit must survive"
+        assert note["content"] == "עריכה מקומית חשובה"
 
-    def test_delete_on_unedited_note_propagates(self, sync_db: Database) -> None:
-        """Delete operation on unedited note propagates the delete."""
-        # Create a note locally (unedited)
-        note_id = sync_db.create_note("Original content")
+    def test_delete_of_an_unedited_note_propagates(
+        self, sync_db: Database, peer_db: Database
+    ) -> None:
+        """Nobody edited it, so the delete simply travels."""
+        on_device(LOCAL_DEVICE)
+        note_id = sync_db.create_note("פתק לא ערוך")
+        push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
+        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
 
-        peer_id = uuid.uuid4().hex
+        on_device(PEER_DEVICE)
+        peer_db.delete_note(note_id)
 
-        # Remote sends "delete" with the same content
-        changes = [
-            SyncChange(
-                entity_type="note",
-                entity_id=note_id,
-                operation="delete",
-                data={
-                    "id": note_id,
-                    "created_at": "2025-01-15 10:00:00",
-                    "content": "Original content",  # Same as local
-                    "modified_at": None,
-                    "deleted_at": "2025-01-15 12:00:00",
-                },
-                timestamp="2025-01-15 12:00:00",
-                device_id=peer_id,
-            )
-        ]
-
-        applied, conflicts, errors = apply_sync_changes(
-            sync_db, changes, peer_id, "Test Peer"
+        _, conflicts, errors, _ = push(
+            peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local
         )
 
-        # Should propagate delete (no local edit)
-        assert applied == 1
+        assert errors == []
         assert conflicts == 0
-        assert errors == []
-
-        # Note should be deleted
-        note = sync_db.get_note(note_id)
+        on_device(LOCAL_DEVICE)
+        note = sync_db.get_note_raw(note_id)
         assert note is not None
-        assert note["deleted_at"] is not None, "Note should be deleted"
+        assert note["deleted_at"] is not None, "The delete should have arrived"
+        assert sync_db.get_note(note_id) is None
+
+    def test_a_second_delete_after_seeing_the_edit_is_obeyed(
+        self, sync_db: Database, peer_db: Database
+    ) -> None:
+        """The user who wanted the note gone deletes again, and it goes.
+
+        This is the way out of a delete conflict: the second delete records
+        what the user saw, which now includes the edit, so no resurrection.
+        """
+        on_device(LOCAL_DEVICE)
+        note_id = sync_db.create_note("תוכן מקורי")
+        _, _, _, to_peer = push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
+        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
+
+        on_device(LOCAL_DEVICE)
+        sync_db.delete_note(note_id)
+        on_device(PEER_DEVICE)
+        peer_db.update_note(note_id, "עריכה חשובה מאוד")
+
+        push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local)
+        _, _, _, to_peer = push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE, to_peer)
+
+        # The note is alive on both. Delete it again, having seen the edit.
+        on_device(LOCAL_DEVICE)
+        sync_db.delete_note(note_id)
+        _, conflicts, errors, _ = push(
+            sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE, to_peer
+        )
+
+        assert errors == []
+        assert conflicts == 0
+        on_device(PEER_DEVICE)
+        peer_note = peer_db.get_note_raw(note_id)
+        assert peer_note is not None
+        assert peer_note["deleted_at"] is not None, "The second delete stands"
 
 
 class TestGetFullDataset:
@@ -596,4 +675,8 @@ class TestGetFullDataset:
         assert "note_tags" in data
 
         assert len(data["notes"]) == 1
-        assert len(data["tags"]) == 1
+        # Every database is created with the system tags, so count only the
+        # tag this test made.
+        user_tags = [t for t in data["tags"] if not t["name"].startswith("_")]
+        assert [t["id"] for t in user_tags] == [tag_id]
+        assert data["notes"][0]["id"] == note_id

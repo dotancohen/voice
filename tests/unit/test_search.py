@@ -86,18 +86,18 @@ class TestGetTagFullPath:
 
     def test_root_tag(self, populated_db: Database) -> None:
         """Root tag returns just its name."""
-        path = get_tag_full_path(populated_db, get_tag_uuid("Work"))
+        path = get_tag_full_path(populated_db, get_tag_uuid_hex("Work"))
         assert path == "Work"
 
     def test_nested_tag(self, populated_db: Database) -> None:
         """Nested tag returns full path."""
-        path = get_tag_full_path(populated_db, get_tag_uuid("Paris_France"))
+        path = get_tag_full_path(populated_db, get_tag_uuid_hex("Paris_France"))
         assert path == "Geography/Europe/France/Paris"
 
     def test_nonexistent_tag(self, populated_db: Database) -> None:
         """Nonexistent tag returns empty string."""
         import uuid
-        nonexistent = uuid.UUID("00000000-0000-7000-8000-000000009999").bytes
+        nonexistent = uuid.UUID("00000000-0000-7000-8000-000000009999").hex
         path = get_tag_full_path(populated_db, nonexistent)
         assert path == ""
 
@@ -208,22 +208,22 @@ class TestBuildTagSearchTerm:
 
     def test_non_ambiguous_tag(self, populated_db: Database) -> None:
         """Non-ambiguous tag uses simple name."""
-        term = build_tag_search_term(populated_db, get_tag_uuid("Work"))
+        term = build_tag_search_term(populated_db, get_tag_uuid_hex("Work"))
         assert term == "tag:Work"
 
     def test_ambiguous_tag(self, populated_db: Database) -> None:
         """Ambiguous tag uses full path."""
-        term = build_tag_search_term(populated_db, get_tag_uuid("Paris_France"))
+        term = build_tag_search_term(populated_db, get_tag_uuid_hex("Paris_France"))
         assert term == "tag:Geography/Europe/France/Paris"
 
     def test_force_full_path(self, populated_db: Database) -> None:
         """Full path can be forced."""
-        term = build_tag_search_term(populated_db, get_tag_uuid("Work"), use_full_path=True)
+        term = build_tag_search_term(populated_db, get_tag_uuid_hex("Work"), use_full_path=True)
         assert term == "tag:Work"  # Work is a root tag, so path is just "Work"
 
     def test_nonexistent_tag(self, populated_db: Database) -> None:
         """Nonexistent tag returns empty string."""
         import uuid
-        nonexistent = uuid.UUID("00000000-0000-7000-8000-000000009999").bytes
+        nonexistent = uuid.UUID("00000000-0000-7000-8000-000000009999").hex
         term = build_tag_search_term(populated_db, nonexistent)
         assert term == ""

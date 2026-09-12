@@ -82,9 +82,9 @@ class TestDiff3Merge:
         result = diff3_merge(base, local, remote)
 
         assert result.has_conflicts is True
-        assert "<<<<<<< LOCAL" in result.merged_content
+        assert "<<<<<<< VERSION A" in result.merged_content
         assert "=======" in result.merged_content
-        assert ">>>>>>> REMOTE" in result.merged_content
+        assert ">>>>>>> VERSION B" in result.merged_content
 
     def test_conflict_contains_both_versions(self):
         """Conflict markers contain both local and remote content."""
@@ -153,9 +153,9 @@ class TestDiff3Merge:
 
         assert result.has_conflicts is True
         # Verify conflict markers are present in the merged content
-        assert "<<<<<<< LOCAL" in result.merged_content
+        assert "<<<<<<< VERSION A" in result.merged_content
         assert "=======" in result.merged_content
-        assert ">>>>>>> REMOTE" in result.merged_content
+        assert ">>>>>>> VERSION B" in result.merged_content
 
     def test_unicode_content(self):
         """Merge handles unicode content."""

@@ -48,8 +48,14 @@ class TestChangesEndpointPagination:
         assert response.status_code == 200
         data = response.json()
 
-        # Should return at most 5 changes
-        assert len(data["changes"]) <= 5
+        # The limit applies PER ENTITY TYPE (see CLAUDE.md): a busy type must
+        # not starve the others, so the system tags still come through.
+        notes = [c for c in data["changes"] if c["entity_type"] == "note"]
+        tags = [c for c in data["changes"] if c["entity_type"] == "tag"]
+        assert len(notes) == 5
+        assert len(tags) > 0, "tags must not be starved by the note limit"
+        for entity_type in {c["entity_type"] for c in data["changes"]}:
+            assert len([c for c in data["changes"] if c["entity_type"] == entity_type]) <= 5
 
     def test_changes_is_complete_false(self, running_server_a: SyncNode):
         """Changes returns is_complete=False when more available."""
@@ -160,8 +166,11 @@ class TestGetChangesSinceFunction:
         set_local_device_id(sync_node_a.device_id)
         changes, latest = get_changes_since(sync_node_a.db, None, limit=5)
 
-        # Should respect limit
-        assert len(changes) <= 5
+        # Limit is per entity type: at most 5 notes, and tags are still returned
+        assert len([c for c in changes if c.entity_type == "note"]) == 5
+        assert len([c for c in changes if c.entity_type == "tag"]) > 0
+        for entity_type in {c.entity_type for c in changes}:
+            assert len([c for c in changes if c.entity_type == entity_type]) <= 5
 
     def test_get_changes_since_timestamp(self, sync_node_a: SyncNode):
         """Get changes since a timestamp."""
@@ -389,7 +398,10 @@ class TestLimitBoundaries:
         )
 
         data = response.json()
-        assert len(data["changes"]) == 1
+        # One change per entity type (limit is per type); exactly one note
+        assert len([c for c in data["changes"] if c["entity_type"] == "note"]) == 1
+        for entity_type in {c["entity_type"] for c in data["changes"]}:
+            assert len([c for c in data["changes"] if c["entity_type"] == entity_type]) == 1
 
     def test_limit_very_large(self, running_server_a: SyncNode):
         """Very large limit is capped."""

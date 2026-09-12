@@ -103,8 +103,14 @@ class TestSyncClientPull:
         result = sync_nodes(sync_node_a, running_server_b)
 
         assert result["success"] is True
-        # Empty peer has 2 system tags (_system, _marked) that get pulled
-        assert result["pulled"] == 2
+        # The peer has nothing of the user's. What arrives are the system
+        # tags every database is created with, so count those rather than a
+        # fixed number: adding a system tag must not fail this test.
+        system_tags = [t for t in running_server_b.db.get_all_tags()
+                       if t["name"].startswith("_")]
+        assert result["pulled"] == len(system_tags)
+        assert get_note_count(sync_node_a) == 0
+        assert get_tag_count(sync_node_a) == 0
 
     def test_pull_notes_from_peer(
         self, sync_node_a: SyncNode, running_server_b: SyncNode

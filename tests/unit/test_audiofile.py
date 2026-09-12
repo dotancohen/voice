@@ -31,15 +31,22 @@ class TestCreateAudioFile:
         assert audio_file["imported_at"] is not None
 
     def test_creates_audio_file_with_file_created_at(self, empty_db: Database) -> None:
-        """Test creating an audio file with file_created_at timestamp."""
-        file_created = "2024-06-15 10:30:00"
+        """A file's own date is stored as an instant and shown on the clock
+        of the device that imported it."""
+        from datetime import datetime
+
+        from core.timestamp_utils import format_timestamp
+
+        file_created = int(datetime(2024, 6, 15, 10, 30, 0).timestamp())
         audio_id = empty_db.create_audio_file("recording.wav", file_created_at=file_created)
 
         audio_file = empty_db.get_audio_file(audio_id)
         assert audio_file is not None
-        # Rust returns ISO format with T separator
-        assert "2024-06-15" in audio_file["file_created_at"]
-        assert "10:30:00" in audio_file["file_created_at"]
+        assert audio_file["file_created_at"] == file_created
+        shown = format_timestamp(
+            audio_file["file_created_at"], audio_file.get("file_created_at_offset")
+        )
+        assert shown == "2024-06-15 10:30:00"
 
     def test_creates_audio_file_without_file_created_at(self, empty_db: Database) -> None:
         """Test creating an audio file without file_created_at."""

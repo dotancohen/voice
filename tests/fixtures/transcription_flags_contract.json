@@ -1,0 +1,93 @@
+{
+  "_comment": [
+    "The contract between VOICE and the Android application for a",
+    "transcription's flags, which are stored in the `state` field and synced",
+    "between the two.",
+    "",
+    "This file is read by the test suite of BOTH applications:",
+    "  Voice:        tests/sync/test_transcription_flags_contract.py",
+    "  VoiceAndroid: app/src/test/.../data/TranscriptionFlagsContractTest.kt",
+    "and the copy in each repository must be byte for byte the same. A change",
+    "here is a change to what the two write into each other's database, so it",
+    "belongs in the same commit as the change to both implementations.",
+    "",
+    "`toggles` says what each implementation must produce: starting from",
+    "`field`, turning `flag` the other way round yields `expect_field`, and",
+    "`expect_set` is which of the five read as set afterwards."
+  ],
+  "version": 1,
+  "flags": ["original", "verified", "verbatim", "cleaned", "polished"],
+  "default_field": "original !verified !verbatim !cleaned !polished",
+  "descriptions": {
+    "original": "Unmodified transcription from the service",
+    "verified": "User has verified the transcription is accurate",
+    "verbatim": "Transcription includes filler words, false starts, etc.",
+    "cleaned": "Transcription has been cleaned up (remove filler words)",
+    "polished": "Transcription has been edited for readability"
+  },
+  "reads": [
+    {
+      "field": "original !verified !verbatim !cleaned !polished",
+      "set": ["original"],
+      "not_set": ["verified", "verbatim", "cleaned", "polished"]
+    },
+    {
+      "field": "original verified cleaned",
+      "set": ["original", "verified", "cleaned"],
+      "not_set": ["verbatim", "polished"]
+    },
+    {
+      "field": "",
+      "set": [],
+      "not_set": ["original", "verified", "verbatim", "cleaned", "polished"]
+    },
+    {
+      "field": "  original   !verified ",
+      "set": ["original"],
+      "not_set": ["verified", "verbatim", "cleaned", "polished"]
+    },
+    {
+      "field": "verified_by_me verbatim",
+      "set": ["verbatim"],
+      "not_set": ["verified", "original", "cleaned", "polished"]
+    }
+  ],
+  "toggles": [
+    {
+      "field": "original !verified !verbatim !cleaned !polished",
+      "flag": "verified",
+      "expect_field": "original !verbatim !cleaned !polished verified",
+      "expect_set": ["original", "verified"]
+    },
+    {
+      "field": "original !verbatim !cleaned !polished verified",
+      "flag": "verified",
+      "expect_field": "original !verbatim !cleaned !polished !verified",
+      "expect_set": ["original"]
+    },
+    {
+      "field": "original",
+      "flag": "polished",
+      "expect_field": "original polished",
+      "expect_set": ["original", "polished"]
+    },
+    {
+      "field": "",
+      "flag": "verified",
+      "expect_field": "verified",
+      "expect_set": ["verified"]
+    },
+    {
+      "field": "  original   !verified ",
+      "flag": "verified",
+      "expect_field": "original verified",
+      "expect_set": ["original", "verified"]
+    },
+    {
+      "field": "original !verified verbatim !cleaned polished",
+      "flag": "cleaned",
+      "expect_field": "original !verified verbatim polished cleaned",
+      "expect_set": ["original", "verbatim", "polished", "cleaned"]
+    }
+  ]
+}

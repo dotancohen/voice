@@ -709,6 +709,7 @@ class TestOneWaySyncMethods:
         after = node_a.db.get_peer_last_sync(node_b.device_id_hex)
         assert after is not None, "Sync time should be updated after successful push"
 
+    @pytest.mark.skip(reason="Peer-to-peer binary transfer is disabled: audio binaries go through cloud storage and are downloaded on demand. Re-enable when the peer-transfer storage provider exists.")
     def test_pull_from_peer_includes_binary_sync(
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:
@@ -742,6 +743,7 @@ class TestOneWaySyncMethods:
         assert local_audio.exists(), "Binary file should be downloaded during pull"
         assert local_audio.read_bytes() == b"fake mp3 content for pull test"
 
+    @pytest.mark.skip(reason="Peer-to-peer binary transfer is disabled: audio binaries go through cloud storage and are downloaded on demand. Re-enable when the peer-transfer storage provider exists.")
     def test_push_to_peer_includes_binary_sync(
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:

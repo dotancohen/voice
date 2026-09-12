@@ -7,6 +7,8 @@ Tests that verify:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pathlib import Path
 
 import pytest
@@ -43,7 +45,7 @@ class TestWebApiAttachmentDisplay:
         db = Database(tmp_path / "notes.db")
 
         note_id = db.create_note("Test note")
-        audio_id = db.create_audio_file("recording.mp3", "2024-01-15 10:30:00")
+        audio_id = db.create_audio_file("recording.mp3", int(datetime(2024, 1, 15, 10, 30, 0).timestamp()))
         db.attach_to_note(note_id, audio_id, "audio_file")
 
         audio_files = db.get_audio_files_for_note(note_id)
@@ -123,7 +125,7 @@ class TestTuiAttachmentDisplay:
         db = Database(tmp_path / "notes.db")
 
         note_id = db.create_note("Test note")
-        audio_id = db.create_audio_file("important-meeting.mp3", "2024-06-15 10:30:00")
+        audio_id = db.create_audio_file("important-meeting.mp3", int(datetime(2024, 6, 15, 10, 30, 0).timestamp()))
         db.attach_to_note(note_id, audio_id, "audio_file")
 
         audio_files = db.get_audio_files_for_note(note_id)

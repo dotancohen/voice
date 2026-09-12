@@ -9,6 +9,8 @@ Tests corner cases including:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from flask.testing import FlaskClient
 
@@ -112,7 +114,7 @@ class TestGetAudiofileEdgeCases:
 
         audio_id = db.create_audio_file(
             "full_recording.mp3",
-            file_created_at="2024-06-15 10:30:00"
+            file_created_at=int(datetime(2024, 6, 15, 10, 30, 0).timestamp()),
         )
         db.update_audio_file_summary(audio_id, "Full summary text")
 

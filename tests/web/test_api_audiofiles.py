@@ -5,6 +5,8 @@ Tests the REST API endpoints for audio files and attachments.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from flask.testing import FlaskClient
 
@@ -71,7 +73,7 @@ class TestGetAudiofile:
         from src.web import db
         audio_id = db.create_audio_file(
             "recording.mp3",
-            file_created_at="2024-06-15 10:30:00"
+            file_created_at=int(datetime(2024, 6, 15, 10, 30, 0).timestamp()),
         )
 
         response = client.get(f"/api/audiofiles/{audio_id}")
@@ -80,9 +82,12 @@ class TestGetAudiofile:
         data = response.get_json()
         assert data["id"] == audio_id
         assert data["filename"] == "recording.mp3"
-        # Rust returns ISO format with T separator
-        assert "2024-06-15" in data["file_created_at"]
-        assert "10:30:00" in data["file_created_at"]
+        # The API answers in instants, so a client in any timezone can render
+        # them; the offset it was recorded at travels beside it
+        assert data["file_created_at"] == int(datetime(2024, 6, 15, 10, 30, 0).timestamp())
+        assert data["file_created_at_offset"] == int(
+            datetime.now().astimezone().utcoffset().total_seconds()
+        )
 
     def test_returns_404_for_nonexistent_audiofile(
         self, client: FlaskClient, populated_db
