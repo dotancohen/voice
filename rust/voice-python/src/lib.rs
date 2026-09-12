@@ -552,7 +552,7 @@ impl PyDatabase {
             revoked: "0".to_string(),
             application: application.to_string(),
         };
-        self.inner_ref()?.write_device_card(&card).map_err(voice_error_to_pyerr)
+        self.inner_ref()?.admit_device_card(&card).map_err(voice_error_to_pyerr)
     }
 
     /// Revoke a device of the account (AUTH-6): one way, and it travels.
@@ -1413,10 +1413,18 @@ pub struct PyConfig {
 #[pymethods]
 impl PyConfig {
     #[new]
-    #[pyo3(signature = (config_dir=None))]
-    fn new(config_dir: Option<&str>) -> PyResult<Self> {
+    /// `config_dir` is the account's directory. With `root`, the machine's
+    /// settings come from the root's config.json (Stage 2); without it, the
+    /// directory is the whole installation.
+    #[pyo3(signature = (config_dir=None, root=None))]
+    fn new(config_dir: Option<&str>, root: Option<&str>) -> PyResult<Self> {
         let path = config_dir.map(std::path::PathBuf::from);
-        let cfg = config::Config::new(path).map_err(voice_error_to_pyerr)?;
+        let cfg = match (root, &path) {
+            (Some(root), Some(dir)) if std::path::Path::new(root) != dir.as_path() => {
+                config::Config::open_account(std::path::Path::new(root), dir).map_err(voice_error_to_pyerr)?
+            }
+            _ => config::Config::new(path).map_err(voice_error_to_pyerr)?,
+        };
         Ok(Self {
             inner: std::sync::Mutex::new(cfg),
         })
@@ -1425,6 +1433,36 @@ impl PyConfig {
     fn get_config_dir(&self) -> PyResult<String> {
         let cfg = self.inner.lock().unwrap();
         Ok(cfg.config_dir().to_string_lossy().to_string())
+    }
+
+    /// The root that holds the machine's settings and certificates.
+    fn get_root(&self) -> PyResult<String> {
+        let cfg = self.inner.lock().unwrap();
+        Ok(cfg.root().to_string_lossy().to_string())
+    }
+
+    /// The periodic backup settings: interval_hours, directory, keep.
+    fn get_backup<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let cfg = self.inner.lock().unwrap();
+        let d = PyDict::new(py);
+        d.set_item("interval_hours", cfg.backup().interval_hours)?;
+        d.set_item("directory", cfg.backup().directory.clone())?;
+        d.set_item("keep", cfg.backup().keep)?;
+        Ok(d.into_any().unbind())
+    }
+
+    #[pyo3(signature = (interval_hours, keep, directory=""))]
+    fn set_backup(&self, interval_hours: u32, keep: u32, directory: &str) -> PyResult<()> {
+        let mut cfg = self.inner.lock().unwrap();
+        cfg.set_backup(config::BackupConfig { interval_hours, directory: directory.to_string(), keep }).map_err(voice_error_to_pyerr)
+    }
+
+    fn get_public_url(&self) -> PyResult<String> {
+        Ok(self.inner.lock().unwrap().public_url().to_string())
+    }
+
+    fn set_public_url(&self, url: &str) -> PyResult<()> {
+        self.inner.lock().unwrap().set_public_url(url).map_err(voice_error_to_pyerr)
     }
 
     fn get_device_id_hex(&self) -> PyResult<String> {
@@ -1746,6 +1784,17 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
+    /// Give a server this device's account by its grant text (PAIR-5).
+    fn grant_host<'py>(&self, py: Python<'py>, setup_text: &str, label: &str) -> PyResult<PyObject> {
+        let joined = self.runtime.block_on(self.inner.grant_host(setup_text, label)).map_err(voice_error_to_pyerr)?;
+        let dict = PyDict::new(py);
+        dict.set_item("account_id", joined.account_id)?;
+        dict.set_item("peer_id", joined.peer_id)?;
+        dict.set_item("peer_name", joined.peer_name)?;
+        dict.set_item("peer_url", joined.peer_url)?;
+        Ok(dict.into_any().unbind())
+    }
+
     /// Perform full bidirectional sync with a peer
     fn sync_with_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
         let result = self.runtime.block_on(self.inner.sync_with_peer(peer_id));
@@ -1847,6 +1896,90 @@ impl PySyncClient {
 /// Make sure this installation has a device key for its account and that
 /// its own card is in the database (AUTH-1). Called at every start.
 /// Returns the device id.
+fn account_entry<'py>(py: Python<'py>, e: &voicecore_lib::accounts::AccountEntry, directory: &std::path::Path) -> PyResult<PyObject> {
+    let d = PyDict::new(py);
+    d.set_item("account_id", e.account_id.clone())?;
+    d.set_item("label", e.label.clone())?;
+    d.set_item("is_default", e.is_default)?;
+    d.set_item("hosted", e.hosted)?;
+    d.set_item("created_at", e.created_at)?;
+    d.set_item("last_opened_at", e.last_opened_at)?;
+    d.set_item("directory", directory.to_string_lossy().to_string())?;
+    Ok(d.into_any().unbind())
+}
+
+/// Which account `root` opens for `selector` (ACCT-6). Returns a dict with
+/// mode ("single" or "account"), directory, root and, for an account, its
+/// account_id and label.
+#[pyfunction]
+#[pyo3(signature = (root, selector=None, create_default=true))]
+fn resolve_account<'py>(py: Python<'py>, root: &str, selector: Option<&str>, create_default: bool) -> PyResult<PyObject> {
+    let resolved = voicecore_lib::accounts::resolve(std::path::Path::new(root), selector, create_default).map_err(voice_error_to_pyerr)?;
+    let d = PyDict::new(py);
+    d.set_item("directory", resolved.directory().to_string_lossy().to_string())?;
+    d.set_item("root", resolved.root().to_string_lossy().to_string())?;
+    match &resolved {
+        voicecore_lib::accounts::Resolved::Single { .. } => {
+            d.set_item("mode", "single")?;
+        }
+        voicecore_lib::accounts::Resolved::Account { entry, .. } => {
+            d.set_item("mode", "account")?;
+            d.set_item("account_id", entry.account_id.clone())?;
+            d.set_item("label", entry.label.clone())?;
+            d.set_item("hosted", entry.hosted)?;
+        }
+    }
+    Ok(d.into_any().unbind())
+}
+
+/// Every account of the root's index, default first.
+#[pyfunction]
+fn account_list<'py>(py: Python<'py>, root: &str) -> PyResult<PyObject> {
+    let index = voicecore_lib::accounts::AccountIndex::open(std::path::Path::new(root)).map_err(voice_error_to_pyerr)?;
+    let list = PyList::empty(py);
+    for e in index.list().map_err(voice_error_to_pyerr)? {
+        list.append(account_entry(py, &e, &index.directory(&e.account_id))?)?;
+    }
+    Ok(list.into_any().unbind())
+}
+
+/// Make a new account under the root (ACCT-7).
+#[pyfunction]
+#[pyo3(signature = (root, label=None, hosted=false))]
+fn account_create<'py>(py: Python<'py>, root: &str, label: Option<&str>, hosted: bool) -> PyResult<PyObject> {
+    let index = voicecore_lib::accounts::AccountIndex::open(std::path::Path::new(root)).map_err(voice_error_to_pyerr)?;
+    let e = index.create(label, hosted).map_err(voice_error_to_pyerr)?;
+    account_entry(py, &e, &index.directory(&e.account_id))
+}
+
+/// Register an account whose id is known (one joined or hosted).
+#[pyfunction]
+#[pyo3(signature = (root, account_id, label, hosted=false))]
+fn account_register<'py>(py: Python<'py>, root: &str, account_id: &str, label: &str, hosted: bool) -> PyResult<PyObject> {
+    let index = voicecore_lib::accounts::AccountIndex::open(std::path::Path::new(root)).map_err(voice_error_to_pyerr)?;
+    let e = index.register(account_id, label, hosted).map_err(voice_error_to_pyerr)?;
+    account_entry(py, &e, &index.directory(&e.account_id))
+}
+
+#[pyfunction]
+fn account_set_default(root: &str, selector: &str) -> PyResult<()> {
+    let index = voicecore_lib::accounts::AccountIndex::open(std::path::Path::new(root)).map_err(voice_error_to_pyerr)?;
+    index.set_default(selector).map_err(voice_error_to_pyerr)
+}
+
+#[pyfunction]
+fn account_set_hosted(root: &str, selector: &str, hosted: bool) -> PyResult<()> {
+    let index = voicecore_lib::accounts::AccountIndex::open(std::path::Path::new(root)).map_err(voice_error_to_pyerr)?;
+    index.set_hosted(selector, hosted).map_err(voice_error_to_pyerr)
+}
+
+/// Forget an account: the index row only; its directory stays.
+#[pyfunction]
+fn account_remove(root: &str, selector: &str) -> PyResult<()> {
+    let index = voicecore_lib::accounts::AccountIndex::open(std::path::Path::new(root)).map_err(voice_error_to_pyerr)?;
+    index.remove(selector).map_err(voice_error_to_pyerr)
+}
+
 /// Show a code (PAIR-1): make a token and return the setup text. `urls`
 /// are where this installation listens.
 #[pyfunction]
@@ -1856,6 +1989,19 @@ fn pairing_offer(urls: Vec<String>, config_dir: Option<&str>) -> PyResult<String
     let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     let setup = voicecore_lib::pairing::offer(&db, &cfg, urls).map_err(voice_error_to_pyerr)?;
+    Ok(setup.to_text())
+}
+
+/// Show a grant text (PAIR-5): a token with which a holder gives this
+/// server, which holds no account of its own, an account to host. The root
+/// gets an index if it has none; no default account is made.
+#[pyfunction]
+#[pyo3(signature = (root, urls, label=None))]
+fn hosting_offer(root: &str, urls: Vec<String>, label: Option<&str>) -> PyResult<String> {
+    let root = std::path::Path::new(root);
+    let index = voicecore_lib::accounts::AccountIndex::open(root).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(Some(root.to_path_buf())).map_err(voice_error_to_pyerr)?;
+    let setup = voicecore_lib::pairing::offer_hosting(&index, &cfg, label, urls).map_err(voice_error_to_pyerr)?;
     Ok(setup.to_text())
 }
 
@@ -2126,12 +2272,14 @@ fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPend
 /// This function blocks until the server is stopped (via stop_sync_server or Ctrl+C).
 ///
 /// Args:
-///     config_dir: Path to config directory (optional, uses default if None)
+///     config_dir: the one account directory to serve; None with `root` set
 ///     port: Port to listen on (optional, uses config default if None)
 ///     verbose: Enable verbose logging to stdout (default: False)
 ///     ansi_colors: Enable ANSI color codes in log output (default: True)
+///     root: an indexed root: every account in it is served, each opened on
+///         its first request (Stage 3, hosting); `config_dir` is ignored
 #[pyfunction]
-#[pyo3(signature = (config_dir=None, host="0.0.0.0", port=None, plain_http=false, verbose=false, ansi_colors=true))]
+#[pyo3(signature = (config_dir=None, host="0.0.0.0", port=None, plain_http=false, verbose=false, ansi_colors=true, root=None))]
 fn start_sync_server(
     config_dir: Option<&str>,
     host: &str,
@@ -2139,6 +2287,7 @@ fn start_sync_server(
     plain_http: bool,
     verbose: bool,
     ansi_colors: bool,
+    root: Option<&str>,
 ) -> PyResult<()> {
     // Initialize tracing subscriber for logging output only if verbose is enabled
     if verbose {
@@ -2156,6 +2305,39 @@ fn start_sync_server(
     // Create Tokio runtime
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    if let Some(root) = root {
+        let root_path = std::path::PathBuf::from(root);
+        let machine = config::Config::new(Some(root_path.clone())).map_err(voice_error_to_pyerr)?;
+        let server_port = port.unwrap_or_else(|| machine.sync_server_port());
+        let served = voicecore_lib::accounts::AccountIndex::open(&root_path)
+            .and_then(|i| i.list())
+            .map_err(voice_error_to_pyerr)?;
+        println!("Starting the sync server for every account of {}...", root);
+        println!("  Device ID:   {}", machine.device_id_hex());
+        println!("  Device Name: {}", machine.device_name());
+        println!("  Listening:   {}://{}:{}", if plain_http { "http" } else { "https" }, host, server_port);
+        if served.is_empty() {
+            println!("  Accounts:    none yet; 'account host' prints the text a holder needs to grant one");
+        }
+        for a in &served {
+            println!("  Account:     {} ({}{})", a.account_id, a.label, if a.hosted { ", hosted" } else { "" });
+        }
+        println!("  Press Ctrl-C to stop");
+        println!();
+        runtime
+            .block_on(async {
+                tokio::spawn(async {
+                    if let Ok(()) = tokio::signal::ctrl_c().await {
+                        println!("\nReceived Ctrl-C, shutting down...");
+                        sync_server::stop_server();
+                    }
+                });
+                sync_server::start_hosting_server(&root_path, host, server_port, plain_http).await
+            })
+            .map_err(voice_error_to_pyerr)?;
+        return Ok(());
+    }
 
     // Create Config and Database from config_dir
     let config_path = config_dir.map(std::path::PathBuf::from);
@@ -2687,7 +2869,15 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ensure_own_device_card, m)?)?;
     m.add_function(wrap_pyfunction!(certificate_fingerprint, m)?)?;
     m.add_function(wrap_pyfunction!(device_key_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(resolve_account, m)?)?;
+    m.add_function(wrap_pyfunction!(account_list, m)?)?;
+    m.add_function(wrap_pyfunction!(account_create, m)?)?;
+    m.add_function(wrap_pyfunction!(account_register, m)?)?;
+    m.add_function(wrap_pyfunction!(account_set_default, m)?)?;
+    m.add_function(wrap_pyfunction!(account_set_hosted, m)?)?;
+    m.add_function(wrap_pyfunction!(account_remove, m)?)?;
     m.add_function(wrap_pyfunction!(pairing_offer, m)?)?;
+    m.add_function(wrap_pyfunction!(hosting_offer, m)?)?;
     m.add_function(wrap_pyfunction!(pairing_withdraw, m)?)?;
     m.add_function(wrap_pyfunction!(listen_urls, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;

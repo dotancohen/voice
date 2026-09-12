@@ -9,6 +9,7 @@ Tests the complete workflow of importing audio files including:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -105,12 +106,11 @@ def audiofiles_cli_runner(audiofiles_config_dir: Path):
             sys.executable,
             "-m",
             "src.main",
-            "-d",
-            str(audiofiles_config_dir),
             "cli",
             *args,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        env = {**os.environ, "VOICE_CONFIG_DIR": str(audiofiles_config_dir)}
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         return result.returncode, result.stdout, result.stderr
 
     return run_cli

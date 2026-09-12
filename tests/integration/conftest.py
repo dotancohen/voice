@@ -10,6 +10,7 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime, timedelta
+import os
 from pathlib import Path
 from typing import Generator
 
@@ -159,12 +160,12 @@ def cli_runner(test_config_dir: Path):
             sys.executable,
             "-m",
             "src.main",
-            "-d",
-            str(test_config_dir),
             "cli",
             *args,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # The test's own directory is the root; the real one is never touched (7.6)
+        env = {**os.environ, "VOICE_CONFIG_DIR": str(test_config_dir)}
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         return result.returncode, result.stdout, result.stderr
 
     return run_cli

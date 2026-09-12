@@ -93,7 +93,7 @@ def _remove_purged_audio_files(audio_ids: List[str]) -> int:
     return removed
 
 
-def create_app(config_dir: Optional[Path] = None) -> Flask:
+def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -> Flask:
     """Create and configure Flask application.
 
     Args:
@@ -106,7 +106,7 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
     CORS(app)  # Enable CORS for all routes
 
     # Initialize config and database
-    config = Config(config_dir=config_dir)
+    config = Config(config_dir=config_dir, root=root)
     db_path_str = config.get("database_file")
     db_path = Path(db_path_str)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -536,7 +536,7 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
         logger.info(f"Using custom config directory: {config_dir}")
 
     # Create Flask app
-    app = create_app(config_dir=config_dir)
+    app = create_app(config_dir, root=getattr(args, "config_root", None))
 
     # Run server (single-threaded because PyDatabase is not thread-safe)
     app.run(

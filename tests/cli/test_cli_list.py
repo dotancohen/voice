@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -24,10 +25,11 @@ class TestListNotes:
     ) -> None:
         """Test listing notes in text format."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "notes-list"],
+            [sys.executable, "-m", "src.main", "cli", "notes-list"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # New format: "ID | Created | First line content" - one note per line
@@ -43,13 +45,13 @@ class TestListNotes:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "--format", "json",
                 "notes-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         notes = json.loads(result.stdout)
@@ -65,13 +67,13 @@ class TestListNotes:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "--format", "csv",
                 "notes-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")
@@ -86,10 +88,11 @@ class TestListNotes:
         db.close()
 
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "notes-list"],
+            [sys.executable, "-m", "src.main", "cli", "notes-list"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "No notes found" in result.stdout
@@ -104,10 +107,11 @@ class TestListTags:
     ) -> None:
         """Test listing tags in text format with hierarchy."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "tags-list"],
+            [sys.executable, "-m", "src.main", "cli", "tags-list"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should show root tags
@@ -125,13 +129,13 @@ class TestListTags:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "--format", "json",
                 "tags-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         tags = json.loads(result.stdout)
@@ -150,13 +154,13 @@ class TestListTags:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "--format", "csv",
                 "tags-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")
@@ -169,10 +173,11 @@ class TestListTags:
     ) -> None:
         """Test that tag hierarchy is properly displayed."""
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli", "tags-list"],
+            [sys.executable, "-m", "src.main", "cli", "tags-list"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")

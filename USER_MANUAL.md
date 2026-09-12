@@ -28,13 +28,16 @@ command does, and the settings behind them. For what VOICE is, see the
 
 ```bash
 python -m src.main          # Auto-detect interface: GUI if available, else TUI
-python -m src.main -d /path/to/config  # Custom configuration directory
+python -m src.main -a sillyberry       # Open another account of this installation
 ```
 
 The first line every run prints is `Using CONFIG_DIR: <directory>` (on stderr when the output format is JSON or CSV, so that stdout stays parseable). The directory is chosen in this order:
 
-1. `-d /path` on the command line
-2. the `VOICE_CONFIG_DIR` environment variable
+1. the `VOICE_CONFIG_DIR` environment variable, which names the **root**
+   (`~/.config/voice` by default): the machine's settings, `accounts.db`, and
+   one directory per account
+2. `-a <id or label>` on the command line, or `$VOICE_ACCOUNT_ID`, which
+   chooses the account under the root; without either, the default account
 3. `~/.config/voice/`
 
 The `bin/voice` script runs the entry point through the repository's virtual environment from any directory. Put it on your `PATH` once and use `voice` instead of `.venv/bin/python -m src.main`:
@@ -837,6 +840,35 @@ The new device takes the account, receives a key of its own, and adds the
 showing device as a peer with its certificate pinned. A device that already
 holds notes of another account refuses the code and says to show its own code
 to the other device instead.
+
+### A server that hosts accounts
+
+A server on the internet holds no account of its own; it **hosts** the
+accounts its users give it, one directory each under its root, and serves
+them all from one listener. The holder of an account cannot be reached by
+the server, so the direction is reversed: the server shows a **grant text**
+and the holder gives the account to it.
+
+```bash
+# On the server, in an empty root (VOICE_CONFIG_DIR): no account is created
+python -m src.main cli sync serve                               # serves every account of the root
+python -m src.main cli account host --label meirav              # a grant text: valid ten minutes, once
+
+# On the device that holds the account (a phone pastes the text into its setup-text field)
+python -m src.main cli account grant-host "voice://pair?v=1&g=1&..."
+python -m src.main cli sync deliver <server-device-id>          # notes and recordings to the server
+
+# Back on the server
+python -m src.main cli account list                             # the hosted account, never the default
+python -m src.main -a meirav cli account show-code              # a code for the account's next device
+```
+
+The server receives a key made for it, the holder's card, and the notes on
+the first delivery; a further device of the account joins through the
+server's code as through any device. Every request to a hosted account is
+one line in `audit.log` beside its database: time, device, route, bytes and
+outcome, never a key or content. A desktop with several accounts in its root
+serves them the same way: `sync serve` there listens for every account.
 
 ### Devices, keys and certificates
 

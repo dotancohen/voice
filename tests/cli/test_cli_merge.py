@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -36,9 +37,10 @@ def cli_db(test_db_path: Path, empty_db: Database) -> Database:
 def run_cli(db_dir: Path, *args: str) -> subprocess.CompletedProcess:
     """Run the desktop command line exactly as a person would."""
     return subprocess.run(
-        [sys.executable, "-m", "src.main", "-d", str(db_dir), "cli", *args],
+        [sys.executable, "-m", "src.main", "cli", *args],
         capture_output=True,
         text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(db_dir)},
     )
 
 

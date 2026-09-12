@@ -55,12 +55,12 @@ def run_cli_command(
         Tuple of (exit_code, stdout, stderr)
     """
     env = os.environ.copy()
+    env["VOICE_CONFIG_DIR"] = str(config_dir)
     env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
 
     cmd = [
         sys.executable,
         "-m", "src.main",
-        "-d", str(config_dir),
         "cli",
     ] + args
 
@@ -514,13 +514,13 @@ class TestSyncServeCLI:
         import requests
 
         env = os.environ.copy()
+        env["VOICE_CONFIG_DIR"] = str(sync_node_a.config_dir)
         env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
 
         # Start server in background
         cmd = [
             sys.executable,
             "-m", "src.main",
-            "-d", str(sync_node_a.config_dir),
             "cli", "sync", "serve",
             "--host", "127.0.0.1",
             "--port", str(sync_node_a.port),
@@ -569,12 +569,12 @@ class TestSyncServeCLI:
             custom_port = s.getsockname()[1]
 
         env = os.environ.copy()
+        env["VOICE_CONFIG_DIR"] = str(sync_node_a.config_dir)
         env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
 
         cmd = [
             sys.executable,
             "-m", "src.main",
-            "-d", str(sync_node_a.config_dir),
             "cli", "sync", "serve",
             "--host", "127.0.0.1",
             "--port", str(custom_port),
@@ -657,12 +657,12 @@ class TestCLIEdgeCases:
         # Use subprocess.Popen to run truly concurrent processes
         # (avoids ThreadPoolExecutor cleanup issues with Rust extension)
         env = os.environ.copy()
+        env["VOICE_CONFIG_DIR"] = str(node_a.config_dir)
         env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
 
         cmd = [
             sys.executable,
             "-m", "src.main",
-            "-d", str(node_a.config_dir),
             "cli",
             "sync", "status",
         ]
@@ -766,8 +766,8 @@ class TestConfigDirAndConfigCommands:
     def _run(self, config_dir, args, env_extra=None):
         import subprocess
         env = os.environ.copy()
+        env["VOICE_CONFIG_DIR"] = str(config_dir)
         env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
-        env.pop("VOICE_CONFIG_DIR", None)
         if env_extra:
             env.update(env_extra)
         proc = subprocess.run(
@@ -778,25 +778,18 @@ class TestConfigDirAndConfigCommands:
         return proc.returncode, proc.stdout, proc.stderr
 
     def test_env_var_selects_config_dir_and_banner_is_first_line(self, sync_node_a: SyncNode):
-        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "get", "config_dir"],
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "get", "directory"],
                                          {"VOICE_CONFIG_DIR": str(sync_node_a.config_dir)})
         assert code == 0, stderr
         lines = [l for l in stdout.splitlines() if l.strip()]
         assert lines[0] == f"Using CONFIG_DIR: {sync_node_a.config_dir}"
         assert lines[1] == str(sync_node_a.config_dir)
 
-    def test_dash_d_wins_over_env_var(self, sync_node_a: SyncNode, tmp_path: Path):
-        other = tmp_path / "other"
-        code, stdout, stderr = self._run(sync_node_a.config_dir, ["-d", str(sync_node_a.config_dir), "cli", "config", "get", "config_dir"],
-                                         {"VOICE_CONFIG_DIR": str(other)})
-        assert code == 0, stderr
-        assert stdout.splitlines()[-1] == str(sync_node_a.config_dir)
-
     def test_json_format_keeps_stdout_clean(self, sync_node_a: SyncNode):
         code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "--format", "json", "config", "show"],
                                          {"VOICE_CONFIG_DIR": str(sync_node_a.config_dir)})
         assert code == 0, stderr
-        assert json.loads(stdout)["config_dir"] == str(sync_node_a.config_dir)
+        assert json.loads(stdout)["directory"] == str(sync_node_a.config_dir)
         assert "Using CONFIG_DIR" in stderr
 
     def test_config_set_and_get(self, sync_node_a: SyncNode, tmp_path: Path):

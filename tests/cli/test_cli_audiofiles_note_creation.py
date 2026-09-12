@@ -49,24 +49,24 @@ class TestImportCreatesNotePerAudioFile:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
         assert result.returncode == 0
 
         # List notes to verify one was created
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "notes-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
         assert result.returncode == 0
 
         # Should have exactly one note
@@ -89,12 +89,12 @@ class TestImportCreatesNotePerAudioFile:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
         assert result.returncode == 0
 
         # Count notes in database directly
@@ -117,12 +117,12 @@ class TestImportCreatesNotePerAudioFile:
         subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Check database
         from core.database import Database
@@ -161,12 +161,12 @@ class TestNoteCreatedAtMatchesFileCreatedAt:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
         assert result.returncode == 0
 
         # Check database
@@ -219,12 +219,12 @@ class TestNoteCreatedAtMatchesFileCreatedAt:
         subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Check database
         from core.database import Database

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -49,12 +50,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(empty_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
         assert "No supported audio files" in result.stdout
@@ -74,12 +75,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(no_audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
         assert "No supported audio files" in result.stdout
@@ -95,12 +96,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(unicode_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -124,12 +125,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -153,12 +154,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -176,13 +177,13 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(many_files_dir)
             ],
             capture_output=True,
             text=True,
-            timeout=60
-        )
+            timeout=60,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -199,13 +200,13 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(large_files_dir)
             ],
             capture_output=True,
             text=True,
-            timeout=60
-        )
+            timeout=60,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -221,12 +222,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(empty_files_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Should either succeed or provide meaningful error
         assert result.returncode in [0, 1]
@@ -240,12 +241,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(fake_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 1
         assert "not found" in result.stdout.lower() or "error" in result.stdout.lower()
@@ -260,12 +261,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(file_path)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 1
         assert "not a directory" in result.stdout.lower() or "error" in result.stdout.lower()
@@ -285,12 +286,12 @@ class TestImportAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(all_formats_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -305,12 +306,12 @@ class TestShowAudiofileEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofile-show", "not-a-valid-uuid"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 1
 
@@ -321,12 +322,12 @@ class TestShowAudiofileEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofile-show", ""
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Should fail gracefully
         assert result.returncode != 0
@@ -340,12 +341,12 @@ class TestShowAudiofileEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofile-show", long_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 1
 
@@ -360,12 +361,12 @@ class TestListAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "note-audiofiles-list", "--note-id", "invalid"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 1
 
@@ -378,12 +379,12 @@ class TestListAudiofilesEdgeCases:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "note-audiofiles-list", "--note-id", fake_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Should succeed but show no audio files
         assert result.returncode == 0
@@ -413,12 +414,12 @@ class TestRecursiveImport:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(root), "--recursive"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -436,12 +437,12 @@ class TestRecursiveImport:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(root)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
         # Should only import root.mp3, not sub.mp3

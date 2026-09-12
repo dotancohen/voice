@@ -1,13 +1,13 @@
 # Configuration Reference
 
-Voice stores its configuration in a JSON file located at `~/.config/voice/config.json`. The configuration directory can be customized via the `--config-dir` CLI argument.
+Voice stores its configuration under `~/.config/voice/`: the machine's `config.json` and `accounts.db`, and one directory per account with its own `config.json`, `notes.db` and `audio/`. The root can be changed with the `VOICE_CONFIG_DIR` environment variable; the account with `-a`.
 
 See also: Quick reference in [USER_MANUAL.md](../USER_MANUAL.md#configuration)
 
 ## Configuration File Location
 
 - **Default**: `~/.config/voice/config.json`
-- **Custom**: Use `--config-dir /path/to/dir` when launching the application
+- **Custom**: Set `VOICE_CONFIG_DIR=/path/to/root` before launching the application, and `-a <label>` for an account other than the default
 
 If the configuration file doesn't exist, it will be created with default values on first run.
 
@@ -344,9 +344,9 @@ All Voice data is stored in the configuration directory:
 
 Default location: `~/.config/voice/`
 
-Use `--config-dir` to specify a custom location:
+Use `VOICE_CONFIG_DIR` to specify a custom root:
 ```bash
-python -m src.main --config-dir /path/to/config cli sync list-peers
+VOICE_CONFIG_DIR=/path/to/root python -m src.main cli sync list-peers
 ```
 
 ## Modifying Configuration

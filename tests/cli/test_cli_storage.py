@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 from typing import List
 
@@ -22,9 +23,10 @@ TEST_DEVICE_ID = "00000000000070008000000000000001"
 
 def run_cli(config_dir: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "src.main", "--config-dir", str(config_dir), "cli", *args],
+        [sys.executable, "-m", "src.main", "cli", *args],
         capture_output=True,
         text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_dir)},
     )
 
 

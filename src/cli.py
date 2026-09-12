@@ -1398,7 +1398,7 @@ def cmd_account_show(db: Database, config: Config, args: argparse.Namespace) -> 
         print(json.dumps({
             "account_id": db.account_id(),
             "database_id": db.database_id(),
-            "config_dir": str(config.get_config_dir()),
+            "directory": str(config.get_config_dir()),
             "notes": notes,
         }, indent=2))
     else:
@@ -1418,6 +1418,88 @@ def _format_size(size_bytes: int) -> str:
     return f"{size_bytes} B"
 
 
+def _index_root(config: Config) -> Optional[str]:
+    """The root with the account index, or None on a single-directory installation."""
+    return _index_root_of(config.get_root())
+
+
+def _index_root_of(root: Path) -> Optional[str]:
+    """The root when it holds an account index or nothing yet (the index is
+    then made), None when it is a single account's directory."""
+    from voicecore import account_list
+    if not (root / "accounts.db").is_file() and ((root / "notes.db").is_file() or (root / "config.json").is_file()):
+        return None
+    try:
+        account_list(str(root))
+    except Exception:  # noqa: BLE001
+        return None
+    return str(root)
+
+
+def cmd_account_list(root: Optional[str], args: argparse.Namespace) -> int:
+    """Every account of this installation."""
+    from voicecore import account_list
+    if root is None:
+        print("This installation holds one account and no index; see 'account show'.")
+        return 0
+    accounts = account_list(root)
+    if args.format == "json":
+        print(json.dumps(accounts, indent=2))
+        return 0
+    for a in accounts:
+        marks = [m for m, on in (("default", a["is_default"]), ("hosted", a["hosted"])) if on]
+        suffix = f"  ({', '.join(marks)})" if marks else ""
+        print(f"{a['account_id']}  {a['label']}{suffix}")
+    return 0
+
+
+def cmd_account_create(root: Optional[str], args: argparse.Namespace) -> int:
+    """Make a new account on this installation."""
+    from voicecore import account_create
+    if root is None:
+        print("Error: This installation holds one account and no index; set VOICE_CONFIG_DIR to an empty directory to start one with several.", file=sys.stderr)
+        return 1
+    try:
+        entry = account_create(root, getattr(args, "label", None))
+    except Exception as e:  # noqa: BLE001
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps(entry))
+    else:
+        print(f"Created account {entry['account_id']} ({entry['label']}) in {entry['directory']}")
+        print(f"Open it with -a {entry['label']}")
+    return 0
+
+
+def cmd_account_default(root: Optional[str], args: argparse.Namespace) -> int:
+    from voicecore import account_set_default
+    if root is None:
+        print("Error: This installation holds one account and no index.", file=sys.stderr)
+        return 1
+    try:
+        account_set_default(root, args.selector)
+    except Exception as e:  # noqa: BLE001
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"{args.selector} is now the default account.")
+    return 0
+
+
+def cmd_account_remove(root: Optional[str], args: argparse.Namespace) -> int:
+    from voicecore import account_remove
+    if root is None:
+        print("Error: This installation holds one account and no index.", file=sys.stderr)
+        return 1
+    try:
+        account_remove(root, args.selector)
+    except Exception as e:  # noqa: BLE001
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"Forgot {args.selector}. Its directory under {root} was not touched.")
+    return 0
+
+
 def cmd_account_show_code(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Show the code another device reads to join this account (PAIR-1)."""
     from voicecore import listen_urls, pairing_offer
@@ -1427,6 +1509,14 @@ def cmd_account_show_code(db: Database, config: Config, args: argparse.Namespace
         print("Error: This machine's address is not known; give it with --url.", file=sys.stderr)
         return 1
     text = pairing_offer(urls, str(config.get_config_dir()))
+    return _print_setup_text(text, args, urls, [
+        "Treat this like a password. It is valid for ten minutes and for one device;",
+        "the listener must be running ('sync serve') for the other device to reach it.",
+    ])
+
+
+def _print_setup_text(text: str, args: argparse.Namespace, urls: List[str], last_lines: List[str]) -> int:
+    """A setup text as a QR code (unless --text-only) and as text, with the warning lines."""
     if args.format == "json":
         print(json.dumps({"setup_text": text, "urls": urls}))
         return 0
@@ -1438,8 +1528,52 @@ def cmd_account_show_code(db: Database, config: Config, args: argparse.Namespace
             print("(install segno to draw the QR code; the text below is the same code)")
     print(text)
     print()
-    print("Treat this like a password. It is valid for ten minutes and for one device;")
-    print("the listener must be running ('sync serve') for the other device to reach it.")
+    for line in last_lines:
+        print(line)
+    return 0
+
+
+def cmd_account_host(root: Path, args: argparse.Namespace) -> int:
+    """Show the grant text with which a holder gives this server an account to host (PAIR-5)."""
+    from voicecore import hosting_offer, listen_urls
+
+    if _index_root_of(root) is None:
+        print(f"Error: {root} holds one account in its own directory and cannot host others; "
+              "set VOICE_CONFIG_DIR to an empty directory for a server.", file=sys.stderr)
+        return 1
+    urls = getattr(args, "urls", None) or listen_urls(_machine_port(root))
+    if not urls:
+        print("Error: This machine's address is not known; give it with --url.", file=sys.stderr)
+        return 1
+    text = hosting_offer(str(root), urls, getattr(args, "label", None))
+    return _print_setup_text(text, args, urls, [
+        "Treat this like a password. It is valid for ten minutes and for one account;",
+        "the listener must be running ('sync serve') for the holder to reach it.",
+        "On the device that holds the account: account grant-host <this text>.",
+    ])
+
+
+def _machine_port(root: Path) -> int:
+    """The listen port of a root's machine settings, or the default."""
+    try:
+        return int(json.loads((root / "config.json").read_text(encoding="utf-8")).get("sync", {}).get("server_port") or 8384)
+    except (OSError, ValueError):
+        return 8384
+
+
+def cmd_account_grant_host(config: Config, args: argparse.Namespace) -> int:
+    """Give a server this device's account, by its grant text (PAIR-5)."""
+    client = SyncClient(str(config.get_config_dir()))
+    try:
+        granted = client.grant_host(args.setup_text, getattr(args, "label", None) or "")
+    except Exception as e:  # noqa: BLE001
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps(granted))
+    else:
+        print(f"{granted['peer_name']} ({granted['peer_id']}) at {granted['peer_url']} now hosts account {granted['account_id']}.")
+        print(f"Run 'sync deliver {granted['peer_id']}' to send it your notes and recordings.")
     return 0
 
 
@@ -2036,7 +2170,7 @@ def cmd_config(config: Config, args: argparse.Namespace) -> int:
     def current() -> Dict[str, Any]:
         sync_cfg = config.get_sync_config()
         return {
-            "config_dir": str(config.get_config_dir()),
+            "directory": str(config.get_config_dir()),
             "device_id": config.get_device_id_hex(),
             "device_name": config.get_device_name(),
             "audiofile_directory": config.get_audiofile_directory(),
@@ -2247,7 +2381,20 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
     Returns:
         Exit code (0 for success)
     """
+    # An indexed root is served whole, every account in it (Stage 3); a
+    # directory that is the account itself is served alone.
+    root = _index_root(config)
     port = getattr(args, 'port', None) or config.get_sync_server_port()
+    return _serve(str(config.get_config_dir()) if root is None else None, root, port, args)
+
+
+def cmd_sync_serve_root(root: Path, args: argparse.Namespace) -> int:
+    """'sync serve' on a root that holds no account of its own: every hosted account."""
+    port = getattr(args, 'port', None) or _machine_port(root)
+    return _serve(None, str(root), port, args)
+
+
+def _serve(config_dir: Optional[str], root: Optional[str], port: int, args: argparse.Namespace) -> int:
     verbose = getattr(args, 'verbose', False)
     no_color = getattr(args, 'no_color', False)
 
@@ -2255,12 +2402,13 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
     # The server handles its own startup message and Ctrl-C
     try:
         start_sync_server(
-            config_dir=str(config.get_config_dir()),
+            config_dir=config_dir,
             host=getattr(args, 'host', '0.0.0.0'),
             port=port,
             plain_http=getattr(args, 'plain_http', False),
             verbose=verbose,
-            ansi_colors=not no_color
+            ansi_colors=not no_color,
+            root=root,
         )
     except KeyboardInterrupt:
         # Rust already handled the shutdown, just exit cleanly
@@ -3644,6 +3792,13 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     )
     account_subparsers = account_parser.add_subparsers(dest="account_command", help="Account commands")
     account_subparsers.add_parser("show", help="Show the account id and the database id")
+    account_subparsers.add_parser("list", help="Every account of this installation, marking the default and the hosted")
+    account_create_parser = account_subparsers.add_parser("create", help="Make a new account on this installation")
+    account_create_parser.add_argument("--label", help="A name for it, unique on this installation")
+    account_default_parser = account_subparsers.add_parser("default", help="Make an account the one opened with no -a")
+    account_default_parser.add_argument("selector", help="The account's id, a unique prefix of it, or its label")
+    account_remove_parser = account_subparsers.add_parser("remove", help="Forget an account: the index only; its directory stays")
+    account_remove_parser.add_argument("selector", help="The account's id, a unique prefix of it, or its label")
     show_code_parser = account_subparsers.add_parser(
         "show-code",
         help="Show the code another device reads to join this account: a QR code and the setup text. Valid ten minutes, once"
@@ -3654,6 +3809,22 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     )
     show_code_parser.add_argument("--text-only", action="store_true", help="Print the setup text without the QR code")
     account_subparsers.add_parser("hide-code", help="Withdraw the code shown by show-code")
+    host_parser = account_subparsers.add_parser(
+        "host",
+        help="Show the grant text with which the holder of an account gives it to this server to host. Needs no account here"
+    )
+    host_parser.add_argument("--label", help="A name for the hosted account on this server (default: hosted-<id prefix>)")
+    host_parser.add_argument(
+        "--url", action="append", dest="urls",
+        help="Where this server's listener is reachable (default: https://<this host>:<port>). May repeat"
+    )
+    host_parser.add_argument("--text-only", action="store_true", help="Print the grant text without the QR code")
+    grant_parser = account_subparsers.add_parser(
+        "grant-host",
+        help="Give a server this account to host, from the grant text it showed with 'account host'"
+    )
+    grant_parser.add_argument("setup_text", help="The grant text, as copied from the server")
+    grant_parser.add_argument("--label", help="A name for the account on the server (default: the server's choice)")
     join_parser = account_subparsers.add_parser(
         "join",
         help="Join an account from a setup text shown by another device. Refused if this installation holds notes of another account"
@@ -3756,8 +3927,23 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
         print("Error: No CLI command specified. Use --help for available commands.", file=sys.stderr)
         return 1
 
+    # A root without an account of its own: only a listener or a host can run
+    if config_dir is None:
+        root = Path(getattr(args, "config_root"))
+        if args.cli_command == "sync" and getattr(args, "sync_command", None) == "serve":
+            return cmd_sync_serve_root(root, args)
+        if args.cli_command == "account":
+            command = getattr(args, "account_command", None)
+            if command == "host":
+                return cmd_account_host(root, args)
+            index_commands = {"list": cmd_account_list, "create": cmd_account_create, "default": cmd_account_default, "remove": cmd_account_remove}
+            if command in index_commands:
+                return index_commands[command](_index_root_of(root), args)
+        print(f"Error: {root} holds no account; run 'account create', 'account join <setup text>' or 'account host'.", file=sys.stderr)
+        return 1
+
     # Initialize config and database
-    config = Config(config_dir=config_dir)
+    config = Config(config_dir=config_dir, root=getattr(args, "config_root", None))
     db_path_str = config.get("database_file")
     db_path = Path(db_path_str)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3849,10 +4035,22 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return 1
             if account_cmd == "show":
                 return cmd_account_show(db, config, args)
+            elif account_cmd == "list":
+                return cmd_account_list(_index_root(config), args)
+            elif account_cmd == "create":
+                return cmd_account_create(_index_root(config), args)
+            elif account_cmd == "default":
+                return cmd_account_default(_index_root(config), args)
+            elif account_cmd == "remove":
+                return cmd_account_remove(_index_root(config), args)
             elif account_cmd == "show-code":
                 return cmd_account_show_code(db, config, args)
             elif account_cmd == "hide-code":
                 return cmd_account_hide_code(config, args)
+            elif account_cmd == "host":
+                return cmd_account_host(config.get_root(), args)
+            elif account_cmd == "grant-host":
+                return cmd_account_grant_host(config, args)
             elif account_cmd == "join":
                 return cmd_account_join(db, config, args)
             elif account_cmd == "snapshots":

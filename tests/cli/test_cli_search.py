@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -26,13 +27,13 @@ class TestSearchText:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--text", "meeting"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "Meeting notes" in result.stdout
@@ -45,13 +46,13 @@ class TestSearchText:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--text", "DOCTOR"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "Doctor appointment" in result.stdout
@@ -63,13 +64,13 @@ class TestSearchText:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--text", "שלום"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "שלום עולם" in result.stdout
@@ -81,13 +82,13 @@ class TestSearchText:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--text", "nonexistent"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "No notes found" in result.stdout
@@ -104,13 +105,13 @@ class TestSearchTags:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "Work"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find notes with Work tag
@@ -124,13 +125,13 @@ class TestSearchTags:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "Geography/Europe/France/Paris"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "reunion" in result.stdout.lower()
@@ -142,13 +143,13 @@ class TestSearchTags:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "Personal"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find notes with Personal and its children (Family, Health)
@@ -161,15 +162,15 @@ class TestSearchTags:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search",
                 "--tag", "Work",
                 "--tag", "Work/Projects"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find notes with both Work AND Projects
@@ -182,13 +183,13 @@ class TestSearchTags:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "NonExistentTag"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "Warning: Tag 'NonExistentTag' not found" in result.stderr
@@ -207,15 +208,15 @@ class TestSearchCombined:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search",
                 "--text", "meeting",
                 "--tag", "Work"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "Meeting notes" in result.stdout
@@ -228,7 +229,6 @@ class TestSearchCombined:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search",
                 "--text", "reunion",
@@ -236,8 +236,9 @@ class TestSearchCombined:
                 "--tag", "Geography"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "reunion" in result.stdout.lower()
@@ -255,14 +256,14 @@ class TestSearchOutputFormats:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "--format", "json",
                 "notes-search", "--tag", "Work"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         notes = json.loads(result.stdout)
@@ -276,14 +277,14 @@ class TestSearchOutputFormats:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "--format", "csv",
                 "notes-search", "--text", "Doctor"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")
@@ -302,13 +303,13 @@ class TestAmbiguousTagCLISearch:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "Paris"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find notes 4 (France Paris) and 9 (Texas Paris)
@@ -323,13 +324,13 @@ class TestAmbiguousTagCLISearch:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "Geography/Europe/France/Paris"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find only note 4 (France Paris)
@@ -344,13 +345,13 @@ class TestAmbiguousTagCLISearch:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "Geography/US/Texas/Paris"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find only note 9 (Texas Paris)
@@ -365,13 +366,13 @@ class TestAmbiguousTagCLISearch:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search", "--tag", "Bar"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find notes 7 (Foo/Bar) and 8 (Boom/Bar)
@@ -386,15 +387,15 @@ class TestAmbiguousTagCLISearch:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli",
                 "notes-search",
                 "--text", "Cowboys",
                 "--tag", "Paris"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should find only note 9 (Texas Paris with "Cowboys")

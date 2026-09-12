@@ -15,9 +15,10 @@ from .conftest import SyncNode, start_sync_server
 
 def cli(node: SyncNode, *args: str) -> subprocess.CompletedProcess:
     env = os.environ.copy()
+    env["VOICE_CONFIG_DIR"] = str(node.config_dir)
     env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
     return subprocess.run(
-        [sys.executable, "-m", "src.main", "-d", str(node.config_dir), "cli", "--format", "json", *args],
+        [sys.executable, "-m", "src.main", "cli", "--format", "json", *args],
         capture_output=True, text=True, env=env, cwd=str(Path(__file__).parent.parent.parent),
     )
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -18,25 +19,27 @@ from core.database import Database
 class TestCLIArguments:
     """Test CLI argument parsing."""
 
-    def test_no_command_shows_error(self) -> None:
+    def test_no_command_shows_error(self, tmp_path: Path) -> None:
         """Test that running CLI without command shows error message."""
         result = subprocess.run(
             [sys.executable, "-m", "src.main", "cli"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(tmp_path)},
+    )
 
         assert result.returncode == 1
         assert "No CLI command specified" in result.stderr
         assert "--help" in result.stderr
 
-    def test_help_flag(self) -> None:
+    def test_help_flag(self, tmp_path: Path) -> None:
         """Test --help flag shows CLI subcommands."""
         result = subprocess.run(
             [sys.executable, "-m", "src.main", "cli", "--help"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(tmp_path)},
+    )
 
         assert result.returncode == 0
         assert "usage:" in result.stdout.lower()
@@ -52,24 +55,25 @@ class TestCLIArguments:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "notes-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # New format is: "ID | Created | First line content"
         assert "|" in result.stdout
 
-    def test_invalid_command(self) -> None:
+    def test_invalid_command(self, tmp_path: Path) -> None:
         """Test running invalid command."""
         result = subprocess.run(
             [sys.executable, "-m", "src.main", "cli", "invalid-command"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(tmp_path)},
+    )
 
         assert result.returncode != 0
 
@@ -78,12 +82,12 @@ class TestCLIArguments:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "note-show"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode != 0
         assert "error" in result.stderr.lower()
@@ -98,13 +102,13 @@ class TestCLIOutputFormats:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "--format", "invalid",
                 "notes-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode != 0
         assert "error" in result.stderr.lower()
@@ -116,13 +120,13 @@ class TestCLIOutputFormats:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "-d", str(test_db_path.parent),
                 "cli", "--format", "json",
                 "notes-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # Should parse JSON successfully
@@ -133,46 +137,50 @@ class TestCLIOutputFormats:
 class TestCLISubcommandHelp:
     """Test help for individual subcommands."""
 
-    def test_notes_list_help(self) -> None:
+    def test_notes_list_help(self, tmp_path: Path) -> None:
         """Test notes-list help."""
         result = subprocess.run(
             [sys.executable, "-m", "src.main", "cli", "notes-list", "--help"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(tmp_path)},
+    )
 
         assert result.returncode == 0
         assert "notes-list" in result.stdout.lower()
 
-    def test_note_show_help(self) -> None:
+    def test_note_show_help(self, tmp_path: Path) -> None:
         """Test note-show help."""
         result = subprocess.run(
             [sys.executable, "-m", "src.main", "cli", "note-show", "--help"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(tmp_path)},
+    )
 
         assert result.returncode == 0
         assert "note_id" in result.stdout.lower()
 
-    def test_tags_list_help(self) -> None:
+    def test_tags_list_help(self, tmp_path: Path) -> None:
         """Test tags-list help."""
         result = subprocess.run(
             [sys.executable, "-m", "src.main", "cli", "tags-list", "--help"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(tmp_path)},
+    )
 
         assert result.returncode == 0
         assert "tags-list" in result.stdout.lower()
 
-    def test_notes_search_help(self) -> None:
+    def test_notes_search_help(self, tmp_path: Path) -> None:
         """Test notes-search help."""
         result = subprocess.run(
             [sys.executable, "-m", "src.main", "cli", "notes-search", "--help"],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(tmp_path)},
+    )
 
         assert result.returncode == 0
         assert "--text" in result.stdout

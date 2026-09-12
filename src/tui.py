@@ -2474,7 +2474,7 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             root_logger.removeHandler(handler)
 
     # Initialize config and database
-    config = Config(config_dir=config_dir)
+    config = Config(config_dir=config_dir, root=getattr(args, "config_root", None))
     db_path_str = config.get("database_file")
     db_path = Path(db_path_str)
     db_path.parent.mkdir(parents=True, exist_ok=True)

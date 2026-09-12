@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -28,12 +29,13 @@ class TestShowNote:
         note_id = get_note_uuid_hex(1)
         result = subprocess.run(
             [
-                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
+                sys.executable, "-m", "src.main", "cli",
                 "note-show", note_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert f"ID: {note_id}" in result.stdout
@@ -47,13 +49,14 @@ class TestShowNote:
         note_id = get_note_uuid_hex(1)
         result = subprocess.run(
             [
-                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
+                sys.executable, "-m", "src.main", "cli",
                 "--format", "json",
                 "note-show", note_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         note = json.loads(result.stdout)
@@ -68,13 +71,14 @@ class TestShowNote:
         note_id = get_note_uuid_hex(2)
         result = subprocess.run(
             [
-                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
+                sys.executable, "-m", "src.main", "cli",
                 "--format", "csv",
                 "note-show", note_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         # CSV format: id,created_at,content,tags
@@ -88,12 +92,13 @@ class TestShowNote:
         note_id = get_note_uuid_hex(1)
         result = subprocess.run(
             [
-                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
+                sys.executable, "-m", "src.main", "cli",
                 "note-show", note_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "Tags:" in result.stdout
@@ -107,12 +112,13 @@ class TestShowNote:
         nonexistent_id = "00000000000070008000000000009999"
         result = subprocess.run(
             [
-                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
+                sys.executable, "-m", "src.main", "cli",
                 "note-show", nonexistent_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 1
         assert "not found" in result.stderr.lower()
@@ -124,12 +130,13 @@ class TestShowNote:
         note_id = get_note_uuid_hex(6)
         result = subprocess.run(
             [
-                sys.executable, "-m", "src.main", "-d", str(test_db_path.parent), "cli",
+                sys.executable, "-m", "src.main", "cli",
                 "note-show", note_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_db_path.parent)},
+    )
 
         assert result.returncode == 0
         assert "שלום עולם" in result.stdout

@@ -126,14 +126,14 @@ cd rust/voice-python && ../../.venv/bin/maturin develop --release && cd ../..
 ### Starting the Sync Server
 
 - The database is created automatically on first start
-- The default config directory is at `~/.config/voice/notes.db`, use the -d flag to set a custom directory.
+- The default root is `~/.config/voice/`, with one directory per account under it; set `VOICE_CONFIG_DIR` for another root and `-a` for another account.
 
 ```bash
 python -m src.main cli sync serve                              # Start with defaults (0.0.0.0:8384)
 python -m src.main cli sync serve --host 0.0.0.0 --port 8384   # Custom host/port
 python -m src.main cli sync serve --verbose                    # Enable logging to stdout
 python -m src.main cli sync serve --verbose --no-color         # Logging without ANSI colors
-python -m src.main -d /path/to/config cli sync serve           # With custom config directory
+VOICE_CONFIG_DIR=/path/to/root python -m src.main cli sync serve   # With another root
 ```
 
 #### Sync Server Options

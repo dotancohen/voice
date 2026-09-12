@@ -116,8 +116,8 @@ def run_gui(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     if config_dir:
         logger.info(f"Using custom config directory: {config_dir}")
 
-    # Initialize config with custom directory if specified
-    config = Config(config_dir=config_dir)
+    # The account's directory, under the machine's root
+    config = Config(config_dir=config_dir, root=getattr(args, "config_root", None))
 
     # Initialize database
     db_path_str = config.get("database_file")
@@ -188,10 +188,10 @@ Examples:
     )
 
     parser.add_argument(
-        "-d", "--config-dir",
-        type=Path,
+        "-a", "--account",
+        dest="account",
         default=None,
-        help="Configuration directory (default: $VOICE_CONFIG_DIR, else ~/.config/voice/)"
+        help="The account to open, by its id (or a unique prefix) or its label (default: $VOICE_ACCOUNT_ID, else the default account)"
     )
 
     parser.add_argument(
@@ -236,7 +236,7 @@ def is_gui_available() -> bool:
         return False
 
 
-def get_default_interface(config_dir: Optional[Path]) -> str:
+def get_default_interface(config_dir: Optional[Path], root: Optional[Path] = None) -> str:
     """Get default interface from config file, or detect based on available dependencies.
 
     Priority:
@@ -251,7 +251,7 @@ def get_default_interface(config_dir: Optional[Path]) -> str:
         Interface name: "gui", "tui", "cli", or "web"
     """
     from src.core.config import Config
-    config = Config(config_dir=config_dir)
+    config = Config(config_dir=config_dir, root=root)
 
     # Check if user has explicitly set a default interface
     configured = config.get("default_interface")
@@ -264,6 +264,10 @@ def get_default_interface(config_dir: Optional[Path]) -> str:
     return "tui"
 
 
+# The 'account' subcommands that read or write the index and open no account
+INDEX_COMMANDS = ("list", "create", "default", "remove", "host")
+
+
 def main() -> NoReturn:
     """Main entry point for Voice.
 
@@ -272,28 +276,59 @@ def main() -> NoReturn:
     parser = create_parser()
     args = parser.parse_args()
 
-    # Configuration directory: -d wins, then $VOICE_CONFIG_DIR, then the default
-    if args.config_dir is None and os.environ.get("VOICE_CONFIG_DIR"):
-        args.config_dir = Path(os.environ["VOICE_CONFIG_DIR"]).expanduser()
-
-    # Set up file logging early (for all interfaces)
-    from src.core.config import Config
-    config = Config(config_dir=args.config_dir)
-    setup_file_logging(config.get_config_dir())
-    # This installation's key for its account, and its own device card,
-    # made once and kept up to date with the device name (AUTH-1)
-    from voicecore import ensure_own_device_card
-    ensure_own_device_card(str(config.get_config_dir()))
-
-    # Always say which configuration is in use, as the first line. Machine
-    # formats keep stdout clean, so the line goes to stderr there.
-    banner = f"Using CONFIG_DIR: {config.get_config_dir()}"
+    # The root: $VOICE_CONFIG_DIR, else ~/.config/voice. The account: -a, else
+    # $VOICE_ACCOUNT_ID, else the default account (ACCT-6). A root that holds
+    # one database and no index is the account itself.
+    root = Path(os.environ["VOICE_CONFIG_DIR"]).expanduser() if os.environ.get("VOICE_CONFIG_DIR") else Path.home() / ".config" / "voice"
+    selector = args.account or os.environ.get("VOICE_ACCOUNT_ID") or None
+    # The commands that work on the index, and the listener, need no account
+    # of their own: they never create the default account, and run without
+    # one on a root that has none (Stage 3). Everything else opens an
+    # account, making the default one first if the root is empty.
+    serving = getattr(args, "interface", None) == "cli" and (
+        (getattr(args, "cli_command", None) == "sync" and getattr(args, "sync_command", None) == "serve")
+        or (getattr(args, "cli_command", None) == "account" and getattr(args, "account_command", None) in INDEX_COMMANDS)
+    )
+    from voicecore import resolve_account
+    try:
+        resolved = resolve_account(str(root), selector, not serving)
+    except Exception as e:  # noqa: BLE001 - the sentence is the answer
+        if not (serving and selector is None):
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        resolved = None
     machine_output = getattr(args, "format", "text") in ("json", "csv")
-    print(banner, file=sys.stderr if machine_output else sys.stdout, flush=True)
+    from src.core.config import Config
+    if resolved is None:
+        args.config_dir = None
+        args.config_root = root
+        args.account_label = None
+        root.mkdir(parents=True, exist_ok=True)
+        setup_file_logging(root)
+        print(f"Using CONFIG_DIR: {root} (no account of its own)", file=sys.stderr if machine_output else sys.stdout, flush=True)
+    else:
+        args.config_dir = Path(resolved["directory"])
+        args.config_root = Path(resolved["root"])
+        args.account_label = resolved.get("label")
+
+        # Set up file logging early (for all interfaces)
+        config = Config(config_dir=args.config_dir, root=args.config_root)
+        setup_file_logging(config.get_config_dir())
+        # This installation's key for its account, and its own device card,
+        # made once and kept up to date with the device name (AUTH-1)
+        from voicecore import ensure_own_device_card
+        ensure_own_device_card(str(config.get_config_dir()))
+
+        # Always say which configuration is in use, as the first line. Machine
+        # formats keep stdout clean, so the line goes to stderr there.
+        banner = f"Using CONFIG_DIR: {config.get_config_dir()}"
+        if args.account_label:
+            banner += f" (account {args.account_label})"
+        print(banner, file=sys.stderr if machine_output else sys.stdout, flush=True)
 
     # If no interface specified, use default from config
     if not args.interface:
-        default_interface = get_default_interface(args.config_dir)
+        default_interface = get_default_interface(args.config_dir, args.config_root)
         logger.info(f"No interface specified, using default: {default_interface}")
 
         # Re-parse with default interface
@@ -302,7 +337,7 @@ def main() -> NoReturn:
         # Find where to insert the interface (after any global options)
         insert_pos = 1
         for i, arg in enumerate(sys.argv[1:], 1):
-            if arg in ["-d", "--config-dir"]:
+            if arg in ["-a", "--account"]:
                 insert_pos = i + 2  # Skip the option and its value
             elif arg.startswith("-"):
                 continue

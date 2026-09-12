@@ -260,12 +260,12 @@ def start_sync_server(node: SyncNode) -> subprocess.Popen:
         Popen process object
     """
     env = os.environ.copy()
+    env["VOICE_CONFIG_DIR"] = str(node.config_dir)
     env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
 
     cmd = [
         sys.executable,
         "-m", "src.main",
-        "-d", str(node.config_dir),
         "cli", "sync", "serve",
         "--host", "127.0.0.1",
         "--port", str(node.port),

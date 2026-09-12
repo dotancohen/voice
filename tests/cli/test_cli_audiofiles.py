@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -55,12 +56,12 @@ class TestImportAudiofiles:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Should succeed (exit code 0)
         assert result.returncode == 0
@@ -72,12 +73,12 @@ class TestImportAudiofiles:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Should not mention document.txt in imported files
         assert "document.txt" not in result.stdout
@@ -96,12 +97,12 @@ class TestImportAudiofiles:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(test_config_dir),
                 "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(test_config_dir)},
+    )
 
         # CLI returns 1 and prints error to stdout
         assert result.returncode == 1
@@ -119,22 +120,22 @@ class TestListAudiofiles:
         subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_test_dir)
             ],
-            capture_output=True
-        )
+            capture_output=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # note-audiofiles-list without --note-id returns a message about requiring --note-id
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "note-audiofiles-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Should succeed (the CLI returns 0 and a message about needing --note-id)
         assert result.returncode == 0
@@ -146,12 +147,12 @@ class TestListAudiofiles:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "note-audiofiles-list"
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         assert result.returncode == 0
 
@@ -167,12 +168,12 @@ class TestShowAudiofile:
         import_result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofiles-import", str(audio_test_dir)
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # Get the list to find an ID (note-audiofiles-list requires --note-id so we skip)
         # Instead just test that audiofile-show works with a fake ID by checking
@@ -188,12 +189,12 @@ class TestShowAudiofile:
         result = subprocess.run(
             [
                 sys.executable, "-m", "src.main",
-                "--config-dir", str(config_with_audiofiles),
                 "cli", "audiofile-show", fake_id
             ],
             capture_output=True,
-            text=True
-        )
+            text=True,
+        env={**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)},
+    )
 
         # CLI returns 1 and prints error to stdout
         assert result.returncode == 1

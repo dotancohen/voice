@@ -32,15 +32,19 @@ class Config:
         config_dir: Path to the configuration directory
     """
 
-    def __init__(self, config_dir: Optional[Path] = None) -> None:
+    def __init__(self, config_dir: Optional[Path] = None, root: Optional[Path] = None) -> None:
         """Initialize configuration manager.
 
         Args:
-            config_dir: Custom config directory path. If None, uses ~/.config/voice/
+            config_dir: The account's directory. If None, uses ~/.config/voice/
+            root: The root that holds the machine's settings and the account
+                index, when the account directory is one of several under it.
         """
         path_str = str(config_dir) if config_dir else None
-        self._rust_config = RustConfig(path_str)
+        root_str = str(root) if root else None
+        self._rust_config = RustConfig(path_str, root_str)
         self.config_dir = Path(self._rust_config.get_config_dir())
+        self.root = Path(self._rust_config.get_root())
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value."""
@@ -54,6 +58,23 @@ class Config:
     def get_config_dir(self) -> Path:
         """Get the configuration directory path."""
         return self.config_dir
+
+    def get_root(self) -> Path:
+        """The root that holds the machine's settings, the certificates and the account index."""
+        return self.root
+
+    def get_backup(self) -> Dict[str, Any]:
+        """The periodic backup settings: interval_hours, directory, keep."""
+        return self._rust_config.get_backup()
+
+    def set_backup(self, interval_hours: int, keep: int, directory: str = "") -> None:
+        self._rust_config.set_backup(interval_hours, keep, directory)
+
+    def get_public_url(self) -> str:
+        return self._rust_config.get_public_url()
+
+    def set_public_url(self, url: str) -> None:
+        self._rust_config.set_public_url(url)
 
     def get_tui_colors(self) -> Dict[str, str]:
         """Get TUI border colors from config."""

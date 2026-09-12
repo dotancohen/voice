@@ -901,6 +901,15 @@ recording reach a second place soonest:
 At this point the owner's phone delivers to the owner's desktop. Then:
 
 6. Stage 2, accounts in the core, and the rest of Stage 3, hosting.
+   **Stage 2 done 2026-09-13**: `accounts.rs`, `-a` in place of `-d`,
+   `$VOICE_CONFIG_DIR` as the root, `account list|create|default|remove`,
+   machine settings in the root's config.json. **Hosting done 2026-09-13**:
+   a listener over an indexed root serves every account of the index
+   (`AccountSource`, opened on first request), `account host` and
+   `account grant-host` (PAIR-5, `/pair/grant`), the phone's one text field
+   takes a code or a grant text, `audit.log` per hosted account (AUTH-8).
+   The index commands and the listener run on a root without an account
+   and never create the default one.
 7. Stage 7, discovery; Stage 5's remaining interface work; Stage 10, proof;
    Stage 12, diagnostics.
 8. Stage 8, the wizard, with Stage 14's bucket hardening and Stage 13's
