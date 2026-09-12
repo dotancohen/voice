@@ -69,6 +69,30 @@ def api_endpoint(func: Callable) -> Callable:
     return wrapper
 
 
+# Where this installation keeps its recordings, so that a note removed for
+# good takes its files with it.
+audiofile_directory: Optional[str] = None
+
+
+def _remove_purged_audio_files(audio_ids: List[str]) -> int:
+    """Delete the files of recordings that were purged; return how many went.
+
+    The database says which recordings were removed; where their files live
+    is the application's business, not the core's.
+    """
+    if not audio_ids or not audiofile_directory:
+        return 0
+    removed = 0
+    for audio_id in audio_ids:
+        for path in Path(audiofile_directory).glob(f"{audio_id}.*"):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError as e:
+                logger.warning(f"Could not delete {path}: {e}")
+    return removed
+
+
 def create_app(config_dir: Optional[Path] = None) -> Flask:
     """Create and configure Flask application.
 
@@ -87,8 +111,11 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
     db_path = Path(db_path_str)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    global db
+    global db, audiofile_directory
     db = Database(db_path)
+    audiofile_directory = config.get_audiofile_directory()
+    from src.core.synced_settings import reconcile_transcription_settings
+    reconcile_transcription_settings(config, db)
 
     logger.info(f"Web API initialized with database: {db_path}")
 
@@ -180,6 +207,182 @@ def create_app(config_dir: Optional[Path] = None) -> Flask:
         if deleted:
             return jsonify({"message": f"Note {note_id} deleted"}), 200
         return jsonify({"error": f"Note {note_id} not found"}), 404
+
+    @app.route("/api/maintenance/missing-data", methods=["GET"])
+    @api_endpoint
+    def survey_missing_data() -> Response:
+        """What was never worked out: Recording lengths, dates, display caches.
+
+        Changes nothing. Each entry says how many there are and whether it can
+        be filled in at all.
+        """
+        from src.core import missing_data
+
+        survey = missing_data.survey(db, config)
+        return jsonify({
+            "gaps": [
+                {
+                    "key": gap.key,
+                    "description": gap.description,
+                    "count": gap.count,
+                    "calculable": gap.calculable,
+                    "note": gap.note,
+                }
+                for gap in survey.gaps
+            ],
+            "total_calculable": survey.total_calculable,
+        })
+
+    @app.route("/api/maintenance/missing-data", methods=["POST"])
+    @api_endpoint
+    def calculate_missing_data() -> Response:
+        """Calculate what can be calculated, and report what happened.
+
+        Body (all optional): `durations`, `file_dates`, `caches` as booleans to
+        leave a kind of repair out, and `limit` to read at most that many
+        Recordings in one run.
+        """
+        from src.core import missing_data
+
+        body = request.get_json(silent=True) or {}
+        report = missing_data.calculate_missing_data(
+            db, config,
+            durations=bool(body.get("durations", True)),
+            file_dates=bool(body.get("file_dates", True)),
+            caches=bool(body.get("caches", True)),
+            limit=body.get("limit"),
+        )
+        return jsonify({
+            "calculated": report.calculated,
+            "failed": report.failed,
+            "details": report.details,
+            "total_calculated": report.total_calculated,
+        })
+
+    @app.route("/api/transcription-queue", methods=["GET"])
+    @api_endpoint
+    def transcription_queue() -> Response:
+        """What is waiting to be transcribed on this machine, and what it cost.
+
+        Three groups — `waiting`, `processing`, `completed` — newest first within
+        each, plus `rate`: seconds of work per second of Recording on this
+        machine, which is what the waiting estimates are worked out from.
+
+        One queue for the whole installation, so this is the same queue the GUI,
+        the TUI and the CLI show.
+
+            curl http://localhost:5000/api/transcription-queue
+
+        Query: `service` narrows the finished work to one transcription service.
+        """
+        from src.core import transcription_queue as queue_module
+
+        view = queue_module.view(db, config, request.args.get("service"))
+        return jsonify(queue_module.as_json(view))
+
+    @app.route("/api/transcription-queue", methods=["POST"])
+    @api_endpoint
+    def transcription_queue_add() -> tuple[Response, int] | Response:
+        """Put a Recording in the queue.
+
+        Body: `audio_file_id`, and optionally `provider` (the transcription
+        service's configuration: `provider_id`, `model`, `language`). Nothing is
+        transcribed by this call — the GUI, or `cli transcription-queue --run`,
+        does the work, one Recording at a time.
+
+            curl -X POST http://localhost:5000/api/transcription-queue \
+                -H 'Content-Type: application/json' \
+                -d '{"audio_file_id": "01a0...", "provider": {"provider_id": "local_whisper"}}'
+        """
+        from src.core import transcription_queue as queue_module
+
+        body = request.get_json(silent=True) or {}
+        audio_file_id = body.get("audio_file_id")
+        if not audio_file_id:
+            return jsonify({"error": "audio_file_id is required"}), 400
+        provider = body.get("provider") or {"provider_id": "local_whisper"}
+        problem = queue_module.enqueue(db, config, audio_file_id, provider)
+        if problem:
+            return jsonify({"error": problem}), 400
+        return jsonify({"queued": audio_file_id})
+
+    @app.route("/api/transcription-queue/next", methods=["POST"])
+    @api_endpoint
+    def transcription_queue_next() -> tuple[Response, int] | Response:
+        """Transcribe one waiting Recording next, ahead of the others.
+
+        The Recording being worked on is not interrupted: it is minutes into
+        work that would have to start again.
+
+        Body: `audio_file_id`.
+        """
+        from src.core import transcription_queue as queue_module
+
+        body = request.get_json(silent=True) or {}
+        audio_file_id = body.get("audio_file_id")
+        if not audio_file_id:
+            return jsonify({"error": "audio_file_id is required"}), 400
+        moved = queue_module.Queue(config.config_dir).do_next(audio_file_id)
+        if not moved:
+            return jsonify({"error": "That Recording is not waiting, or is already next"}), 400
+        return jsonify({"next": audio_file_id})
+
+    @app.route("/api/transcription-queue/remove", methods=["POST"])
+    @api_endpoint
+    def transcription_queue_remove() -> tuple[Response, int] | Response:
+        """Take a waiting Recording out of the queue. Body: `audio_file_id`."""
+        from src.core import transcription_queue as queue_module
+
+        body = request.get_json(silent=True) or {}
+        audio_file_id = body.get("audio_file_id")
+        if not audio_file_id:
+            return jsonify({"error": "audio_file_id is required"}), 400
+        removed = queue_module.Queue(config.config_dir).remove(audio_file_id)
+        if not removed:
+            return jsonify({"error": "That Recording is not waiting"}), 400
+        return jsonify({"removed": audio_file_id})
+
+    @app.route("/api/transcription-queue/clear", methods=["POST"])
+    @api_endpoint
+    def transcription_queue_clear() -> Response:
+        """Forget everything waiting. What is being worked on is not stopped."""
+        from src.core import transcription_queue as queue_module
+
+        return jsonify({"forgotten": queue_module.Queue(config.config_dir).clear()})
+
+    @app.route("/api/trash", methods=["GET"])
+    @api_endpoint
+    def get_trash() -> Response:
+        """The notes in the trash: deleted, still here, newest deletion first."""
+        return jsonify({"notes": db.get_deleted_notes()})
+
+    @app.route("/api/trash/<note_id>/recover", methods=["POST"])
+    @api_endpoint
+    def recover_note(note_id: str) -> tuple[Response, int]:
+        """Take a note out of the trash."""
+        validate_uuid_hex(note_id, "note_id")
+        if db.undelete_note(note_id):
+            return jsonify({"message": f"Note {note_id} recovered"}), 200
+        return jsonify({"error": f"Note {note_id} is not in the trash"}), 404
+
+    @app.route("/api/trash/<note_id>", methods=["DELETE"])
+    @api_endpoint
+    def purge_note(note_id: str) -> tuple[Response, int]:
+        """Remove a note in the trash for good, on every device.
+
+        Refuses a note that is not in the trash: deleting is one step and
+        removing for good is another, so that neither can happen by accident.
+        """
+        validate_uuid_hex(note_id, "note_id")
+        if not any(n["id"] == note_id for n in db.get_deleted_notes()):
+            return jsonify({"error": f"Note {note_id} is not in the trash"}), 404
+        audio_ids = db.purge_note(note_id)
+        removed = _remove_purged_audio_files(audio_ids)
+        return jsonify({
+            "message": f"Note {note_id} removed for good",
+            "audio_files": audio_ids,
+            "files_removed": removed,
+        }), 200
 
     @app.route("/api/notes/<note_id>/attachments", methods=["GET"])
     @api_endpoint

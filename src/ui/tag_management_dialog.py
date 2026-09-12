@@ -174,7 +174,7 @@ class TagManagementDialog(QDialog):
         # Filter field
         filter_layout = QHBoxLayout()
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("Filter tags...")
+        self.filter_input.setPlaceholderText("Filter Tags…")
         self.filter_input.textChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(self.filter_input)
 

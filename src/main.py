@@ -20,9 +20,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import NoReturn, Optional
+
+# How large the log may grow before it is rotated, and how many old ones are
+# kept. Bounded on purpose: see setup_file_logging.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_FILES_KEPT = 2
 
 # Configure console logging (file logging added later when config dir is known)
 logging.basicConfig(
@@ -39,7 +46,16 @@ def setup_file_logging(config_dir: Path) -> None:
         config_dir: Configuration directory where voice.log will be created
     """
     log_file = config_dir / "voice.log"
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    # Rotating, not plain: a sync server runs for months, and a log file that
+    # only ever grows fills the disk and then cannot be read into a window to
+    # look at. Five megabytes is weeks of ordinary use, and two old files are
+    # kept behind it.
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_FILES_KEPT,
+        encoding="utf-8",
+    )
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -108,6 +124,8 @@ def run_gui(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     db_path = Path(db_path_str)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     db = Database(db_path)
+    from src.core.synced_settings import reconcile_transcription_settings
+    reconcile_transcription_settings(config, db)
 
     logger.info(f"Database location: {db_path}")
 
@@ -173,7 +191,7 @@ Examples:
         "-d", "--config-dir",
         type=Path,
         default=None,
-        help="Custom configuration directory (default: ~/.config/voice/)"
+        help="Configuration directory (default: $VOICE_CONFIG_DIR, else ~/.config/voice/)"
     )
 
     parser.add_argument(
@@ -254,10 +272,20 @@ def main() -> NoReturn:
     parser = create_parser()
     args = parser.parse_args()
 
+    # Configuration directory: -d wins, then $VOICE_CONFIG_DIR, then the default
+    if args.config_dir is None and os.environ.get("VOICE_CONFIG_DIR"):
+        args.config_dir = Path(os.environ["VOICE_CONFIG_DIR"]).expanduser()
+
     # Set up file logging early (for all interfaces)
     from src.core.config import Config
     config = Config(config_dir=args.config_dir)
     setup_file_logging(config.get_config_dir())
+
+    # Always say which configuration is in use, as the first line. Machine
+    # formats keep stdout clean, so the line goes to stderr there.
+    banner = f"Using CONFIG_DIR: {config.get_config_dir()}"
+    machine_output = getattr(args, "format", "text") in ("json", "csv")
+    print(banner, file=sys.stderr if machine_output else sys.stdout, flush=True)
 
     # If no interface specified, use default from config
     if not args.interface:

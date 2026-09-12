@@ -10,6 +10,9 @@ Commands:
     note-create [content]   Create a new note
     note-edit <id> [content] Edit an existing note
     notes-merge <id1> <id2> Merge two notes into one
+    trash-list              List the notes in the trash
+    note-recover <id>       Take a note out of the trash
+    note-purge <id>         Remove a trashed note for good, on every device
     tags-list               List all tags in hierarchy
     notes-search            Search notes by text and/or tags
 """
@@ -25,9 +28,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.core.audiofile_manager import AudioFileManager, is_supported_audio_format
+from src.core.cloud_storage import (
+    STATUS_IN_CLOUD,
+    STATUS_LOCAL,
+    STATUS_PENDING,
+    audio_file_status,
+    describe_download_result,
+    download_audio_file,
+    download_audio_files_for_note,
+    download_missing_audio_files,
+)
 from src.core.config import Config
-from src.core.conflicts import ConflictManager, ResolutionChoice
+from src.core.conflicts import ConflictManager
 from src.core.database import Database
+from src.core.synced_settings import reconcile_transcription_settings, set_synced_setting
 from src.core.models import AUDIO_FILE_FORMATS, UUID_SHORT_LEN
 from src.core.search import resolve_tag_term
 from src.core.timestamp_utils import format_timestamp, datetime_to_timestamp
@@ -107,15 +121,15 @@ def format_note(note: Dict[str, Any], format_type: str = "text") -> str:
         # Simple CSV format: id,created_at,content,tags
         content = note["content"].replace('"', '""')  # Escape quotes
         tags = note.get("tag_names", "")
-        created_at = format_timestamp(note.get("created_at"))
+        created_at = format_timestamp(note.get("created_at"), note.get("created_at_offset"))
         return f'{note["id"]},"{created_at}","{content}","{tags}"'
     else:  # text
         lines = [
             f"ID: {note['id']}",
-            f"Created: {format_timestamp(note.get('created_at'))}",
+            f"Created: {format_timestamp(note.get('created_at'), note.get('created_at_offset'))}",
         ]
         if note.get("modified_at"):
-            lines.append(f"Modified: {format_timestamp(note['modified_at'])}")
+            lines.append(f"Modified: {format_timestamp(note['modified_at'], note.get('modified_at_offset'))}")
         if note.get("tag_names"):
             lines.append(f"Tags: {note['tag_names']}")
         lines.append(f"\n{note['content']}")
@@ -155,7 +169,7 @@ def cmd_list_notes(db: Database, args: argparse.Namespace) -> int:
                 first_line = first_line[:100] + "..."
 
             # Format: ID | Created | Content
-            print(f"{note['id']} | {format_timestamp(note.get('created_at'))} | {first_line}")
+            print(f"{note['id']} | {format_timestamp(note.get('created_at'), note.get('created_at_offset'))} | {first_line}")
 
     return 0
 
@@ -189,6 +203,9 @@ def cmd_show_note(db: Database, args: argparse.Namespace) -> int:
     if conflict_types:
         types_str = ", ".join(conflict_types)
         print(f"WARNING: This note has unresolved {types_str} conflict(s)", file=sys.stderr)
+        for c in conflict_mgr.get_note_conflicts(note["id"]):
+            print(f"  [{c.id[:UUID_SHORT_LEN]}] {c.describe()}", file=sys.stderr)
+        print("  Resolve with: sync resolve <id> (accept) or sync resolve <id> --content-file FILE", file=sys.stderr)
 
     print(format_note(note, args.format))
     return 0
@@ -530,17 +547,30 @@ def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) 
         print("Use: voice cli note-audiofiles-list --note-id <note_id>")
         return 0
 
+    audiofile_dir = config.get_audiofile_directory()
     for af in audio_files:
         print(f"ID: {af['id'][:UUID_SHORT_LEN]}...")
         print(f"  Filename: {af['filename']}")
-        print(f"  Imported: {format_timestamp(af.get('imported_at'))}")
+        print(f"  Imported: {format_timestamp(af.get('imported_at'), af.get('imported_at_offset'))}")
         if af.get('file_created_at'):
-            print(f"  File created: {format_timestamp(af['file_created_at'])}")
+            print(f"  File created: {format_timestamp(af['file_created_at'], af.get('file_created_at_offset'))}")
         if af.get('summary'):
             print(f"  Summary: {af['summary']}")
+        if audiofile_dir:
+            print(f"  Media: {_describe_media_status(af, audiofile_dir)}")
         print()
 
     return 0
+
+
+def _describe_media_status(audio_file: Dict[str, Any], audiofile_dir: str) -> str:
+    """Human description of where an audio file's binary is."""
+    status = audio_file_status(audio_file, audiofile_dir)
+    if status == STATUS_LOCAL:
+        return "on this device"
+    if status == STATUS_IN_CLOUD:
+        return "not on this device, in cloud storage (use audiofile-download)"
+    return "not on this device, not uploaded by its device yet"
 
 
 def cmd_show_audiofile(db: Database, config: Config, args: argparse.Namespace) -> int:
@@ -561,29 +591,96 @@ def cmd_show_audiofile(db: Database, config: Config, args: argparse.Namespace) -
 
     print(f"ID: {audio_file['id']}")
     print(f"Filename: {audio_file['filename']}")
-    print(f"Imported: {format_timestamp(audio_file.get('imported_at'))}")
+    print(f"Imported: {format_timestamp(audio_file.get('imported_at'), audio_file.get('imported_at_offset'))}")
     if audio_file.get('file_created_at'):
-        print(f"File created: {format_timestamp(audio_file['file_created_at'])}")
+        print(f"File created: {format_timestamp(audio_file['file_created_at'], audio_file.get('file_created_at_offset'))}")
     if audio_file.get('summary'):
         print(f"Summary: {audio_file['summary']}")
     if audio_file.get('modified_at'):
-        print(f"Modified: {format_timestamp(audio_file['modified_at'])}")
+        print(f"Modified: {format_timestamp(audio_file['modified_at'], audio_file.get('modified_at_offset'))}")
     if audio_file.get('deleted_at'):
-        print(f"Deleted: {format_timestamp(audio_file['deleted_at'])}")
+        print(f"Deleted: {format_timestamp(audio_file['deleted_at'], audio_file.get('deleted_at_offset'))}")
+
+    # Cloud storage location
+    if audio_file.get('storage_key'):
+        print(f"Cloud storage: {audio_file.get('storage_provider')} {audio_file['storage_key']}")
+        if audio_file.get('storage_uploaded_at'):
+            print(f"Uploaded: {format_timestamp(audio_file['storage_uploaded_at'])}")
+    else:
+        print("Cloud storage: not uploaded yet")
 
     # Show file location
     audiofile_dir = config.get_audiofile_directory()
     if audiofile_dir:
         manager = AudioFileManager(audiofile_dir)
-        ext = manager.get_extension_from_filename(audio_file['filename'])
-        if ext:
-            file_path = manager.get_file_path(audio_file['id'], ext)
-            if file_path:
-                print(f"File path: {file_path}")
-            else:
-                print("File path: (file not found on disk)")
+        file_path = manager.get_record_path(audio_file)
+        if file_path.is_file():
+            print(f"File path: {file_path}")
+        else:
+            print(f"File path: (not on this device, would be {file_path})")
+            print(f"Media: {_describe_media_status(audio_file, audiofile_dir)}")
 
     return 0
+
+
+def cmd_download_audiofile(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Download one audio file from cloud storage on demand.
+
+    Returns:
+        Exit code (0 for success or nothing to do, 1 for failure)
+    """
+    audio_file = db.get_audio_file(args.audio_id)
+    if not audio_file:
+        print(f"Audio file not found: {args.audio_id}", file=sys.stderr)
+        return 1
+
+    if not config.get_audiofile_directory():
+        print("Error: audiofile_directory not configured.", file=sys.stderr)
+        print("Run: voice config set audiofile_directory /path/to/audio/files", file=sys.stderr)
+        return 1
+
+    try:
+        result = download_audio_file(audio_file['id'], config.get_config_dir())
+    except RuntimeError as e:
+        print(f"Download failed: {e}", file=sys.stderr)
+        return 1
+
+    status = result.get("status")
+    if status == "downloaded":
+        print(f"Downloaded {audio_file['filename']} ({result.get('bytes', 0)} bytes)")
+    elif status == "already_local":
+        print(f"{audio_file['filename']} is already on this device")
+    else:
+        print(f"{audio_file['filename']} has not been uploaded to cloud storage by its device yet")
+    return 0
+
+
+def cmd_download_note_audiofiles(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Download every missing audio file attached to a note.
+
+    Returns:
+        Exit code (0 for success or nothing to do, 1 for failure)
+    """
+    note = db.get_note(args.note_id)
+    if not note:
+        print(f"Note not found: {args.note_id}", file=sys.stderr)
+        return 1
+
+    if not config.get_audiofile_directory():
+        print("Error: audiofile_directory not configured.", file=sys.stderr)
+        print("Run: voice config set audiofile_directory /path/to/audio/files", file=sys.stderr)
+        return 1
+
+    try:
+        result = download_audio_files_for_note(note['id'], config.get_config_dir())
+    except RuntimeError as e:
+        print(f"Download failed: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Audio files for note {note['id'][:UUID_SHORT_LEN]}...: {describe_download_result(result)}")
+    for error in result.errors:
+        print(f"  - {error}", file=sys.stderr)
+    return 0 if result.failed == 0 else 1
 
 
 def _transcribe_audio_file(
@@ -638,7 +735,25 @@ def _transcribe_audio_file(
         print(f"Error: Cannot determine extension for {audio_file['filename']}", file=sys.stderr)
         return None
 
-    file_path = manager.get_file_path(audio_file_id, ext)
+    file_path = manager.get_file_path(audio_file['id'], ext)
+    if not file_path:
+        # Transcribing is an explicit request for the media, so fetch it on demand.
+        status = audio_file_status(audio_file, audiofile_dir)
+        if status == STATUS_IN_CLOUD:
+            print(f"Audio file not on this device, downloading {audio_file['filename']} from cloud storage...")
+            try:
+                download_audio_file(audio_file['id'], config.get_config_dir())
+            except RuntimeError as e:
+                print(f"Error: Download failed: {e}", file=sys.stderr)
+                return None
+            file_path = manager.get_file_path(audio_file['id'], ext)
+        elif status == STATUS_PENDING:
+            print(
+                f"Error: Audio file {audio_file['id'][:UUID_SHORT_LEN]}... is not on this device "
+                "and has not been uploaded to cloud storage by its device yet",
+                file=sys.stderr,
+            )
+            return None
     if not file_path:
         print(f"Error: Audio file not found on disk: {audio_file_id}", file=sys.stderr)
         return None
@@ -935,6 +1050,227 @@ def cmd_transcribe_audiofile(db: Database, config: Config, args: argparse.Namesp
     return 0
 
 
+def cmd_transcribe_backlog(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Transcribe the recordings the phone was too small for.
+
+    The Android application transcribes up to ten minutes and refers anything
+    longer here. This finds those recordings — long, and with no finished
+    transcription — and transcribes them.
+
+    Doing the work is a choice made per machine: unless
+    `transcription.transcribe_long_recordings` is true in this machine's
+    config.json, the command reports what is waiting and does nothing, because
+    not every desktop has the hardware for it. `--force` overrides that for one
+    run.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    from src.core import transcription_backlog as backlog
+
+    min_minutes = getattr(args, "min_minutes", None) or backlog.minimum_minutes(config)
+    limit = getattr(args, "limit", None)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+
+    waiting = backlog.find_untranscribed(db, min_minutes * 60, limit)
+
+    if not waiting:
+        print(f"Nothing waiting: no Recording over {min_minutes} minutes is without a Transcription.")
+        return 0
+
+    total_seconds = sum(a.get("duration_seconds") or 0 for a in waiting)
+    print(f"{len(waiting)} Recording(s) over {min_minutes} minutes have no Transcription "
+          f"({total_seconds // 60} minutes of audio in all):")
+    for audio_file in waiting:
+        minutes = (audio_file.get("duration_seconds") or 0) // 60
+        print(f"  {audio_file['id'][:8]}  {minutes:>4} min  {audio_file.get('filename', '')}")
+
+    if dry_run:
+        return 0
+
+    if not backlog.is_enabled(config) and not force:
+        print()
+        print("This machine is not set to transcribe them. Whether it can is a fact about")
+        print("the hardware, so it is asked for explicitly:")
+        print()
+        print("    python -m src.main cli transcribe-backlog --enable")
+        print()
+        print("or, for this run only, --force.")
+        return 0
+
+    language = getattr(args, "language", None)
+    model = getattr(args, "model", None)
+    backend = getattr(args, "backend", "local_whisper")
+    done = 0
+    failed = 0
+    for audio_file in waiting:
+        minutes = (audio_file.get("duration_seconds") or 0) // 60
+        print(f"\nTranscribing {audio_file.get('filename', audio_file['id'][:8])} ({minutes} min)…")
+        result = _transcribe_audio_file(
+            db, config, audio_file["id"],
+            language=language,
+            model=model,
+            backend=backend,
+        )
+        if result:
+            done += 1
+        else:
+            failed += 1
+            print(f"  failed: {audio_file['id'][:8]}", file=sys.stderr)
+
+    print(f"\nTranscribed {done} Recording(s)" + (f", {failed} failed" if failed else ""))
+    return 0 if failed == 0 else 1
+
+
+def cmd_transcription_queue(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """What is waiting to be transcribed here, what is running, and what it cost.
+
+    One queue for the whole installation, so this shows the same thing the GUI,
+    the TUI and the Web API show, and can reorder what they queued. See
+    `core.transcription_queue`.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    from src.core import transcription_queue as queue_module
+
+    queue = queue_module.Queue(config.config_dir)
+
+    # The actions first: each says what it did and then shows the queue.
+    promote = getattr(args, "next", None)
+    drop = getattr(args, "remove", None)
+    if promote:
+        full = _resolve_audio_file_id(db, promote)
+        if queue.do_next(full or promote):
+            print("It will be transcribed next.")
+        else:
+            print("That Recording is not waiting, or is already next.", file=sys.stderr)
+            return 1
+    if drop:
+        full = _resolve_audio_file_id(db, drop)
+        if queue.remove(full or drop):
+            print("Taken out of the queue.")
+        else:
+            print("That Recording is not waiting.", file=sys.stderr)
+            return 1
+    if getattr(args, "clear", False):
+        print(f"Forgot {queue.clear()} waiting Recording(s).")
+
+    if getattr(args, "run", False):
+        from src.core.transcription_service import TranscriptionService
+
+        service = TranscriptionService(
+            db, Path(config.get_audiofile_directory() or "."), config
+        )
+        ran = queue_module.drain(
+            db, config, service,
+            limit=getattr(args, "limit", None),
+            progress=lambda line: print(f"  {line}"),
+        )
+        print(f"Transcribed {ran} Recording(s).")
+
+    view = queue_module.view(db, config, getattr(args, "service", None))
+
+    if getattr(args, "format", "text") == "json":
+        print(json.dumps(queue_module.as_json(view), ensure_ascii=False, indent=2))
+        return 0
+
+    if not view.anything:
+        print("Nothing is waiting, and nothing has been transcribed on this machine yet.")
+        return 0
+
+    if view.rate:
+        print(f"This machine transcribes at about {view.rate:.1f} seconds of work "
+              f"per second of Recording.")
+        print()
+
+    if view.waiting:
+        print(f"Waiting ({len(view.waiting)}):")
+        for row in view.waiting:
+            wait = queue_module.in_words(row.wait_seconds)
+            place = "next" if row.position == 1 else f"{row.position}th in line"
+            print(f"  {row.audio_file_id[:8]}  {place:<14}"
+                  f"{_queue_length(row.audio_seconds):>9}  {row.filename}")
+            print(f"            {row.note_line or '(no note)'}")
+            if wait:
+                print(f"            done in {wait}")
+        print()
+
+    if view.processing:
+        print("Processing:")
+        for row in view.processing:
+            print(f"  {row.audio_file_id[:8]}  {_queue_length(row.audio_seconds):>9}  {row.filename}")
+            print(f"            {row.note_line or '(no note)'}")
+            print(f"            {row.outcome or 'working'}")
+        print()
+
+    if view.completed:
+        print(f"Completed ({len(view.completed)}), newest first:")
+        for row in view.completed:
+            mark = "failed" if row.state == "failed" else "done"
+            print(f"  {row.audio_file_id[:8]}  {mark:<7}{_queue_length(row.audio_seconds):>9}  {row.filename}")
+            print(f"            {row.note_line or '(no note)'}")
+            print(f"            {_queue_cost(row)}")
+    return 0
+
+
+def _queue_length(seconds: Optional[float]) -> str:
+    """A recording's length for the queue listing."""
+    if not seconds:
+        return "-"
+    seconds = int(seconds)
+    if seconds >= 3600:
+        return f"{seconds // 3600}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _queue_cost(row: Any) -> str:
+    """What a finished transcription cost, in one line."""
+    from src.core import transcription_queue as queue_module
+
+    if row.state == "failed":
+        return row.outcome or "did not finish"
+    work = row.work
+    parts = []
+    if row.characters is not None:
+        parts.append(f"{row.characters} characters")
+    if work and work.clock_seconds:
+        parts.append(f"{queue_module.in_words(work.clock_seconds) or f'{work.clock_seconds:.0f} s'} of clock time")
+    if work and work.cpu_seconds:
+        parts.append(f"{work.cpu_seconds:.0f} s of processor time")
+    if work and work.cores_busy:
+        parts.append(f"{work.cores_busy:.1f} cores busy")
+    if work and work.peak_memory_bytes:
+        parts.append(f"{work.peak_memory_bytes / 1e6:.0f} MB peak")
+    if work and work.model:
+        parts.append(work.model)
+    return ", ".join(parts) if parts else "nothing was recorded about the work"
+
+
+def _resolve_audio_file_id(db: Database, prefix: str) -> Optional[str]:
+    """The full id of a Recording from the first characters of its id.
+
+    Ids are given as prefixes everywhere else in the CLI, so they are here too.
+    """
+    if len(prefix) >= 32:
+        return prefix
+    for audio_file in db.get_all_audio_files():
+        if audio_file["id"].startswith(prefix):
+            return audio_file["id"]
+    return None
+
+
 def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Transcribe all audio files for a note.
 
@@ -1048,12 +1384,17 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
         counts = conflict_mgr.get_unresolved_count()
         if counts["total"] > 0:
             print(f"\nUnresolved Conflicts: {counts['total']}")
-            if counts["note_content"] > 0:
-                print(f"  - Note content conflicts: {counts['note_content']}")
-            if counts["note_delete"] > 0:
-                print(f"  - Note delete conflicts: {counts['note_delete']}")
-            if counts["tag_rename"] > 0:
-                print(f"  - Tag rename conflicts: {counts['tag_rename']}")
+            labels = {
+                "text": "Text edited on both sides",
+                "delete": "Deleted on one side, changed on the other",
+                "membership": "Link removed on one side, kept on the other",
+                "scalar": "Value changed on both sides",
+                "flags": "State changed on both sides",
+            }
+            for kind, label in labels.items():
+                if counts.get(kind, 0) > 0:
+                    print(f"  - {label}: {counts[kind]}")
+            print("  Run 'sync conflicts' to list them.")
 
     return 0
 
@@ -1180,27 +1521,24 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
         result = client.sync_with_peer(peer_id)
 
         if args.format == "json":
-            print(json.dumps({
-                "peer_id": peer_id,
-                "success": result.success,
-                "pulled": result.pulled,
-                "pushed": result.pushed,
-                "conflicts": result.conflicts,
-                "errors": result.errors,
-            }, indent=2))
+            print(json.dumps({"peer_id": peer_id, **_sync_result_to_json(result)}, indent=2))
         else:
             if result.success:
                 print(f"Sync with {peer_id} completed:")
                 print(f"  Pulled: {result.pulled} changes")
                 print(f"  Pushed: {result.pushed} changes")
                 if result.conflicts > 0:
-                    print(f"  Errors: {result.conflicts}")
+                    print(f"  Conflicts: {result.conflicts} (run 'sync conflicts')")
+                if result.errors:
+                    print(f"  Errors: {len(result.errors)}")
                     for error in result.errors:
                         print(f"    - {error}")
+                _print_sync_warnings(result, "  ")
             else:
                 print(f"Sync with {peer_id} failed:")
                 for error in result.errors:
                     print(f"  - {error}")
+                _print_sync_warnings(result, "  ")
                 return 1
     else:
         # Sync with all peers
@@ -1216,15 +1554,7 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
         all_success = all(r.success for r in results.values())
 
         if args.format == "json":
-            output = {}
-            for pid, result in results.items():
-                output[pid] = {
-                    "success": result.success,
-                    "pulled": result.pulled,
-                    "pushed": result.pushed,
-                    "conflicts": result.conflicts,
-                    "errors": result.errors,
-                }
+            output = {pid: _sync_result_to_json(result) for pid, result in results.items()}
             print(json.dumps(output, indent=2))
         else:
             print(f"Sync completed with {len(results)} peer(s):\n")
@@ -1242,189 +1572,312 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
                     print(f"  {peer_name}: FAILED")
                     for error in result.errors:
                         print(f"    - {error}")
+                _print_sync_warnings(result, "    ")
 
         return 0 if all_success else 1
 
     return 0
 
 
+def _print_sync_warnings(result: Any, indent: str = "  ") -> None:
+    """Print non-fatal sync warnings (e.g. cloud uploads to be retried)."""
+    warnings = getattr(result, "warnings", None) or []
+    if warnings:
+        print(f"{indent}Warnings ({len(warnings)}):")
+        for warning in warnings:
+            print(f"{indent}  - {warning}")
+
+
+def _sync_result_to_json(result: Any) -> Dict[str, Any]:
+    """Serialise a SyncResult for --format json output."""
+    return {
+        "success": result.success,
+        "pulled": result.pulled,
+        "pushed": result.pushed,
+        "conflicts": result.conflicts,
+        "errors": result.errors,
+        "warnings": list(getattr(result, "warnings", None) or []),
+    }
+
+
+def _find_version(versions: list, prefix: str):
+    """One version whose id starts with prefix; None if none, error text if ambiguous."""
+    matches = [v for v in versions if v.id.startswith(prefix.lower())]
+    if not matches:
+        return None, f"No version starting with '{prefix}'"
+    if len(matches) > 1:
+        return None, f"Version prefix '{prefix}' is ambiguous ({len(matches)} matches)"
+    return matches[0], None
+
+
+def cmd_note_history(db: Database, args: argparse.Namespace) -> int:
+    """List the versions of a note's content, or print one of them."""
+    # Deleted notes keep their history too
+    note = db.get_note(args.note_id) or db.get_note_raw(args.note_id)
+    if not note:
+        print(f"Error: Note with ID {args.note_id} not found.", file=sys.stderr)
+        return 1
+    mgr = ConflictManager(db)
+    versions = mgr.get_field_history("note", note["id"], "content")
+    version_id = getattr(args, "version_id", None)
+    if version_id:
+        v, err = _find_version(versions, version_id)
+        if err:
+            print(f"Error: {err}", file=sys.stderr)
+            return 1
+        if args.format == "json":
+            print(json.dumps(v.__dict__, indent=2, ensure_ascii=False))
+        else:
+            print(v.content or "", end="" if (v.content or "").endswith("\n") else "\n")
+        return 0
+    if args.format == "json":
+        print(json.dumps([v.__dict__ for v in versions], indent=2, ensure_ascii=False))
+        return 0
+    current = db.get_note_raw(note["id"]) or {}
+    print(f"History of note {note['id'][:UUID_SHORT_LEN]} ({len(versions)} versions, oldest first):")
+    for v in versions:
+        kind = "merge" if v.merge_parent_id else ("root" if v.parent_id is None else "edit")
+        if v.conflict_kind:
+            kind += f", {v.conflict_kind} conflict"
+        first_line = (v.content or "").split("\n", 1)[0]
+        if len(first_line) > 60:
+            first_line = first_line[:57] + "..."
+        marker = " *" if (v.content or "") == current.get("content") else ""
+        print(f"  [{v.id[:UUID_SHORT_LEN]}] {format_timestamp(v.created_at, v.created_at_offset)}  {v.device_label:<16} {kind:<22} {first_line}{marker}")
+    print("  (* = current content)  Show one: note-history <note> --show <version>   Restore: note-restore <note> <version>")
+    return 0
+
+
+def cmd_note_restore(db: Database, args: argparse.Namespace) -> int:
+    """Make an earlier version the current content: a normal edit that syncs."""
+    note = db.get_note(args.note_id)
+    if not note:
+        print(f"Error: Note with ID {args.note_id} not found.", file=sys.stderr)
+        return 1
+    mgr = ConflictManager(db)
+    versions = mgr.get_field_history("note", note["id"], "content")
+    v, err = _find_version(versions, args.version_id)
+    if err:
+        print(f"Error: {err}", file=sys.stderr)
+        return 1
+    if (db.get_note_raw(note["id"]) or {}).get("content") == v.content:
+        print("That version is already the current content.")
+        return 0
+    db.update_note(note["id"], v.content or "")
+    print(f"Restored note {note['id'][:UUID_SHORT_LEN]} to version {v.id[:UUID_SHORT_LEN]} ({format_timestamp(v.created_at, v.created_at_offset)})")
+    return 0
+
+
 def cmd_sync_conflicts(db: Database, args: argparse.Namespace) -> int:
-    """List unresolved sync conflicts.
+    """List sync conflicts.
 
-    Args:
-        db: Database instance
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code (0 for success)
+    Every conflict is a field on which two devices disagreed. The merged
+    value is already live (text keeps both versions between markers); the
+    record exists so that the user reviews it.
     """
     conflict_mgr = ConflictManager(db)
+    include_resolved = getattr(args, "all", False)
+    conflicts = conflict_mgr.get_conflicts(include_resolved=include_resolved)
 
-    # Get all conflicts
-    note_content = conflict_mgr.get_note_content_conflicts()
-    note_delete = conflict_mgr.get_note_delete_conflicts()
-    tag_rename = conflict_mgr.get_tag_rename_conflicts()
-
-    # Filter by note ID if specified
     note_filter = getattr(args, "note", None)
     if note_filter:
-        note_filter = note_filter.lower()
-        note_content = [c for c in note_content if c.note_id.lower().startswith(note_filter)]
-        note_delete = [c for c in note_delete if c.note_id.lower().startswith(note_filter)]
-        # Tag conflicts don't have note_id, so they're excluded when filtering by note
+        note = db.get_note(note_filter)
+        if not note:
+            print(f"Error: Note with ID {note_filter} not found.", file=sys.stderr)
+            return 1
+        wanted = {c.id for c in conflict_mgr.get_note_conflicts(note["id"])}
+        conflicts = [c for c in conflicts if c.id in wanted]
+
+    show_details = getattr(args, "details", False)
 
     if args.format == "json":
-        output = {
-            "note_content": [
-                {
-                    "id": c.id,
-                    "note_id": c.note_id,
-                    "local_device": c.local_device_name or c.local_device_id,
-                    "remote_device": c.remote_device_name or c.remote_device_id,
-                    "created_at": c.created_at,
+        output = []
+        for c in conflicts:
+            item = c.to_dict()
+            if show_details:
+                v = conflict_mgr.get_conflict_versions(c)
+                item["versions"] = {
+                    "base": v.base.content if v.base else None,
+                    "version_a": v.version_a.content if v.version_a else None,
+                    "version_b": v.version_b.content if v.version_b else None,
+                    "merge": v.merge.content if v.merge else None,
                 }
-                for c in note_content
-            ],
-            "note_delete": [
-                {
-                    "id": c.id,
-                    "note_id": c.note_id,
-                    "surviving_device": c.surviving_device_name or c.surviving_device_id,
-                    "deleting_device": c.deleting_device_name or c.deleting_device_id,
-                    "created_at": c.created_at,
-                }
-                for c in note_delete
-            ],
-            "tag_rename": [
-                {
-                    "id": c.id,
-                    "tag_id": c.tag_id,
-                    "local_name": c.local_name,
-                    "remote_name": c.remote_name,
-                    "created_at": c.created_at,
-                }
-                for c in tag_rename
-            ],
-        }
-        print(json.dumps(output, indent=2))
-    else:
-        show_details = getattr(args, "details", False)
-        total = len(note_content) + len(note_delete) + len(tag_rename)
-        if total == 0:
-            if note_filter:
-                print(f"No unresolved conflicts for note {note_filter}.")
-            else:
-                print("No unresolved conflicts.")
-            return 0
+            output.append(item)
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+        return 0
 
-        print(f"Unresolved Conflicts ({total}):\n")
+    if not conflicts:
+        if note_filter:
+            print(f"No unresolved conflicts for note {note_filter}.")
+        else:
+            print("No unresolved conflicts.")
+        return 0
 
-        if note_content:
-            print("Note Content Conflicts:")
-            for c in note_content:
-                local = c.local_device_name or (c.local_device_id[:UUID_SHORT_LEN] if c.local_device_id else "unknown")
-                remote = c.remote_device_name or (c.remote_device_id[:UUID_SHORT_LEN] if c.remote_device_id else "unknown")
-                print(f"  [{c.id[:UUID_SHORT_LEN]}] Note {c.note_id[:UUID_SHORT_LEN]} - {local} vs {remote}")
-                if show_details:
-                    print(f"    Created: {format_timestamp(c.created_at)}")
-                    print(f"    Local content:")
-                    for line in (c.local_content or "").split("\n"):
-                        print(f"      {line}")
-                    print(f"    Remote content:")
-                    for line in (c.remote_content or "").split("\n"):
-                        print(f"      {line}")
-                    print()
-
-        if note_delete:
-            print("\nNote Delete Conflicts:")
-            for c in note_delete:
-                surviving = c.surviving_device_name or (c.surviving_device_id[:UUID_SHORT_LEN] if c.surviving_device_id else "unknown")
-                deleting = c.deleting_device_name or (c.deleting_device_id[:UUID_SHORT_LEN] if c.deleting_device_id else "unknown")
-                print(f"  [{c.id[:UUID_SHORT_LEN]}] Note {c.note_id[:UUID_SHORT_LEN]} - edited by {surviving}, deleted by {deleting}")
-                if show_details:
-                    print(f"    Created: {format_timestamp(c.created_at)}")
-                    print(f"    Surviving modified at: {format_timestamp(c.surviving_modified_at)}")
-                    print(f"    Deleted at: {format_timestamp(c.deleted_at)}")
-                    print(f"    Surviving content:")
-                    for line in (c.surviving_content or "").split("\n"):
-                        print(f"      {line}")
-                    print()
-
-        if tag_rename:
-            print("\nTag Rename Conflicts:")
-            for c in tag_rename:
-                print(f"  [{c.id[:UUID_SHORT_LEN]}] Tag {c.tag_id[:UUID_SHORT_LEN]} - '{c.local_name}' vs '{c.remote_name}'")
-
+    print(f"{'Conflicts' if include_resolved else 'Unresolved Conflicts'} ({len(conflicts)}):\n")
+    for c in conflicts:
+        state = " (resolved)" if c.is_resolved else ""
+        print(f"  [{c.id[:UUID_SHORT_LEN]}] {c.entity_type} {c.entity_id[:UUID_SHORT_LEN]} {c.field}: {c.describe()}{state}")
+        print(f"    Detected: {format_timestamp(c.created_at)}")
+        if show_details:
+            v = conflict_mgr.get_conflict_versions(c)
+            for label, ver in (("Base", v.base), (c.device_a_label, v.version_a),
+                               (c.device_b_label, v.version_b), ("Merged (current)", v.merge)):
+                if ver is None:
+                    continue
+                print(f"    {label}:")
+                for line in (ver.content or "").split("\n"):
+                    print(f"      {line}")
+            print()
+    print("Resolve with: sync resolve <id>              (accept the merged value)")
+    print("              sync resolve <id> --content-file FILE   (replace the value)")
     return 0
 
 
 def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
     """Resolve a sync conflict.
 
-    Args:
-        db: Database instance
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code (0 for success, 1 for error)
+    Without content the merged value is accepted as it stands. With
+    --content-file or --content the field is set to the given text. Either
+    way a new version is written, so the resolution reaches every peer.
     """
-    conflict_id = args.conflict_id
-    choice_str = args.choice
     conflict_mgr = ConflictManager(db)
-
-    # Map choice string to enum
-    choice_map = {
-        "local": ResolutionChoice.KEEP_LOCAL,
-        "remote": ResolutionChoice.KEEP_REMOTE,
-        "merge": ResolutionChoice.MERGE,
-        "restore": ResolutionChoice.RESTORE,
-        "delete": ResolutionChoice.DELETE,
-    }
-
-    if choice_str not in choice_map:
-        print(f"Error: Invalid choice '{choice_str}'. Use: local, remote, merge, restore, or delete", file=sys.stderr)
+    content: Optional[str] = None
+    content_file = getattr(args, "content_file", None)
+    inline = getattr(args, "content", None)
+    if content_file and inline is not None:
+        print("Error: use either --content-file or --content, not both", file=sys.stderr)
         return 1
+    if content_file:
+        try:
+            content = Path(content_file).read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"Error: cannot read {content_file}: {e}", file=sys.stderr)
+            return 1
+    elif inline is not None:
+        content = inline
 
-    choice = choice_map[choice_str]
-
-    # Use core method to find and resolve conflict
-    success, conflict_type, error = conflict_mgr.find_and_resolve_conflict(
-        conflict_id, choice
-    )
-
-    if success:
-        # Build descriptive message based on conflict type and choice
-        if conflict_type == "note_content":
-            if choice_str == "local":
-                action = "Kept local version, discarded remote changes"
-            elif choice_str == "remote":
-                action = "Kept remote version, discarded local changes"
-            elif choice_str == "merge":
-                action = "Merged both versions (review note for conflict markers)"
-            else:
-                action = f"Resolved with {choice_str}"
-        elif conflict_type == "note_delete":
-            if choice_str == "restore":
-                action = "Note restored (undeleted)"
-            elif choice_str == "delete":
-                action = "Deletion confirmed, note removed"
-            else:
-                action = f"Resolved with {choice_str}"
-        elif conflict_type == "tag_rename":
-            if choice_str == "local":
-                action = "Kept local tag name"
-            elif choice_str == "remote":
-                action = "Kept remote tag name"
-            else:
-                action = f"Resolved with {choice_str}"
-        else:
-            action = f"Resolved with {choice_str}"
-
-        print(f"Resolved {conflict_type} conflict: {action}")
-        return 0
-    else:
+    success, conflict, error = conflict_mgr.find_and_resolve_conflict(args.conflict_id, content)
+    if not success:
         print(f"Error: {error}", file=sys.stderr)
         return 1
+
+    what = f"{conflict.entity_type} {conflict.entity_id[:UUID_SHORT_LEN]} {conflict.field}"
+    if content is None:
+        print(f"Accepted merged value for {what}")
+    else:
+        print(f"Resolved {what} with the supplied content")
+    return 0
+
+
+CONFIG_KEYS = {
+    "device_name": "Name shown on conflicts and in sync logs",
+    "audiofile_directory": "Folder for audio files on this device",
+    "default_interface": "Interface when none is given: gui, tui, cli or web",
+    "sync.server_port": "Port of this device's sync server",
+    "sync.enabled": "true or false",
+    "sync.mirror_audio_files": "true or false: download every cloud audio file on each sync (desktop/server only)",
+}
+
+
+def cmd_config(config: Config, args: argparse.Namespace) -> int:
+    """Show or change this device's local configuration (config.json)."""
+    sub = getattr(args, "config_command", None)
+    if sub == "set":
+        key, value = args.key, args.value
+        try:
+            if key == "device_name":
+                config.set_device_name(value)
+            elif key == "audiofile_directory":
+                path = Path(value).expanduser()
+                path.mkdir(parents=True, exist_ok=True)
+                config.set_audiofile_directory(str(path.resolve()))
+            elif key == "sync.server_port":
+                config.set_sync_server_port(int(value))
+            elif key == "sync.enabled":
+                config.set_sync_enabled(value.lower() in ("1", "true", "yes", "on"))
+            elif key == "sync.mirror_audio_files":
+                config.set_mirror_audio_files(value.lower() in ("1", "true", "yes", "on"))
+            elif key == "default_interface":
+                config.set("default_interface", value)
+            else:
+                print(f"Error: unknown key '{key}'. Known keys: {', '.join(CONFIG_KEYS)}", file=sys.stderr)
+                return 1
+        except (ValueError, OSError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        print(f"Set {key}")
+        return 0
+
+    def current() -> Dict[str, Any]:
+        sync_cfg = config.get_sync_config()
+        return {
+            "config_dir": str(config.get_config_dir()),
+            "device_id": config.get_device_id_hex(),
+            "device_name": config.get_device_name(),
+            "audiofile_directory": config.get_audiofile_directory(),
+            "default_interface": config.get("default_interface"),
+            "sync.server_port": sync_cfg.get("server_port"),
+            "sync.enabled": sync_cfg.get("enabled"),
+            "sync.mirror_audio_files": config.get_mirror_audio_files(),
+        }
+
+    if sub == "get":
+        values = current()
+        if args.key not in values:
+            print(f"Error: unknown key '{args.key}'. Known keys: {', '.join(values)}", file=sys.stderr)
+            return 1
+        value = values[args.key]
+        if args.format == "json":
+            print(json.dumps({args.key: value}, ensure_ascii=False))
+        else:
+            print("" if value is None else str(value))
+        return 0
+
+    values = current()
+    if args.format == "json":
+        print(json.dumps(values, indent=2, ensure_ascii=False))
+    else:
+        for key, value in values.items():
+            print(f"{key} = {'' if value is None else value}")
+    return 0
+
+
+def cmd_settings(config: Config, db: Database, args: argparse.Namespace) -> int:
+    """Show or change synced settings (shared by every device)."""
+    sub = getattr(args, "settings_command", None)
+    if sub == "list" or sub is None:
+        settings = db.get_all_settings()
+        if args.format == "json":
+            print(json.dumps(settings, indent=2, ensure_ascii=False))
+        elif not settings:
+            print("No synced settings.")
+        else:
+            for key in sorted(settings):
+                value = settings[key]
+                if key.endswith(".api_key") and value:
+                    value = value[:4] + "…" if len(value) > 4 else "…"
+                print(f"{key} = {value}")
+        return 0
+    if sub == "get":
+        value = db.get_setting(args.key)
+        if args.format == "json":
+            print(json.dumps({args.key: value}, ensure_ascii=False))
+        elif value is None:
+            print(f"Error: setting '{args.key}' is not set", file=sys.stderr)
+            return 1
+        else:
+            print(value)
+        return 0
+    if sub == "set":
+        try:
+            set_synced_setting(config, db, args.key, args.value)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        print(f"Set {args.key}")
+        return 0
+    print("Error: unknown settings command", file=sys.stderr)
+    return 1
 
 
 def cmd_sync_reset_timestamps(db: Database, args: argparse.Namespace) -> int:
@@ -1496,10 +1949,12 @@ def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace)
                     print(f"  Conflicts: {result.conflicts}")
                     for error in result.errors:
                         print(f"    - {error}")
+                _print_sync_warnings(result, "  ")
             else:
                 print(f"Full re-sync with {peer_id} failed:")
                 for error in result.errors:
                     print(f"  - {error}")
+                _print_sync_warnings(result, "  ")
                 return 1
     else:
         # Full resync with all peers
@@ -1549,6 +2004,7 @@ def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace)
                     print(f"  {peer_name}: FAILED")
                     for error in result.errors:
                         print(f"    - {error}")
+                _print_sync_warnings(result, "    ")
 
         return 0 if all_success else 1
 
@@ -1688,10 +2144,55 @@ def cmd_maintenance_rebuild_all_caches(db: Database, args: argparse.Namespace) -
         return 1
 
 
-def cmd_maintenance_audio_rebuild_durations(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Find audio files with missing duration and populate from file metadata.
+def cmd_calculate_missing_data(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Calculate data that was never calculated: lengths, dates, caches.
 
-    Uses ffprobe to extract duration from actual audio files on disk.
+    One operation covering every gap that can be closed, with a survey first so
+    the user can see what is missing before anything changes. See
+    `core.missing_data`.
+
+    Args:
+        db: Database instance
+        config: Config instance
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    from src.core import missing_data
+
+    survey = missing_data.survey(db, config)
+    print("What is missing:")
+    print(survey.summary())
+
+    if getattr(args, "dry_run", False):
+        return 0
+    if not survey.total_calculable:
+        return 0
+
+    print()
+    report = missing_data.calculate_missing_data(
+        db, config,
+        durations=not getattr(args, "no_durations", False),
+        file_dates=not getattr(args, "no_dates", False),
+        caches=not getattr(args, "no_caches", False),
+        limit=getattr(args, "limit", None),
+        progress=lambda line: print(f"  {line}"),
+    )
+    print()
+    print("Calculated:")
+    print(report.summary())
+    for detail in report.details:
+        print(detail)
+    return 0
+
+
+def cmd_maintenance_audio_rebuild_durations(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Calculate the length of Recordings that have none.
+
+    The durations half of ``calculate-missing-data``, kept under its old name.
+    The work itself is in ``src/core/missing_data.py``, which every interface
+    uses, so there is one rule for what a length is read from rather than two.
 
     Args:
         db: Database instance
@@ -1701,61 +2202,36 @@ def cmd_maintenance_audio_rebuild_durations(db: Database, config: Config, args: 
     Returns:
         Exit code (0 for success, 1 for error)
     """
-    from src.core.waveform import get_audio_duration
+    from src.core import missing_data
 
     try:
         dry_run = getattr(args, 'dry_run', False)
 
-        # Get audiofile directory from config
-        audiofile_dir_str = config.get_audiofile_directory()
-        if not audiofile_dir_str:
+        if not config.get_audiofile_directory():
             print("Error: audiofile_directory not configured.", file=sys.stderr)
             print("Run: voice config set audiofile_directory /path/to/audio/files", file=sys.stderr)
             return 1
-        audio_dir = Path(audiofile_dir_str)
 
-        # Get audio files missing duration
-        missing = db.get_audio_files_missing_duration()
+        survey = missing_data.survey(db, config)
+        missing = next((g.count for g in survey.gaps if g.key == "duration"), 0)
         if not missing:
             print("All audio files have duration set.")
             return 0
 
-        print(f"Found {len(missing)} audio files with missing duration.")
+        print(f"Found {missing} audio files with missing duration.")
         if dry_run:
-            print("Dry run - no changes will be made.\n")
+            print("Dry run - no changes will be made.")
+            return 0
 
-        updated = 0
-        errors = 0
-        for audio_file in missing:
-            audio_id = audio_file["id"]
-            filename = audio_file["filename"]
-
-            # Build path to audio file: {audiofile_directory}/{uuid}.{extension}
-            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-            audio_path = audio_dir / f"{audio_id}.{ext}"
-            if not audio_path.exists():
-                print(f"  {audio_id[:8]}... {filename}: File not found at {audio_path}")
-                errors += 1
-                continue
-
-            # Get duration using ffprobe
-            duration_float = get_audio_duration(audio_path)
-            if duration_float is None:
-                print(f"  {audio_id[:8]}... {filename}: Could not extract duration")
-                errors += 1
-                continue
-
-            # Round to nearest second
-            duration = round(duration_float)
-
-            if dry_run:
-                print(f"  {audio_id[:8]}... {filename}: Would set duration to {format_duration(duration)}")
-            else:
-                db.update_audio_file_duration(audio_id, duration)
-                print(f"  {audio_id[:8]}... {filename}: Set duration to {format_duration(duration)}")
-                updated += 1
-
-        print(f"\nSummary: {updated} updated, {errors} errors, {len(missing) - updated - errors} skipped")
+        report = missing_data.calculate_missing_data(
+            db, config,
+            durations=True, file_dates=False, caches=False,
+            limit=getattr(args, 'limit', None),
+            progress=lambda line: print(f"  {line}"),
+        )
+        updated = report.calculated.get("duration", 0)
+        errors = report.failed.get("duration", 0) + report.failed.get("absent_file", 0)
+        print(f"\nSummary: {updated} updated, {errors} errors, {missing - updated - errors} skipped")
         return 0 if errors == 0 else 1
     except Exception as e:
         print(f"Error rebuilding audio durations: {e}", file=sys.stderr)
@@ -1766,25 +2242,26 @@ def cmd_maintenance_audio_rebuild_durations(db: Database, config: Config, args: 
 # Storage commands
 # ============================================================================
 
-def cmd_storage_status(db: Database, args: argparse.Namespace) -> int:
+def cmd_storage_status(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Show current cloud storage configuration.
 
     Args:
         db: Database instance
+        config: Config instance (for local-only options such as mirroring)
         args: Parsed command-line arguments
 
     Returns:
         Exit code (0 for success, 1 for error)
     """
     try:
+        mirror = config.get_mirror_audio_files()
         config = db.get_file_storage_config()
         output_format = getattr(args, 'format', 'text')
 
         if output_format == "json":
-            if config:
-                print(json.dumps(config))
-            else:
-                print(json.dumps({"provider": "none", "config": None}))
+            payload = dict(config) if config else {"provider": "none", "config": None}
+            payload["mirror_audio_files"] = mirror
+            print(json.dumps(payload))
         else:
             if config:
                 provider = config.get("provider", "none")
@@ -1805,10 +2282,50 @@ def cmd_storage_status(db: Database, args: argparse.Namespace) -> int:
             else:
                 print("Cloud storage: Not configured")
                 print("Audio files are stored locally only.")
+            if mirror:
+                print("Mirror: enabled (every sync downloads all cloud audio files to this device)")
+            else:
+                print("Mirror: disabled (audio files are downloaded on demand)")
         return 0
     except Exception as e:
         print(f"Error getting storage configuration: {e}", file=sys.stderr)
         return 1
+
+
+def cmd_storage_mirror(config: Config, args: argparse.Namespace) -> int:
+    """Enable or disable mirroring of all cloud audio files on this device.
+
+    Mirroring is local-only and intended for desktop or server installations
+    that should hold a complete copy of the media as a backup of the bucket.
+    """
+    enable = args.mirror_action == "enable"
+    config.set_mirror_audio_files(enable)
+    if enable:
+        print("Mirror enabled: every sync will download all cloud audio files to this device.")
+        print("Run 'storage download-missing' to fetch everything now.")
+    else:
+        print("Mirror disabled: audio files will be downloaded on demand only.")
+    return 0
+
+
+def cmd_storage_download_missing(config: Config, args: argparse.Namespace) -> int:
+    """Download every audio file that is in cloud storage but not on this device."""
+    if not config.get_audiofile_directory():
+        print("Error: audiofile_directory not configured.", file=sys.stderr)
+        print("Run: voice config set audiofile_directory /path/to/audio/files", file=sys.stderr)
+        return 1
+
+    print("Downloading audio files that are in cloud storage but not on this device...")
+    try:
+        result = download_missing_audio_files(config.get_config_dir())
+    except RuntimeError as e:
+        print(f"Error downloading files: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Download complete: {describe_download_result(result)}")
+    for error in result.errors:
+        print(f"  - {error}", file=sys.stderr)
+    return 0 if result.failed == 0 else 1
 
 
 def cmd_storage_configure_s3(db: Database, args: argparse.Namespace) -> int:
@@ -1890,7 +2407,10 @@ def cmd_storage_upload_pending(config: Config, args: argparse.Namespace) -> int:
 
         print(f"\nUpload complete:")
         print(f"  Uploaded: {result.uploaded}")
+        print(f"  Skipped:  {result.skipped} (not on this device; their own device uploads them)")
         print(f"  Failed:   {result.failed}")
+        if result.deferred:
+            print(f"  Deferred: {result.deferred} (not attempted after a failure; retried on next sync)")
 
         if result.errors:
             print("\nErrors:")
@@ -1901,6 +2421,177 @@ def cmd_storage_upload_pending(config: Config, args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error uploading files: {e}", file=sys.stderr)
         return 1
+
+
+def cmd_delete_note(db: Database, args: argparse.Namespace) -> int:
+    """Soft-delete a note (its history is kept and the deletion syncs)."""
+    note = db.get_note(args.note_id)
+    if not note:
+        print(f"Error: Note with ID {args.note_id} not found.", file=sys.stderr)
+        return 1
+    db.delete_note(note["id"])
+    if args.format == "json":
+        print(json.dumps({"id": note["id"], "deleted": True}))
+    else:
+        print(f"Deleted note {note['id'][:UUID_SHORT_LEN]} (it is in the trash: see trash-list, note-recover)")
+    return 0
+
+
+def cmd_trash_list(db: Database, args: argparse.Namespace) -> int:
+    """List the notes in the trash: deleted, still here, newest first."""
+    notes = db.get_deleted_notes()
+
+    if args.format == "json":
+        print(json.dumps(notes, indent=2, ensure_ascii=False))
+        return 0
+
+    if not notes:
+        print("The trash is empty.")
+        return 0
+
+    for note in notes:
+        lines = [line.strip() for line in note["content"].split("\n") if line.strip()]
+        first_line = lines[0] if lines else "(no text)"
+        if len(first_line) > 80:
+            first_line = first_line[:80] + "..."
+        deleted = format_timestamp(note.get("deleted_at"), note.get("deleted_at_offset"))
+        print(f"{note['id'][:UUID_SHORT_LEN]} | deleted {deleted} | {first_line}")
+    print()
+    print(f"{len(notes)} note(s) in the trash. "
+          "Recover one with note-recover <id>, remove it for good with note-purge <id>.")
+    return 0
+
+
+def cmd_note_recover(db: Database, args: argparse.Namespace) -> int:
+    """Take a note out of the trash."""
+    try:
+        recovered = db.undelete_note(args.note_id)
+    except ValidationError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if not recovered:
+        print(f"Error: No note with ID {args.note_id} is in the trash.", file=sys.stderr)
+        return 1
+    note = db.get_note(args.note_id)
+    if args.format == "json":
+        print(json.dumps({"id": note["id"] if note else args.note_id, "recovered": True}))
+    else:
+        print(f"Recovered note {note['id'][:UUID_SHORT_LEN] if note else args.note_id}")
+    return 0
+
+
+def cmd_note_purge(db: Database, args: argparse.Namespace) -> int:
+    """Remove a note in the trash for good, here and on every device."""
+    notes = {n["id"]: n for n in db.get_deleted_notes()}
+    match = None
+    for note_id, note in notes.items():
+        if note_id == args.note_id or note_id.startswith(args.note_id):
+            if match is not None:
+                print(f"Error: {args.note_id} matches more than one note in the trash.", file=sys.stderr)
+                return 1
+            match = note
+    if match is None:
+        print(f"Error: No note with ID {args.note_id} is in the trash.", file=sys.stderr)
+        return 1
+
+    if not args.yes:
+        lines = [line.strip() for line in match["content"].split("\n") if line.strip()]
+        first_line = lines[0] if lines else "(no text)"
+        print(f"About to remove note {match['id'][:UUID_SHORT_LEN]} for good: {first_line[:80]}")
+        print("This cannot be undone, and it removes the note from every device it syncs with.")
+        answer = input("Type the word 'delete' to go ahead: ")
+        if answer.strip().lower() != "delete":
+            print("Nothing was removed.")
+            return 1
+
+    audio_ids = db.purge_note(match["id"])
+    removed_files = _remove_audio_files(audio_ids)
+
+    if args.format == "json":
+        print(json.dumps({"id": match["id"], "purged": True, "audio_files": audio_ids,
+                          "files_removed": removed_files}))
+    else:
+        print(f"Removed note {match['id'][:UUID_SHORT_LEN]} for good"
+              + (f", with {len(audio_ids)} recording(s)" if audio_ids else ""))
+    return 0
+
+
+def _remove_audio_files(audio_ids: List[str]) -> List[str]:
+    """Delete the files of recordings that were purged, and say which went.
+
+    The database says which recordings were removed; where their files live
+    is the application's business, not the core's.
+    """
+    removed: List[str] = []
+    if not audio_ids:
+        return removed
+    config = Config()
+    directory = config.get_audiofile_directory()
+    if not directory:
+        return removed
+    folder = Path(directory)
+    for audio_id in audio_ids:
+        for path in folder.glob(f"{audio_id}.*"):
+            try:
+                path.unlink()
+                removed.append(str(path))
+            except OSError as e:
+                print(f"Warning: could not delete {path}: {e}", file=sys.stderr)
+    return removed
+
+
+def cmd_rename_tag(db: Database, args: argparse.Namespace) -> int:
+    """Rename a tag. A concurrent rename elsewhere is merged and flagged."""
+    try:
+        tag = db.get_tag(args.tag_id)
+    except ValidationError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if not tag:
+        print(f"Error: Tag with ID {args.tag_id} not found.", file=sys.stderr)
+        return 1
+    try:
+        db.rename_tag(tag["id"], args.name)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps({"id": tag["id"], "name": args.name}, ensure_ascii=False))
+    else:
+        print(f"Renamed tag '{tag['name']}' to '{args.name}'")
+    return 0
+
+
+def cmd_move_tag(db: Database, args: argparse.Namespace) -> int:
+    """Move a tag under another tag, or to the top level with --root."""
+    try:
+        tag = db.get_tag(args.tag_id)
+    except ValidationError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if not tag:
+        print(f"Error: Tag with ID {args.tag_id} not found.", file=sys.stderr)
+        return 1
+    parent = None
+    if not getattr(args, "root", False):
+        if not args.parent:
+            print("Error: give a parent tag ID or --root", file=sys.stderr)
+            return 1
+        parent_tag = db.get_tag(args.parent)
+        if not parent_tag:
+            print(f"Error: Tag with ID {args.parent} not found.", file=sys.stderr)
+            return 1
+        parent = parent_tag["id"]
+    try:
+        db.reparent_tag(tag["id"], parent)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps({"id": tag["id"], "parent_id": parent}))
+    else:
+        print(f"Moved tag '{tag['name']}' " + (f"under {parent[:UUID_SHORT_LEN]}" if parent else "to the top level"))
+    return 0
 
 
 def cmd_new_tag(db: Database, args: argparse.Namespace) -> int:
@@ -2030,7 +2721,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # note-create command
     new_note_parser = cli_subparsers.add_parser(
         "note-create",
-        help="Create a new note"
+        help="Create a new Note"
     )
     new_note_parser.add_argument(
         "content",
@@ -2054,6 +2745,68 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         nargs="?",
         type=str,
         help="New content (reads from stdin if not provided)"
+    )
+
+    # note-delete command
+    delete_note_parser = cli_subparsers.add_parser(
+        "note-delete",
+        help="Delete a note (soft delete: history is kept, the deletion syncs)"
+    )
+    delete_note_parser.add_argument("note_id", type=str, help="Note ID (UUID hex string, prefix allowed)")
+
+    # tag-rename / tag-move commands
+    rename_tag_parser = cli_subparsers.add_parser("tag-rename", help="Rename a tag")
+    rename_tag_parser.add_argument("tag_id", type=str, help="Tag ID (UUID hex string, prefix allowed)")
+    rename_tag_parser.add_argument("name", type=str, help="New name")
+    move_tag_parser = cli_subparsers.add_parser("tag-move", help="Move a tag under another tag or to the top level")
+    move_tag_parser.add_argument("tag_id", type=str, help="Tag ID (UUID hex string, prefix allowed)")
+    move_tag_parser.add_argument("parent", nargs="?", type=str, help="New parent tag ID")
+    move_tag_parser.add_argument("--root", action="store_true", help="Move to the top level")
+
+    # note-history command
+    history_parser = cli_subparsers.add_parser(
+        "note-history",
+        help="List every version of a note's content (oldest first)"
+    )
+    history_parser.add_argument("note_id", type=str, help="Note ID (UUID hex string, prefix allowed)")
+    history_parser.add_argument(
+        "--show",
+        dest="version_id",
+        type=str,
+        help="Print the full content of one version (ID or prefix) instead of the list"
+    )
+
+    # note-restore command
+    restore_parser = cli_subparsers.add_parser(
+        "note-restore",
+        help="Make an earlier version the current content (a new edit; nothing is lost)"
+    )
+    restore_parser.add_argument("note_id", type=str, help="Note ID (UUID hex string, prefix allowed)")
+    restore_parser.add_argument("version_id", type=str, help="Version ID (or prefix) from note-history")
+
+    # trash-list command
+    cli_subparsers.add_parser(
+        "trash-list",
+        help="List the notes in the trash (deleted, recoverable)"
+    )
+
+    # note-recover command
+    recover_parser = cli_subparsers.add_parser(
+        "note-recover",
+        help="Take a note out of the trash"
+    )
+    recover_parser.add_argument("note_id", type=str, help="Note ID (UUID hex string, prefix allowed)")
+
+    # note-purge command
+    purge_parser = cli_subparsers.add_parser(
+        "note-purge",
+        help="Remove a note in the trash for good, on every device"
+    )
+    purge_parser.add_argument("note_id", type=str, help="Note ID (UUID hex string, prefix allowed)")
+    purge_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Do not ask for confirmation (for scripts)"
     )
 
     # notes-merge command
@@ -2172,6 +2925,125 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "audio_id",
         type=str,
         help="Audio file ID to show"
+    )
+
+    # audiofile-download command
+    download_audio_parser = cli_subparsers.add_parser(
+        "audiofile-download",
+        help="Download an audio file from cloud storage to this device"
+    )
+    download_audio_parser.add_argument(
+        "audio_id",
+        type=str,
+        help="Audio file ID (or prefix) to download"
+    )
+
+    # note-audiofiles-download command
+    download_note_parser = cli_subparsers.add_parser(
+        "note-audiofiles-download",
+        help="Download all missing audio files attached to a note from cloud storage"
+    )
+    download_note_parser.add_argument(
+        "note_id",
+        type=str,
+        help="Note ID (or prefix) whose audio files to download"
+    )
+
+    # transcription-queue command
+    queue_parser = cli_subparsers.add_parser(
+        "transcription-queue",
+        help="What is waiting to be transcribed here, what is running, and what it cost"
+    )
+    queue_parser.add_argument(
+        "--next",
+        dest="next",
+        metavar="RECORDING",
+        help="Transcribe this Recording next (id or the first characters of one)"
+    )
+    queue_parser.add_argument(
+        "--remove",
+        dest="remove",
+        metavar="RECORDING",
+        help="Take this Recording out of the queue"
+    )
+    queue_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Forget everything waiting (what is running is not stopped)"
+    )
+    queue_parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Transcribe what is waiting, one at a time, and wait for it"
+    )
+    queue_parser.add_argument(
+        "--limit",
+        type=int,
+        help="With --run: transcribe at most this many"
+    )
+    queue_parser.add_argument(
+        "--service",
+        help="Only this transcription service's finished work (e.g. local_whisper)"
+    )
+    queue_parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text)"
+    )
+
+    # transcribe-backlog command
+    backlog_parser = cli_subparsers.add_parser(
+        "transcribe-backlog",
+        help="Transcribe long Recordings the phone could not (this machine only, opt in)"
+    )
+    backlog_parser.add_argument(
+        "--min-minutes",
+        dest="min_minutes",
+        type=int,
+        help="Only Recordings at least this long (default: the phone's limit, 10)"
+    )
+    backlog_parser.add_argument(
+        "--limit",
+        type=int,
+        help="Transcribe at most this many in one run"
+    )
+    backlog_parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="List what is waiting and stop"
+    )
+    backlog_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Transcribe them even though this machine is not set to"
+    )
+    backlog_parser.add_argument(
+        "--enable",
+        action="store_true",
+        help="Set this machine to transcribe long Recordings, and stop"
+    )
+    backlog_parser.add_argument(
+        "--disable",
+        action="store_true",
+        help="Set this machine not to transcribe long Recordings, and stop"
+    )
+    backlog_parser.add_argument(
+        "--language",
+        type=str,
+        help="Language hint (ISO 639-1 code, e.g., 'en', 'he')"
+    )
+    backlog_parser.add_argument(
+        "--model",
+        type=str,
+        help="Model name or path"
+    )
+    backlog_parser.add_argument(
+        "--backend",
+        type=str,
+        default="local_whisper",
+        help="Transcription backend (default: local_whisper)"
     )
 
     # audiofile-transcribe command
@@ -2323,21 +3195,35 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     conflicts_parser.add_argument(
         "--details",
         action="store_true",
-        help="Show full conflict details including content"
+        help="Show the base, both sides and the merged value of each conflict"
+    )
+    conflicts_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Include resolved conflicts"
     )
 
     # sync resolve
-    resolve_parser = sync_subparsers.add_parser("resolve", help="Resolve a sync conflict")
+    resolve_parser = sync_subparsers.add_parser(
+        "resolve",
+        help="Resolve a sync conflict: accept the merged value, or replace it"
+    )
     resolve_parser.add_argument(
         "conflict_id",
         type=str,
         help="Conflict ID (or prefix) to resolve"
     )
     resolve_parser.add_argument(
-        "choice",
+        "--content-file",
+        dest="content_file",
         type=str,
-        choices=["local", "remote", "merge", "restore", "delete"],
-        help="Resolution choice: local, remote, merge (content), restore/delete (delete conflicts)"
+        help="File whose text becomes the field's value (default: accept the merged value)"
+    )
+    resolve_parser.add_argument(
+        "--content",
+        dest="content",
+        type=str,
+        help="Text that becomes the field's value"
     )
 
     # sync serve
@@ -2383,7 +3269,66 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Full re-sync with specific peer ID (default: all peers)"
     )
 
+    # calculate-missing-data command
+    fill_parser = cli_subparsers.add_parser(
+        "calculate-missing-data",
+        help="Calculate what was never calculated: Recording lengths, creation dates, display caches"
+    )
+    fill_parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Report what is missing and stop"
+    )
+    fill_parser.add_argument(
+        "--limit",
+        type=int,
+        help="Read at most this many Recordings in one run"
+    )
+    fill_parser.add_argument(
+        "--no-durations",
+        dest="no_durations",
+        action="store_true",
+        help="Leave Recording lengths alone"
+    )
+    fill_parser.add_argument(
+        "--no-dates",
+        dest="no_dates",
+        action="store_true",
+        help="Leave creation dates alone"
+    )
+    fill_parser.add_argument(
+        "--no-caches",
+        dest="no_caches",
+        action="store_true",
+        help="Leave display caches alone"
+    )
+
     # db-maintenance command with subcommands
+    config_parser = cli_subparsers.add_parser(
+        "config",
+        help="This device's local configuration: device name, audio folder, sync port (config.json)"
+    )
+    config_subparsers = config_parser.add_subparsers(dest="config_command", help="Config commands")
+    config_subparsers.add_parser("show", help="Show the local configuration")
+    config_get_parser = config_subparsers.add_parser("get", help="Show one value")
+    config_get_parser.add_argument("key", type=str, help="One of: " + ", ".join(CONFIG_KEYS))
+    config_set_parser = config_subparsers.add_parser("set", help="Set one value")
+    config_set_parser.add_argument("key", type=str, help="One of: " + ", ".join(CONFIG_KEYS))
+    config_set_parser.add_argument("value", type=str, help="New value")
+
+    settings_parser = cli_subparsers.add_parser(
+        "settings",
+        help="Synced settings shared by every device (transcription languages, provider API keys)"
+    )
+    settings_subparsers = settings_parser.add_subparsers(dest="settings_command", help="Settings commands")
+    settings_subparsers.add_parser("list", help="List synced settings")
+    settings_get_parser = settings_subparsers.add_parser("get", help="Show one synced setting")
+    settings_get_parser.add_argument("key", type=str, help="Setting key, e.g. transcription.preferred_languages")
+    settings_set_parser = settings_subparsers.add_parser("set", help="Set a synced setting on every device")
+    settings_set_parser.add_argument("key", type=str, help="Setting key, e.g. transcription.providers.assemblyai.api_key")
+    settings_set_parser.add_argument("value", type=str, help="Value (preferred_languages takes a JSON list)")
+
     maintenance_parser = cli_subparsers.add_parser(
         "db-maintenance",
         help="Database maintenance operations"
@@ -2486,6 +3431,23 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Upload pending audio files to cloud storage (files not yet uploaded)"
     )
 
+    # storage download-missing - fetch everything that is in the cloud but not here
+    storage_subparsers.add_parser(
+        "download-missing",
+        help="Download every audio file that is in cloud storage but not on this device"
+    )
+
+    # storage mirror enable|disable - keep a complete local copy on every sync
+    storage_mirror_parser = storage_subparsers.add_parser(
+        "mirror",
+        help="Enable or disable downloading ALL cloud audio files on every sync (local backup of the bucket)"
+    )
+    storage_mirror_parser.add_argument(
+        "mirror_action",
+        choices=["enable", "disable"],
+        help="enable: every sync downloads all missing audio files; disable: download on demand only"
+    )
+
 
 def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     """Run CLI with given arguments.
@@ -2508,17 +3470,34 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     db_path = Path(db_path_str)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     db = Database(db_path)
+    reconcile_transcription_settings(config, db)
 
     # Execute command
     try:
         if args.cli_command == "notes-list":
             return cmd_list_notes(db, args)
+        elif args.cli_command == "note-delete":
+            return cmd_delete_note(db, args)
+        elif args.cli_command == "tag-rename":
+            return cmd_rename_tag(db, args)
+        elif args.cli_command == "tag-move":
+            return cmd_move_tag(db, args)
+        elif args.cli_command == "note-history":
+            return cmd_note_history(db, args)
+        elif args.cli_command == "note-restore":
+            return cmd_note_restore(db, args)
         elif args.cli_command == "note-show":
             return cmd_show_note(db, args)
         elif args.cli_command == "note-create":
             return cmd_new_note(db, args)
         elif args.cli_command == "note-edit":
             return cmd_edit_note(db, args)
+        elif args.cli_command == "trash-list":
+            return cmd_trash_list(db, args)
+        elif args.cli_command == "note-recover":
+            return cmd_note_recover(db, args)
+        elif args.cli_command == "note-purge":
+            return cmd_note_purge(db, args)
         elif args.cli_command == "notes-merge":
             return cmd_merge_notes(db, args)
         elif args.cli_command == "tags-list":
@@ -2535,10 +3514,30 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_list_audiofiles(db, config, args)
         elif args.cli_command == "audiofile-show":
             return cmd_show_audiofile(db, config, args)
+        elif args.cli_command == "audiofile-download":
+            return cmd_download_audiofile(db, config, args)
+        elif args.cli_command == "note-audiofiles-download":
+            return cmd_download_note_audiofiles(db, config, args)
+        elif args.cli_command == "transcribe-backlog":
+            from src.core import transcription_backlog as backlog
+            if getattr(args, "enable", False):
+                backlog.set_enabled(config, True)
+                print(f"This machine will transcribe Recordings over "
+                      f"{backlog.minimum_minutes(config)} minutes.")
+                return 0
+            if getattr(args, "disable", False):
+                backlog.set_enabled(config, False)
+                print("This machine will not transcribe long Recordings.")
+                return 0
+            return cmd_transcribe_backlog(db, config, args)
         elif args.cli_command == "audiofile-transcribe":
             return cmd_transcribe_audiofile(db, config, args)
         elif args.cli_command == "note-audiofiles-transcribe":
             return cmd_transcribe_note(db, config, args)
+        elif args.cli_command == "config":
+            return cmd_config(config, args)
+        elif args.cli_command == "settings":
+            return cmd_settings(config, db, args)
         elif args.cli_command == "sync":
             # Handle sync subcommands
             sync_cmd = getattr(args, 'sync_command', None)
@@ -2568,6 +3567,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             else:
                 print(f"Error: Unknown sync command '{sync_cmd}'", file=sys.stderr)
                 return 1
+        elif args.cli_command == "transcription-queue":
+            return cmd_transcription_queue(db, config, args)
+        elif args.cli_command == "calculate-missing-data":
+            return cmd_calculate_missing_data(db, config, args)
         elif args.cli_command == "db-maintenance":
             # Handle maintenance subcommands
             maint_cmd = getattr(args, 'maintenance_command', None)
@@ -2592,13 +3595,17 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 print("Error: No storage command specified. Use 'storage --help'.", file=sys.stderr)
                 return 1
             if storage_cmd == "status":
-                return cmd_storage_status(db, args)
+                return cmd_storage_status(db, config, args)
             elif storage_cmd == "configure-s3":
                 return cmd_storage_configure_s3(db, args)
             elif storage_cmd == "disable":
                 return cmd_storage_disable(db, args)
             elif storage_cmd == "upload-pending":
                 return cmd_storage_upload_pending(config, args)
+            elif storage_cmd == "download-missing":
+                return cmd_storage_download_missing(config, args)
+            elif storage_cmd == "mirror":
+                return cmd_storage_mirror(config, args)
             else:
                 print(f"Error: Unknown storage command '{storage_cmd}'", file=sys.stderr)
                 return 1

@@ -75,7 +75,7 @@ class TagHierarchyDialog(QDialog):
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(QLabel("Filter:"))
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("Type to filter tags...")
+        self.filter_input.setPlaceholderText("Type to filter Tags…")
         self.filter_input.textChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(self.filter_input)
         layout.addLayout(filter_layout)
@@ -118,12 +118,12 @@ class TagHierarchyDialog(QDialog):
         # Action buttons
         button_layout = QHBoxLayout()
 
-        self.add_btn = QPushButton("Add Tag")
+        self.add_btn = QPushButton("Create Tag")
         self.add_btn.setStyleSheet(BUTTON_STYLE)
         self.add_btn.clicked.connect(self._add_tag)
         button_layout.addWidget(self.add_btn)
 
-        self.add_child_btn = QPushButton("Add Child")
+        self.add_child_btn = QPushButton("Create Tag under this one")
         self.add_child_btn.setStyleSheet(BUTTON_STYLE)
         self.add_child_btn.clicked.connect(self._add_child_tag)
         self.add_child_btn.setEnabled(False)
@@ -312,7 +312,7 @@ class TagHierarchyDialog(QDialog):
         return items[0].data(0, Qt.ItemDataRole.UserRole)
 
     def _add_tag(self) -> None:
-        """Add a new root-level tag."""
+        """Create a Tag at the top level."""
         name, ok = QInputDialog.getText(
             self,
             "Add Tag",
@@ -332,7 +332,7 @@ class TagHierarchyDialog(QDialog):
                 QMessageBox.warning(self, "Error", f"Failed to create tag:\n{e}")
 
     def _add_child_tag(self) -> None:
-        """Add a child tag under the selected tag."""
+        """Create a Tag under the selected one."""
         parent_id = self._get_selected_tag_id()
         if not parent_id:
             return
@@ -415,7 +415,7 @@ class TagHierarchyDialog(QDialog):
 
         # Create selection dialog
         dialog = QDialog(self)
-        dialog.setWindowTitle("Move Tag To...")
+        dialog.setWindowTitle("Move Tag under…")
         dialog.setMinimumSize(400, 500)
 
         layout = QVBoxLayout(dialog)

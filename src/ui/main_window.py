@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QLabel,
@@ -31,6 +33,7 @@ from src.core.transcription_service import TranscriptionService
 from src.ui.note_pane import NotePane
 from src.ui.notes_list_pane import NotesListPane
 from src.ui.tag_hierarchy_dialog import TagHierarchyDialog
+from src.ui.trash_dialog import TrashDialog
 from src.ui.tags_pane import TagsPane
 from src.ui.transcription_dialog import TranscriptionDialog
 
@@ -119,7 +122,11 @@ class MainWindow(QMainWindow):
         self.tags_pane = TagsPane(self.db)
         self.notes_list_pane = NotesListPane(self.config, self.db, theme=self.theme)
         audiofile_directory = self.config.get("audiofile_directory")
-        self.note_pane = NotePane(self.db, audiofile_directory=audiofile_directory)
+        self.note_pane = NotePane(
+            self.db,
+            audiofile_directory=audiofile_directory,
+            config_dir=self.config.get_config_dir(),
+        )
 
         # Add panes to splitter
         self.splitter.addWidget(self.tags_pane)
@@ -141,7 +148,7 @@ class MainWindow(QMainWindow):
         # New Note action
         self.new_note_action = QAction("&New Note", self)
         self.new_note_action.setShortcut(QKeySequence.StandardKey.New)
-        self.new_note_action.setStatusTip("Create a new note")
+        self.new_note_action.setStatusTip("Create a new Note")
         self.new_note_action.triggered.connect(self.create_new_note)
         file_menu.addAction(self.new_note_action)
 
@@ -162,6 +169,30 @@ class MainWindow(QMainWindow):
         manage_tags_action = QAction("Manage &Tags...", self)
         manage_tags_action.triggered.connect(self._open_manage_tags)
         file_menu.addAction(manage_tags_action)
+
+        # Trash: deleted notes, recovered or removed for good
+        trash_action = QAction("T&rash...", self)
+        trash_action.setStatusTip("Deleted notes: recover them, or remove them for good")
+        trash_action.triggered.connect(self._open_trash)
+        file_menu.addAction(trash_action)
+
+        # Calculate what was never calculated: lengths, dates, display caches
+        fill_action = QAction("Calculate &missing data...", self)
+        fill_action.setStatusTip(
+            "Work out Recording lengths and creation dates that were never recorded, "
+            "and rebuild missing display caches"
+        )
+        fill_action.triggered.connect(self._calculate_missing_data)
+        file_menu.addAction(fill_action)
+
+        # What is waiting to be transcribed here, and what the finished work cost
+        queue_action = QAction("&Transcription queue...", self)
+        queue_action.setStatusTip(
+            "What is waiting to be transcribed on this computer, what is being "
+            "worked on, and what the finished ones cost"
+        )
+        queue_action.triggered.connect(self._show_transcription_queue)
+        file_menu.addAction(queue_action)
 
         # Set up timer to check for unsynced changes periodically
         self._sync_check_timer = QTimer(self)
@@ -317,7 +348,8 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Delete Note",
-            f"Are you sure you want to delete this note?\n\n{content_preview}\n\nThis action cannot be undone.",
+            f"Are you sure you want to delete this Note?\n\n{content_preview}\n\n"
+            "It goes to the trash, where it can be recovered (File \u2192 Trash).",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -517,6 +549,105 @@ class MainWindow(QMainWindow):
 
     # ===== Help menu handlers =====
 
+    def _show_transcription_queue(self) -> None:
+        """Open the transcription queue: what is waiting here and what it cost."""
+        from src.ui.transcription_queue_dialog import TranscriptionQueueDialog
+
+        dialog = TranscriptionQueueDialog(self.db, self.config, self)
+        dialog.exec()
+        if dialog.changed:
+            self._start_queue_worker()
+
+    def _start_queue_worker(self) -> None:
+        """Work through the transcription queue in the background, one at a time.
+
+        One recording at a time is the point of the queue: the local model wants
+        every core, so two at once are slower than two in turn. The thread ends
+        when the queue is empty, and a new one is started when something is added.
+        """
+        from src.core import transcription_queue as queue_module
+
+        if self._transcription_service is None:
+            # No audio directory, or VoiceTranscription is not installed: the
+            # recordings stay in the queue until one of those is put right.
+            logger.warning("Nothing can be transcribed here: no transcription service")
+            return
+        if getattr(self, "_queue_thread", None) is not None and self._queue_thread.is_alive():
+            return
+
+        import threading
+
+        def work() -> None:
+            try:
+                queue_module.drain(
+                    self.db, self.config, self._transcription_service,
+                    on_complete=self._on_transcription_complete,
+                    on_error=self._on_transcription_error,
+                )
+            except Exception as e:
+                logger.error(f"The transcription queue stopped: {e}")
+
+        self._queue_thread = threading.Thread(target=work, daemon=True)
+        self._queue_thread.start()
+
+    def _calculate_missing_data(self) -> None:
+        """Calculate what was never calculated, after showing what is missing.
+
+        Reading the audio files takes a moment each, so the survey comes first
+        and the user decides; see `core.missing_data`.
+        """
+        from src.core import missing_data
+
+        survey = missing_data.survey(self.db, self.config)
+        if not survey.anything_missing:
+            QMessageBox.information(self, "Missing data", "Nothing is missing.")
+            return
+
+        question = QMessageBox(self)
+        question.setWindowTitle("Calculate missing data")
+        question.setIcon(QMessageBox.Icon.Question)
+        question.setText("What is missing:")
+        question.setInformativeText(survey.summary())
+        if survey.total_calculable:
+            question.setStandardButtons(
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+            )
+            question.button(QMessageBox.StandardButton.Ok).setText(
+                f"Calculate {survey.total_calculable}"
+            )
+        else:
+            question.setStandardButtons(QMessageBox.StandardButton.Close)
+        if question.exec() != QMessageBox.StandardButton.Ok:
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            report = missing_data.calculate_missing_data(self.db, self.config)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        QMessageBox.information(
+            self,
+            "Calculated",
+            report.summary() or "Nothing could be calculated.",
+        )
+        if report.total_calculated:
+            self.notes_list_pane.load_notes()
+            if self._current_note_id:
+                self.note_pane.load_note(self._current_note_id)
+
+    def _open_trash(self) -> None:
+        """Open the trash bin, and reload the list if anything came back."""
+        audiofile_directory = self.config.get_audiofile_directory()
+        dialog = TrashDialog(
+            self.db,
+            Path(audiofile_directory) if audiofile_directory else None,
+            self,
+        )
+        dialog.exec()
+        if dialog.changed:
+            self.notes_list_pane.load_notes()
+
     def show_message_log(self) -> None:
         """Show the user-facing message log dialog."""
         dialog = QDialog(self)
@@ -565,9 +696,16 @@ class MainWindow(QMainWindow):
         log_file = self.config.get_config_dir() / "voice.log"
         if log_file.exists():
             try:
-                # Read last 1000 lines
-                with open(log_file, "r") as f:
-                    lines = f.readlines()
+                # The end of the file only. Reading all of it to show the last
+                # thousand lines means holding the whole log in memory, which
+                # is fine until the day it is not.
+                TAIL_BYTES = 1024 * 1024
+                with open(log_file, "rb") as f:
+                    if log_file.stat().st_size > TAIL_BYTES:
+                        f.seek(-TAIL_BYTES, 2)
+                        f.readline()  # drop the half line the seek landed in
+                    tail = f.read().decode("utf-8", errors="replace")
+                    lines = tail.splitlines(keepends=True)
                     text_edit.setPlainText("".join(lines[-1000:]))
                     # Scroll to bottom
                     text_edit.verticalScrollBar().setValue(
@@ -659,26 +797,24 @@ and peer-to-peer synchronization.</p>
         if not configs:
             return
 
-        # Start transcription for each selected provider
+        # Into the queue, not straight into a thread: the local model wants
+        # every core, so two transcriptions at once are slower than two in turn,
+        # and the queue is what every interface can see and reorder (File →
+        # Transcription queue).
+        from src.core import transcription_queue as queue_module
+
         for provider_config in configs:
-            try:
-                transcription_id = self._transcription_service.transcribe_async(
-                    audio_file_id=audio_file_id,
-                    provider_config=provider_config,
-                    on_complete=self._on_transcription_complete,
-                    on_error=self._on_transcription_error,
-                )
+            problem = queue_module.enqueue(
+                self.db, self.config, audio_file_id, provider_config
+            )
+            if problem:
+                self._show_error("Transcription queue", problem)
+                continue
+            logger.info(f"Queued {audio_file_id} for {provider_config.get('provider_id')}")
 
-                # Refresh transcriptions display to show pending
-                self.note_pane.refresh_transcriptions(audio_file_id)
-
-                logger.info(
-                    f"Started transcription {transcription_id} for {audio_file_id}"
-                )
-
-            except Exception as e:
-                logger.error(f"Failed to start transcription: {e}")
-                self._show_error("Transcription Error", f"Failed to start transcription:\n\n{e}")
+        self._start_queue_worker()
+        # Shows the "Pending..." row the queue will fill in
+        self.note_pane.refresh_transcriptions(audio_file_id)
 
     def _on_transcription_complete(
         self, transcription_id: str, result: Dict[str, any]

@@ -187,7 +187,7 @@ class TranscriptionDialog(QDialog):
         self._provider_options: Dict[str, ProviderOptionsWidget] = {}
         self._result_configs: List[Dict[str, Any]] = []
 
-        self.setWindowTitle("Transcribe Audio")
+        self.setWindowTitle("Transcribe Recording")
         self.setMinimumWidth(450)
         self.setMinimumHeight(400)
 

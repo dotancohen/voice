@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -27,7 +28,12 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mpv_available
-from src.core.waveform import WAVEFORM_BAR_COUNT, extract_waveform
+from src.core.waveform import (
+    GENERATE_WAVEFORM_PROMPT,
+    WAVEFORM_BAR_COUNT,
+    extract_waveform,
+    is_large_recording,
+)
 from src.ui.styles import BUTTON_STYLE
 
 logger = logging.getLogger(__name__)
@@ -41,10 +47,14 @@ class WaveformWidget(QWidget):
     """
 
     seek_requested = Signal(float)
+    draw_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._waveform: List[float] = []
+        # Set for a large recording: the area becomes a button that offers to
+        # draw the waveform, rather than a picture nobody asked to wait for.
+        self._prompt: Optional[str] = None
         self._progress: float = 0.0
         self._played_color = QColor("#3daee9")  # KDE Breeze blue
         self._unplayed_color = QColor("#4d4d4d")  # Gray
@@ -57,6 +67,17 @@ class WaveformWidget(QWidget):
     def set_waveform(self, waveform: List[float]) -> None:
         """Set the waveform data to display."""
         self._waveform = waveform
+        self._prompt = None
+        self.update()
+
+    def set_prompt(self, prompt: Optional[str]) -> None:
+        """Offer to draw the waveform instead of drawing it.
+
+        Used for a recording long enough that decoding it is real work; see
+        :func:`core.waveform.is_large_recording`.
+        """
+        self._prompt = prompt
+        self._waveform = []
         self.update()
 
     def set_progress(self, progress: float) -> None:
@@ -65,10 +86,14 @@ class WaveformWidget(QWidget):
         self.update()
 
     def mousePressEvent(self, event) -> None:
-        """Handle click to seek."""
-        if event.button() == Qt.LeftButton:
-            fraction = event.pos().x() / self.width()
-            self.seek_requested.emit(max(0.0, min(1.0, fraction)))
+        """Handle click to seek, or to draw a large recording's waveform."""
+        if event.button() != Qt.LeftButton:
+            return
+        if self._prompt is not None:
+            self.draw_requested.emit()
+            return
+        fraction = event.pos().x() / self.width()
+        self.seek_requested.emit(max(0.0, min(1.0, fraction)))
 
     def paintEvent(self, event) -> None:
         """Paint the waveform."""
@@ -77,6 +102,10 @@ class WaveformWidget(QWidget):
 
         # Background
         painter.fillRect(self.rect(), self._background_color)
+
+        if self._prompt is not None:
+            self._draw_prompt(painter, self._prompt)
+            return
 
         if not self._waveform:
             # Draw placeholder bars
@@ -115,6 +144,11 @@ class WaveformWidget(QWidget):
             pen.setWidth(2)
             painter.setPen(pen)
             painter.drawLine(playhead_x, 0, playhead_x, self.height())
+
+    def _draw_prompt(self, painter: QPainter, prompt: str) -> None:
+        """Write the offer across the waveform area, centred, two lines."""
+        painter.setPen(QColor("#cccccc"))
+        painter.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, prompt)
 
     def _draw_placeholder(self, painter: QPainter) -> None:
         """Draw placeholder waveform."""
@@ -157,6 +191,13 @@ class AudioPlayerWidget(QFrame):
 
         self._player = AudioPlayer()
         self._waveforms: Dict[int, List[float]] = {}
+        # Which recording the waveform area is showing, and which recordings
+        # are long enough to be offered rather than drawn (see
+        # core.waveform.is_large_recording).
+        self._current_index: int = 0
+        self._large_files: set = set()
+        self._audio_file_ids: List[str] = []
+        self._on_waveform_extracted = None
         self._audio_files: List[Dict] = []
         self._file_paths: List[Path] = []
         self._transcription_counts: Dict[str, int] = {}
@@ -226,7 +267,7 @@ class AudioPlayerWidget(QFrame):
         layout.addLayout(controls_layout)
 
         # Audio file list
-        list_label = QLabel("Audio Files")
+        list_label = QLabel("Recordings")
         layout.addWidget(list_label)
 
         self._file_list = QListWidget()
@@ -237,6 +278,7 @@ class AudioPlayerWidget(QFrame):
     def _connect_signals(self) -> None:
         """Connect signals."""
         self._waveform_widget.seek_requested.connect(self._on_seek)
+        self._waveform_widget.draw_requested.connect(self._on_draw_requested)
         self._player.set_on_state_change(self._on_state_change)
 
     def set_audio_files(
@@ -289,24 +331,27 @@ class AudioPlayerWidget(QFrame):
         # Set files in player
         self._player.set_audio_files(self._file_paths)
 
-        # Extract waveforms only for files without cached data
+        # Remembered so that pressing the offer can draw it later
+        self._on_waveform_extracted = on_waveform_extracted
+        self._audio_file_ids = [f.get("id", "") for f in audio_files]
+        self._large_files = set()
+
+        # Extract waveforms only for files without cached data, and only for
+        # recordings short enough that it is not worth asking about. A long one
+        # offers a button instead: decoding the whole of it is real work, and
+        # the user is the one who knows whether the picture is worth it.
         for i, path in enumerate(self._file_paths):
             if i in self._waveforms:
                 continue  # Already have cached waveform
-            if path.exists():
-                waveform = extract_waveform(path, WAVEFORM_BAR_COUNT)
-                self._waveforms[i] = waveform
-                # Notify caller so they can update cache
-                if on_waveform_extracted and waveform:
-                    audio_id = audio_files[i].get("id", "")
-                    if audio_id:
-                        # Convert to 0-255 for storage
-                        waveform_bytes = [min(255, max(0, int(v * 255))) for v in waveform]
-                        on_waveform_extracted(audio_id, waveform_bytes)
+            if not path.exists():
+                continue
+            if is_large_recording(path):
+                self._large_files.add(i)
+                continue
+            self._waveforms[i] = self._draw_and_cache(i)
 
         # Update waveform display if we have files
-        if self._waveforms:
-            self._waveform_widget.set_waveform(self._waveforms.get(0, []))
+        self._show_waveform_for(0)
 
     def update_transcription_count(self, audio_file_id: str, count: int) -> None:
         """Update the transcription count for an audio file.
@@ -349,6 +394,37 @@ class AudioPlayerWidget(QFrame):
         else:
             self._player.toggle_play_pause()
 
+    def _draw_and_cache(self, index: int) -> List[float]:
+        """Decode one recording, draw its bars, and hand them to the caller."""
+        waveform = extract_waveform(self._file_paths[index], WAVEFORM_BAR_COUNT)
+        if waveform and self._on_waveform_extracted:
+            audio_id = self._audio_file_ids[index] if index < len(self._audio_file_ids) else ""
+            if audio_id:
+                # Convert to 0-255 for storage
+                waveform_bytes = [min(255, max(0, int(v * 255))) for v in waveform]
+                self._on_waveform_extracted(audio_id, waveform_bytes)
+        return waveform
+
+    def _show_waveform_for(self, index: int) -> None:
+        """Show that recording's waveform, or the offer to draw it."""
+        if index in self._waveforms:
+            self._waveform_widget.set_waveform(self._waveforms.get(index, []))
+        elif index in self._large_files:
+            self._waveform_widget.set_prompt(GENERATE_WAVEFORM_PROMPT)
+        else:
+            self._waveform_widget.set_waveform([])
+
+    def _on_draw_requested(self) -> None:
+        """The user asked for a large recording's waveform."""
+        index = self._current_index
+        if index not in self._large_files:
+            return
+        self._waveform_widget.set_prompt("Drawing the waveform…")
+        QApplication.processEvents()
+        self._waveforms[index] = self._draw_and_cache(index)
+        self._large_files.discard(index)
+        self._show_waveform_for(index)
+
     def _on_seek(self, fraction: float) -> None:
         """Handle seek request from waveform."""
         self._player.seek_to_fraction(fraction)
@@ -380,8 +456,8 @@ class AudioPlayerWidget(QFrame):
 
         # Update waveform for current file
         if state.current_file_index >= 0:
-            waveform = self._waveforms.get(state.current_file_index, [])
-            self._waveform_widget.set_waveform(waveform)
+            self._current_index = state.current_file_index
+            self._show_waveform_for(state.current_file_index)
             self._select_file_in_list(state.current_file_index)
 
     def _select_file_in_list(self, index: int) -> None:

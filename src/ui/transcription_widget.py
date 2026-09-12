@@ -11,12 +11,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 
+from src.core import transcription_flags
 from src.core.timestamp_utils import format_timestamp
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QTextEdit,
@@ -26,11 +27,77 @@ from PySide6.QtWidgets import (
 
 logger = logging.getLogger(__name__)
 
-# Default state for new transcriptions
-DEFAULT_TRANSCRIPTION_STATE = "original !verified !verbatim !cleaned !polished"
+# The flags a new transcription is created with. Defined once, in the module
+# that also says what each flag means, so that this application and the
+# Android one cannot drift apart on the words they write into a shared field.
+DEFAULT_TRANSCRIPTION_FLAGS = transcription_flags.DEFAULT_FLAGS
 
 # Type alias for content loader callback
 ContentLoader = Callable[[str], Optional[str]]
+
+
+class TranscriptionFlagsEditor(QWidget):
+    """The five flags of a transcription, as five lines that can be clicked.
+
+    Each line is the flag's name and what it means. Any number of them can be
+    on at once. Clicking one turns it on or off; the underlying field keeps
+    the same shape it has always had, a space-separated list of words with
+    `!` in front of the ones that are off, so a flag set here is read the
+    same way on a phone.
+    """
+
+    flags_changed = Signal(str)
+
+    def __init__(self, flags: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._flags = flags
+        self._boxes: Dict[str, QCheckBox] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        for info in transcription_flags.ALL:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+
+            box = QCheckBox(info.title)
+            box.setChecked(transcription_flags.has_flag(flags, info.name))
+            box.setMinimumWidth(90)
+            box.clicked.connect(lambda _checked, name=info.name: self._toggle(name))
+            self._boxes[info.name] = box
+            row_layout.addWidget(box)
+
+            description = QLabel(info.description)
+            description.setStyleSheet("color: gray;")
+            row_layout.addWidget(description)
+            row_layout.addStretch()
+
+            layout.addWidget(row)
+
+    def _toggle(self, flag: str) -> None:
+        """Turn one flag the other way round and tell whoever is listening."""
+        self._flags = transcription_flags.toggle_flag(self._flags, flag)
+        self._refresh_boxes()
+        self.flags_changed.emit(self._flags)
+
+    def _refresh_boxes(self) -> None:
+        for name, box in self._boxes.items():
+            checked = transcription_flags.has_flag(self._flags, name)
+            if box.isChecked() != checked:
+                box.blockSignals(True)
+                box.setChecked(checked)
+                box.blockSignals(False)
+
+    def flags(self) -> str:
+        """The flag field as it now stands."""
+        return self._flags
+
+    def set_flags(self, flags: str) -> None:
+        """Show a flag field that came from somewhere else."""
+        self._flags = flags
+        self._refresh_boxes()
 
 
 class TranscriptionTextBox(QFrame):
@@ -68,7 +135,7 @@ class TranscriptionTextBox(QFrame):
         self._is_folded = True
         self._is_editing = False
         self._original_content = ""
-        self._original_state = ""
+        self._original_flags = ""
         self._content_loader = content_loader
         self._full_content_loaded = False
 
@@ -140,14 +207,15 @@ class TranscriptionTextBox(QFrame):
         state_layout = QHBoxLayout(state_row)
         state_layout.setContentsMargins(0, 0, 0, 0)
 
-        state_label = QLabel("State:")
+        state_label = QLabel("Flags:")
         state_label.setStyleSheet("color: gray;")
+        state_label.setAlignment(Qt.AlignTop)
         state_layout.addWidget(state_label)
 
-        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
-        self._state_edit = QLineEdit(state)
-        self._state_edit.textChanged.connect(self._on_state_changed)
-        state_layout.addWidget(self._state_edit)
+        flags = self._transcription.get("state", DEFAULT_TRANSCRIPTION_FLAGS)
+        self._flags_edit = TranscriptionFlagsEditor(flags)
+        self._flags_edit.flags_changed.connect(self._on_flags_changed)
+        state_layout.addWidget(self._flags_edit)
 
         self._state_row = state_row
         self._state_row.setVisible(False)
@@ -212,7 +280,7 @@ class TranscriptionTextBox(QFrame):
 
             # Store original values when unfolding
             self._original_content = self._content_edit.toPlainText()
-            self._original_state = self._state_edit.text()
+            self._original_flags = self._flags_edit.flags()
 
     def _load_full_content(self) -> None:
         """Load full content from database on first unfold."""
@@ -240,18 +308,18 @@ class TranscriptionTextBox(QFrame):
         """Handle content text changes."""
         self._check_for_changes()
 
-    def _on_state_changed(self) -> None:
-        """Handle state text changes."""
+    def _on_flags_changed(self, _flags: str = "") -> None:
+        """Handle a flag being turned on or off."""
         self._check_for_changes()
 
     def _check_for_changes(self) -> None:
         """Check if there are unsaved changes and update button state."""
         current_content = self._content_edit.toPlainText()
-        current_state = self._state_edit.text()
+        current_state = self._flags_edit.flags()
 
         has_changes = (
             current_content != self._original_content or
-            current_state != self._original_state
+            current_state != self._original_flags
         )
 
         self._is_editing = has_changes
@@ -261,13 +329,13 @@ class TranscriptionTextBox(QFrame):
         """Save changes and emit signal."""
         transcription_id = self._transcription.get("id", "")
         content = self._content_edit.toPlainText()
-        state = self._state_edit.text()
+        state = self._flags_edit.flags()
 
         # Update internal state
         self._transcription["content"] = content
         self._transcription["state"] = state
         self._original_content = content
-        self._original_state = state
+        self._original_flags = state
         self._is_editing = False
         self._save_button.setEnabled(False)
 
@@ -283,13 +351,13 @@ class TranscriptionTextBox(QFrame):
     def _cancel_changes(self) -> None:
         """Cancel changes and restore original values."""
         self._content_edit.blockSignals(True)
-        self._state_edit.blockSignals(True)
+        self._flags_edit.blockSignals(True)
 
         self._content_edit.setPlainText(self._original_content)
-        self._state_edit.setText(self._original_state)
+        self._flags_edit.set_flags(self._original_flags)
 
         self._content_edit.blockSignals(False)
-        self._state_edit.blockSignals(False)
+        self._flags_edit.blockSignals(False)
 
         self._is_editing = False
         self._save_button.setEnabled(False)
@@ -302,7 +370,7 @@ class TranscriptionTextBox(QFrame):
         """
         self._transcription = transcription
         content = transcription.get("content", "")
-        state = transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
+        state = transcription.get("state", DEFAULT_TRANSCRIPTION_FLAGS)
 
         # Update preview
         preview = content[:100].replace("\n", " ")
@@ -313,15 +381,15 @@ class TranscriptionTextBox(QFrame):
         # Update full content and state (only if not currently editing)
         if not self._is_editing:
             self._content_edit.blockSignals(True)
-            self._state_edit.blockSignals(True)
+            self._flags_edit.blockSignals(True)
 
             self._content_edit.setPlainText(content)
-            self._state_edit.setText(state)
+            self._flags_edit.set_flags(state)
             self._original_content = content
-            self._original_state = state
+            self._original_flags = state
 
             self._content_edit.blockSignals(False)
-            self._state_edit.blockSignals(False)
+            self._flags_edit.blockSignals(False)
 
         # Update status
         self._status_label.setText(self._get_status())

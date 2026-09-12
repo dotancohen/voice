@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import (
+    QMessageBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -22,17 +23,49 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.cloud_storage import (
+    STATUS_IN_CLOUD,
+    STATUS_PENDING,
+    describe_download_result,
+    download_audio_files_for_note,
+    missing_audio_files,
+)
 from src.core.conflicts import ConflictManager
 from src.core.database import Database
 from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
+from src.core.audiofile_manager import AudioFileManager
 from src.core.timestamp_utils import format_timestamp
 from src.ui.audio_player_widget import AudioPlayerWidget
 from src.ui.tag_management_dialog import TagManagementDialog
 from src.ui.transcription_widget import TranscriptionsContainer
+from src.ui.version_dialogs import HistoryDialog, ResolveConflictDialog
 from src.ui.styles import BUTTON_STYLE
 
 logger = logging.getLogger(__name__)
+
+
+class _MediaDownloadWorker(QThread):
+    """Downloads a note's missing audio files without blocking the GUI."""
+
+    finished_with_result = Signal(str, str, bool)  # note_id, message, ok
+
+    def __init__(self, note_id: str, config_dir: Optional[Path | str], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._note_id = note_id
+        self._config_dir = config_dir
+
+    def run(self) -> None:  # noqa: D401 - QThread entry point
+        try:
+            result = download_audio_files_for_note(self._note_id, self._config_dir)
+            message = f"Media: {describe_download_result(result)}"
+            ok = result.failed == 0
+            if result.errors:
+                message += " — " + "; ".join(result.errors)
+        except Exception as e:  # noqa: BLE001 - surface any failure to the user
+            message = f"Download failed: {e}"
+            ok = False
+        self.finished_with_result.emit(self._note_id, message, ok)
 
 
 class NotePane(QWidget, NoteEditorMixin):
@@ -73,6 +106,7 @@ class NotePane(QWidget, NoteEditorMixin):
         db: Database,
         audiofile_directory: Optional[Path | str] = None,
         parent: Optional[QWidget] = None,
+        config_dir: Optional[Path | str] = None,
     ) -> None:
         """Initialize the note pane.
 
@@ -80,10 +114,13 @@ class NotePane(QWidget, NoteEditorMixin):
             db: Database connection
             audiofile_directory: Path to audiofile directory for playback
             parent: Parent widget (default None)
+            config_dir: Config directory, needed for on-demand cloud downloads
         """
         super().__init__(parent)
         self.db = db
         self.audiofile_directory = Path(audiofile_directory) if audiofile_directory else None
+        self.config_dir = config_dir
+        self._download_worker: Optional[_MediaDownloadWorker] = None
         self.init_editor_state()  # Initialize mixin state
 
         self.setup_ui()
@@ -123,12 +160,30 @@ class NotePane(QWidget, NoteEditorMixin):
         tags_layout.addStretch()
         layout.addLayout(tags_layout)
 
-        # Conflict warning (hidden by default)
+        # Conflict warning with "accept merge" action (hidden by default)
+        conflict_layout = QHBoxLayout()
         self.conflict_label = QLabel()
         self.conflict_label.setStyleSheet("color: red; font-weight: bold;")
         self.conflict_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.conflict_label.setWordWrap(True)
         self.conflict_label.hide()
-        layout.addWidget(self.conflict_label)
+        conflict_layout.addWidget(self.conflict_label, stretch=1)
+        self.accept_conflict_button = QPushButton("Accept merge")
+        self.accept_conflict_button.setStyleSheet(BUTTON_STYLE)
+        self.accept_conflict_button.setToolTip(
+            "Keep the merged value as it is (both versions stay in the text). "
+            "To fix the text instead, Edit and Save."
+        )
+        self.accept_conflict_button.clicked.connect(self._on_accept_conflicts_clicked)
+        self.accept_conflict_button.hide()
+        conflict_layout.addWidget(self.accept_conflict_button)
+        self.resolve_conflict_button = QPushButton("Resolve…")
+        self.resolve_conflict_button.setStyleSheet(BUTTON_STYLE)
+        self.resolve_conflict_button.setToolTip("Compare both versions side by side and write the result")
+        self.resolve_conflict_button.clicked.connect(self._on_resolve_conflict_clicked)
+        self.resolve_conflict_button.hide()
+        conflict_layout.addWidget(self.resolve_conflict_button)
+        layout.addLayout(conflict_layout)
 
         # Content (initially read-only) - BEFORE attachments per requirements
         self.content_text = QTextEdit()
@@ -158,6 +213,21 @@ class NotePane(QWidget, NoteEditorMixin):
         self.audio_player.hide()  # Hidden until audio files are loaded
         layout.addWidget(self.audio_player)
 
+        # "Media missing" notice with on-demand download (hidden by default)
+        media_layout = QHBoxLayout()
+        self.media_missing_label = QLabel("")
+        self.media_missing_label.setStyleSheet("color: #b8860b; font-weight: bold;")
+        self.media_missing_label.setWordWrap(True)
+        self.media_missing_label.hide()
+        media_layout.addWidget(self.media_missing_label, stretch=1)
+        self.download_media_button = QPushButton("Download")
+        self.download_media_button.setStyleSheet(BUTTON_STYLE)
+        self.download_media_button.setToolTip("Download this Note's Recordings from cloud storage")
+        self.download_media_button.clicked.connect(self._on_download_media_clicked)
+        self.download_media_button.hide()
+        media_layout.addWidget(self.download_media_button)
+        layout.addLayout(media_layout)
+
         # Simple attachments list (fallback for non-audio)
         self.attachments_list = QListWidget()
         self.attachments_list.setMaximumHeight(100)  # Compact display
@@ -170,6 +240,13 @@ class NotePane(QWidget, NoteEditorMixin):
         self.edit_button.setStyleSheet(BUTTON_STYLE)
         self.edit_button.clicked.connect(self.start_editing)
         button_layout.addWidget(self.edit_button)
+
+        self.history_button = QPushButton("History…")
+        self.history_button.setStyleSheet(BUTTON_STYLE)
+        self.history_button.setToolTip("Every earlier version of this Note; restore any of them")
+        self.history_button.clicked.connect(self._on_history_clicked)
+        self.history_button.setEnabled(False)
+        button_layout.addWidget(self.history_button)
 
         self.save_button = QPushButton("Save")
         self.save_button.setStyleSheet(BUTTON_STYLE)
@@ -209,13 +286,13 @@ class NotePane(QWidget, NoteEditorMixin):
 
         # Update created timestamp (Unix timestamp)
         created_at = note.get("created_at")
-        created_str = format_timestamp(created_at) if created_at else "Unknown"
+        created_str = format_timestamp(created_at, note.get("created_at_offset")) if created_at else "Unknown"
         self.created_label.setText(f"Created: {created_str}")
 
         # Update modified timestamp (Unix timestamp)
         modified_at = note.get("modified_at")
         if modified_at:
-            self.modified_label.setText(f"Modified: {format_timestamp(modified_at)}")
+            self.modified_label.setText(f"Modified: {format_timestamp(modified_at, note.get('modified_at_offset'))}")
         else:
             self.modified_label.setText("Modified: Never modified")
 
@@ -233,6 +310,8 @@ class NotePane(QWidget, NoteEditorMixin):
             logger.info(f"Cache not populated for note {note_id}, rebuilding...")
             self.tags_display.setText("")
             self.conflict_label.hide()
+            self.accept_conflict_button.hide()
+            self.resolve_conflict_button.hide()
             self.attachments_label.setText("Attachments:")
             self.attachments_list.clear()
             self.audio_player.hide()
@@ -277,15 +356,11 @@ class NotePane(QWidget, NoteEditorMixin):
         else:
             self.tags_display.setText("None")
         self.tags_button.setEnabled(True)
+        self.history_button.setEnabled(True)
 
-        # Conflicts from cache
+        # Conflicts from cache (device names come from the conflict records)
         conflicts = cache.get("conflicts", [])
-        if conflicts:
-            types_str = ", ".join(conflicts)
-            self.conflict_label.setText(f"WARNING: This note has unresolved {types_str} conflict(s)")
-            self.conflict_label.show()
-        else:
-            self.conflict_label.hide()
+        self._show_conflict_warning(note_id, bool(conflicts))
 
         # Attachments from cache
         self.attachments_list.clear()
@@ -298,7 +373,7 @@ class NotePane(QWidget, NoteEditorMixin):
         audio_attachments = [a for a in attachments if a.get("type") == "audio_file"]
 
         if audio_attachments:
-            self.attachments_label.setText(f"Audio Files ({len(audio_attachments)}):")
+            self.attachments_label.setText(f"Recordings ({len(audio_attachments)}):")
 
             # Build audio_files list, transcription counts, and waveforms from cache
             audio_files = []
@@ -357,6 +432,7 @@ class NotePane(QWidget, NoteEditorMixin):
                     on_waveform_extracted=self._on_waveform_extracted,
                 )
                 self.audio_player.show()
+                self._update_media_missing(note_id)
             else:
                 # Fallback to simple list
                 for af in audio_files:
@@ -402,6 +478,80 @@ class NotePane(QWidget, NoteEditorMixin):
         except Exception as e:
             logger.warning(f"Failed to update cache waveform: {e}")
 
+    def _show_conflict_warning(self, note_id: str, has_conflicts: Optional[bool]) -> None:
+        """Show or hide the conflict banner and its Accept button.
+
+        Args:
+            note_id: Note UUID hex string
+            has_conflicts: Known answer from the cache, or None to ask the database
+        """
+        try:
+            description = ""
+            if has_conflicts is not False:
+                description = ConflictManager(self.db).describe_note_conflicts(note_id)
+        except Exception as e:
+            logger.warning(f"Error checking conflicts for note {note_id}: {e}")
+            description = ""
+        if description:
+            self.conflict_label.setText(description)
+            self.conflict_label.show()
+            self.accept_conflict_button.show()
+            self.resolve_conflict_button.show()
+        else:
+            self.conflict_label.hide()
+            self.accept_conflict_button.hide()
+            self.resolve_conflict_button.hide()
+
+    def _on_history_clicked(self) -> None:
+        """Open the version history of the current note."""
+        if not self.current_note_id:
+            return
+        if self.editing:
+            QMessageBox.information(self, "Editing", "Save or cancel your edit first.")
+            return
+        dialog = HistoryDialog(self.db, self.current_note_id, self)
+        dialog.exec()
+        if dialog.restored:
+            self.load_note(self.current_note_id)
+            self.note_saved.emit(self.current_note_id)
+
+    def _on_resolve_conflict_clicked(self) -> None:
+        """Resolve the note's text conflict side by side (other kinds: accept or edit)."""
+        if not self.current_note_id:
+            return
+        if self.editing:
+            QMessageBox.information(self, "Editing", "Save or cancel your edit first.")
+            return
+        conflicts = [c for c in ConflictManager(self.db).get_note_conflicts(self.current_note_id) if c.kind == "text"]
+        if not conflicts:
+            QMessageBox.information(
+                self, "Resolve",
+                "This note's conflicts are not text conflicts. Use Accept merge, or edit the note.",
+            )
+            return
+        dialog = ResolveConflictDialog(self.db, conflicts[0], self)
+        dialog.exec()
+        if dialog.resolved:
+            self.load_note(self.current_note_id)
+            self.note_saved.emit(self.current_note_id)
+
+    def _on_accept_conflicts_clicked(self) -> None:
+        """Accept the merged values of every conflict on the current note."""
+        if not self.current_note_id:
+            return
+        if self.editing:
+            QMessageBox.information(self, "Editing", "Save or cancel your edit first.")
+            return
+        try:
+            n = ConflictManager(self.db).accept_note_conflicts(self.current_note_id)
+        except Exception as e:
+            logger.error(f"Failed to accept conflicts for note {self.current_note_id}: {e}")
+            QMessageBox.warning(self, "Accept merge", f"Could not accept the merge: {e}")
+            return
+        logger.info(f"Accepted {n} conflict(s) on note {self.current_note_id}")
+        self.load_note(self.current_note_id)
+        self.note_saved.emit(self.current_note_id)
+
     def _load_without_cache(self, note_id: str, note: dict) -> None:
         """Load note display data without cache (fallback).
 
@@ -417,20 +567,10 @@ class NotePane(QWidget, NoteEditorMixin):
         else:
             self.tags_display.setText("None")
         self.tags_button.setEnabled(True)
+        self.history_button.setEnabled(True)
 
         # Check for conflicts
-        try:
-            conflict_mgr = ConflictManager(self.db)
-            conflict_types = conflict_mgr.get_note_conflict_types(note_id)
-            if conflict_types:
-                types_str = ", ".join(conflict_types)
-                self.conflict_label.setText(f"WARNING: This note has unresolved {types_str} conflict(s)")
-                self.conflict_label.show()
-            else:
-                self.conflict_label.hide()
-        except Exception as e:
-            logger.warning(f"Error checking conflicts for note {note_id}: {e}")
-            self.conflict_label.hide()
+        self._show_conflict_warning(note_id, None)
 
         # Update attachments - display BELOW content
         self.attachments_list.clear()
@@ -443,7 +583,7 @@ class NotePane(QWidget, NoteEditorMixin):
             audio_files = self.db.get_audio_files_for_note(note_id)
             self._current_audio_files = audio_files
             if audio_files:
-                self.attachments_label.setText(f"Audio Files ({len(audio_files)}):")
+                self.attachments_label.setText(f"Recordings ({len(audio_files)}):")
 
                 # Get transcription counts for each audio file
                 transcription_counts = {}
@@ -468,6 +608,7 @@ class NotePane(QWidget, NoteEditorMixin):
                         transcription_counts=transcription_counts,
                     )
                     self.audio_player.show()
+                    self._update_media_missing(note_id)
                 else:
                     # Fallback to simple list
                     for af in audio_files:
@@ -486,6 +627,66 @@ class NotePane(QWidget, NoteEditorMixin):
             logger.warning(f"Error loading attachments for note {note_id}: {e}")
             self.attachments_label.setText("Attachments: None")
 
+    def _update_media_missing(self, note_id: str) -> None:
+        """Show or hide the 'media missing' notice for the note's audio files."""
+        if not self.audiofile_directory:
+            self.media_missing_label.hide()
+            self.download_media_button.hide()
+            return
+        try:
+            audio_files = self.db.get_audio_files_for_note(note_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Error checking media status for note {note_id}: {e}")
+            audio_files = []
+        missing = missing_audio_files(audio_files, self.audiofile_directory)
+        in_cloud = missing[STATUS_IN_CLOUD]
+        pending = missing[STATUS_PENDING]
+
+        parts = []
+        if in_cloud:
+            parts.append(f"Media missing: {len(in_cloud)} file(s) not on this device.")
+        if pending:
+            parts.append(f"{len(pending)} file(s) not uploaded by their device yet.")
+        if parts:
+            self.media_missing_label.setText(" ".join(parts))
+            self.media_missing_label.show()
+        else:
+            self.media_missing_label.hide()
+
+        downloading = self._download_worker is not None and self._download_worker.isRunning()
+        self.download_media_button.setVisible(bool(in_cloud) or downloading)
+
+    def _on_download_media_clicked(self) -> None:
+        """Download the current note's missing audio files in a background thread."""
+        note_id = self.current_note_id
+        if not note_id:
+            return
+        if self._download_worker is not None and self._download_worker.isRunning():
+            return
+        self.download_media_button.setEnabled(False)
+        self.download_media_button.setText("Downloading…")
+        self.media_missing_label.setText("Downloading media from cloud storage…")
+        self.media_missing_label.show()
+
+        self._download_worker = _MediaDownloadWorker(note_id, self.config_dir, self)
+        self._download_worker.finished_with_result.connect(self._on_media_download_finished)
+        self._download_worker.start()
+
+    def _on_media_download_finished(self, note_id: str, message: str, ok: bool) -> None:
+        """Back on the GUI thread after a download attempt."""
+        self.download_media_button.setEnabled(True)
+        self.download_media_button.setText("Download")
+        if ok:
+            logger.info(message)
+        else:
+            logger.warning(message)
+        if self.current_note_id == note_id:
+            self.load_note(note_id)
+            if not ok:
+                self.media_missing_label.setText(message)
+                self.media_missing_label.show()
+        self._download_worker = None
+
     def _get_audio_file_path(self, audio_id: str) -> Optional[str]:
         """Get the file path for an audio file.
 
@@ -503,13 +704,8 @@ class NotePane(QWidget, NoteEditorMixin):
         if not audio_file:
             return None
 
-        filename = audio_file.get("filename", "")
-        if "." not in filename:
-            return None
-
-        ext = filename.rsplit(".", 1)[-1].lower()
-        path = self.audiofile_directory / f"{audio_id}.{ext}"
-        return str(path) if path.exists() else None
+        path = AudioFileManager(self.audiofile_directory).get_record_path(audio_file)
+        return str(path) if path.is_file() else None
 
     def _get_audio_file_path_cached(self, audio_id: str) -> Optional[str]:
         """Get the file path for an audio file using cached filename.
@@ -527,13 +723,14 @@ class NotePane(QWidget, NoteEditorMixin):
 
         # Use cached filename if available
         filename = getattr(self, '_cached_audio_filenames', {}).get(audio_id, "")
-        if not filename or "." not in filename:
+        if not filename:
             # Fallback to database query
             return self._get_audio_file_path(audio_id)
 
-        ext = filename.rsplit(".", 1)[-1].lower()
-        path = self.audiofile_directory / f"{audio_id}.{ext}"
-        return str(path) if path.exists() else None
+        path = AudioFileManager(self.audiofile_directory).get_record_path(
+            {"id": audio_id, "filename": filename}
+        )
+        return str(path) if path.is_file() else None
 
     def clear(self) -> None:
         """Clear all fields."""
@@ -542,10 +739,15 @@ class NotePane(QWidget, NoteEditorMixin):
         self.modified_label.setText("Modified: Never modified")
         self.tags_display.setText("")
         self.tags_button.setEnabled(False)
+        self.history_button.setEnabled(False)
         self.conflict_label.hide()
+        self.accept_conflict_button.hide()
+        self.resolve_conflict_button.hide()
         self.attachments_label.setText("Attachments:")
         self.attachments_list.clear()
         self.audio_player.hide()
+        self.media_missing_label.hide()
+        self.download_media_button.hide()
         self.transcriptions_container.hide()
         self.transcriptions_container.set_audio_file(None, [])
         self._current_audio_files = []

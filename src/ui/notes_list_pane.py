@@ -331,7 +331,7 @@ class NotesListPane(QWidget):
         # Star filter button (leftmost) - toggles is:marked in search
         self.star_filter_button = QToolButton()
         self.star_filter_button.setText(STAR_EMPTY)
-        self.star_filter_button.setToolTip("Toggle starred notes filter (is:marked)")
+        self.star_filter_button.setToolTip("Show only starred Notes (is:marked)")
         self.star_filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.star_filter_button.setFixedSize(24, 24)
         self.star_filter_button.setStyleSheet(f"""
@@ -371,7 +371,7 @@ class NotesListPane(QWidget):
         self.clear_button.clicked.connect(self.clear_search)
 
         self.search_field = SearchTextEdit()
-        self.search_field.setPlaceholderText("Search notes... (use tag:tagname or is:marked)")
+        self.search_field.setPlaceholderText("Search Notes… (use tag:name or is:marked)")
         self.search_field.setAcceptRichText(False)  # Use plain text to prevent formatting inheritance
         # Configure as single-line input with no frame (container provides the frame)
         self.search_field.setFrameShape(QFrame.Shape.NoFrame)
@@ -445,7 +445,7 @@ class NotesListPane(QWidget):
             try:
                 cache_data = json.loads(list_cache)
                 # "date" in cache is pre-formatted string; fallback formats the integer timestamp
-                created_at = cache_data.get("date") or format_timestamp(note.get("created_at")) or "Unknown"
+                created_at = cache_data.get("date") or format_timestamp(note.get("created_at"), note.get("created_at_offset")) or "Unknown"
                 is_marked = cache_data.get("marked", False)
                 content = cache_data.get("content_preview", "")
                 duration_seconds = cache_data.get("duration_seconds")
@@ -463,7 +463,7 @@ class NotesListPane(QWidget):
         if not list_cache:
             # No cache or cache parse failed - compute values
             # Format Unix timestamp for display
-            created_at = format_timestamp(note.get("created_at")) or "Unknown"
+            created_at = format_timestamp(note.get("created_at"), note.get("created_at_offset")) or "Unknown"
             is_marked = self.db.is_note_marked(note["id"])
             content = note.get("content", "")
             # Replace newlines and carriage returns with spaces

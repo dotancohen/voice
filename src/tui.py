@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import logging
 import unicodedata
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -65,13 +66,22 @@ from textual.widgets import (
 )
 from textual.widgets.tree import TreeNode
 
-# Default transcription state
-DEFAULT_TRANSCRIPTION_STATE = "original !verified !verbatim !cleaned !polished"
 
 from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mpv_available
+from src.core.transcription_flags import DEFAULT_FLAGS as DEFAULT_TRANSCRIPTION_FLAGS
+from src.core.audiofile_manager import AudioFileManager
+from src.core.cloud_storage import (
+    STATUS_IN_CLOUD,
+    STATUS_PENDING,
+    audio_file_status,
+    describe_download_result,
+    download_audio_files_for_note,
+    missing_audio_files,
+)
 from src.core.config import Config
-from src.core.conflicts import ConflictManager
+from src.core.conflicts import Conflict, ConflictManager
 from src.core.database import Database
+from src.core.synced_settings import reconcile_transcription_settings
 from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
 from src.core.search import build_tag_search_term, execute_search
@@ -514,6 +524,594 @@ class TagManagementScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+class HistoryScreen(ModalScreen[bool]):
+    """Every version of a note's content, oldest first, with restore.
+
+    Restoring is an ordinary edit (nothing is lost, and it syncs). Dismisses
+    with True when something was restored.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+    ]
+
+    CSS = """
+    HistoryScreen {
+        align: center middle;
+    }
+
+    #history-dialog {
+        width: 90%;
+        height: 85%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #history-list {
+        height: 40%;
+        border: solid $primary-darken-2;
+    }
+
+    #history-content {
+        height: 1fr;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    #history-buttons {
+        height: 3;
+        align: center middle;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, db: Database, note_id: str) -> None:
+        super().__init__()
+        self.db = db
+        self.note_id = note_id
+        self.versions: List[Any] = []
+        self.restored = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="history-dialog"):
+            yield Label(f"History of note {self.note_id[:UUID_SHORT_LEN]} (oldest first)", id="history-title")
+            yield ListView(id="history-list")
+            yield Static("", id="history-content")
+            with Horizontal(id="history-buttons"):
+                yield Button("Restore this version", id="history-restore-btn", variant="warning")
+                yield Button("Close", id="history-close-btn", variant="primary")
+
+    def on_mount(self) -> None:
+        self._load()
+
+    def _load(self) -> None:
+        self.versions = ConflictManager(self.db).get_field_history("note", self.note_id, "content")
+        current = (self.db.get_note_raw(self.note_id) or {}).get("content")
+        lv = self.query_one("#history-list", ListView)
+        lv.clear()
+        for v in self.versions:
+            kind = "merge" if v.merge_parent_id else ("original" if v.parent_id is None else "edit")
+            if v.conflict_kind:
+                kind += f" ({v.conflict_kind} conflict)"
+            first = (v.content or "").split("\n", 1)[0][:50]
+            mark = "  <- current" if (v.content or "") == current else ""
+            lv.append(ListItem(Label(f"{format_timestamp(v.created_at, v.created_at_offset)}  {v.device_label}  {kind}  {first}{mark}")))
+        if self.versions:
+            lv.index = len(self.versions) - 1
+            self._show(len(self.versions) - 1)
+
+    def _show(self, index: int) -> None:
+        if 0 <= index < len(self.versions):
+            self.query_one("#history-content", Static).update(self.versions[index].content or "")
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        lv = self.query_one("#history-list", ListView)
+        if lv.index is not None:
+            self._show(lv.index)
+
+    def selected_version(self) -> Optional[Any]:
+        lv = self.query_one("#history-list", ListView)
+        if lv.index is not None and 0 <= lv.index < len(self.versions):
+            return self.versions[lv.index]
+        return None
+
+    def restore_selected(self) -> bool:
+        v = self.selected_version()
+        if v is None:
+            return False
+        current = (self.db.get_note_raw(self.note_id) or {}).get("content")
+        if (v.content or "") == current:
+            self.app.notify("That version is already the current content", severity="warning")
+            return False
+        self.db.update_note(self.note_id, v.content or "")
+        self.restored = True
+        self.app.notify(f"Restored version from {format_timestamp(v.created_at, v.created_at_offset)}")
+        self._load()
+        return True
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "history-restore-btn":
+            self.restore_selected()
+        elif event.button.id == "history-close-btn":
+            self.dismiss(self.restored)
+
+    def action_close(self) -> None:
+        self.dismiss(self.restored)
+
+
+class TrashScreen(ModalScreen[bool]):
+    """The trash bin: the notes that were deleted and are still recoverable.
+
+    Deleting a note has always been a soft delete, so nothing has been lost.
+    From here a note goes back to the list, or out of the database for good
+    on every device.
+
+    Dismisses with True when something changed, so the caller reloads.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+    ]
+
+    CSS = """
+    TrashScreen {
+        align: center middle;
+    }
+
+    #trash-dialog {
+        width: 90%;
+        height: 85%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #trash-list {
+        height: 1fr;
+        border: solid $primary-darken-2;
+    }
+
+    #trash-content {
+        height: 30%;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    #trash-buttons {
+        height: 3;
+        align: center middle;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, db: Database, audiofile_directory: Optional[Path] = None) -> None:
+        super().__init__()
+        self.db = db
+        self.audiofile_directory = audiofile_directory
+        self.notes: List[Dict[str, Any]] = []
+        self.changed = False
+        self.confirm_purge_id: Optional[str] = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="trash-dialog"):
+            yield Label("Trash", id="trash-title")
+            yield ListView(id="trash-list")
+            yield Static("", id="trash-content")
+            with Horizontal(id="trash-buttons"):
+                yield Button("Recover", id="trash-recover-btn", variant="primary")
+                yield Button("Delete for good", id="trash-purge-btn", variant="error")
+                yield Button("Close", id="trash-close-btn")
+
+    def on_mount(self) -> None:
+        self._load()
+
+    def _load(self) -> None:
+        self.notes = self.db.get_deleted_notes()
+        self.confirm_purge_id = None
+        title = self.query_one("#trash-title", Label)
+        title.update(f"Trash ({len(self.notes)} note(s))" if self.notes else "Trash (empty)")
+        lv = self.query_one("#trash-list", ListView)
+        lv.clear()
+        for note in self.notes:
+            lines = [line.strip() for line in (note["content"] or "").split("\n") if line.strip()]
+            first = lines[0][:60] if lines else "(no text)"
+            deleted = format_timestamp(note.get("deleted_at"), note.get("deleted_at_offset"))
+            lv.append(ListItem(Label(f"deleted {deleted}  {first}")))
+        if self.notes:
+            lv.index = 0
+            self._show(0)
+        else:
+            self.query_one("#trash-content", Static).update("Nothing has been deleted.")
+
+    def _show(self, index: int) -> None:
+        if 0 <= index < len(self.notes):
+            self.query_one("#trash-content", Static).update(self.notes[index]["content"] or "(no text)")
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        lv = self.query_one("#trash-list", ListView)
+        if lv.index is not None:
+            self.confirm_purge_id = None
+            self._show(lv.index)
+
+    def selected_note(self) -> Optional[Dict[str, Any]]:
+        lv = self.query_one("#trash-list", ListView)
+        if lv.index is not None and 0 <= lv.index < len(self.notes):
+            return self.notes[lv.index]
+        return None
+
+    def recover_selected(self) -> None:
+        note = self.selected_note()
+        if note is None:
+            return
+        if self.db.undelete_note(note["id"]):
+            self.changed = True
+            self.app.notify(f"Recovered note {note['id'][:UUID_SHORT_LEN]}")
+            self._load()
+
+    def purge_selected(self) -> None:
+        """Remove the selected note for good. Asks once, in place."""
+        note = self.selected_note()
+        if note is None:
+            return
+        if self.confirm_purge_id != note["id"]:
+            # First press asks; the second press does it. No dialog to
+            # dismiss by accident, and no way to do it with one keystroke.
+            self.confirm_purge_id = note["id"]
+            self.app.notify(
+                "This removes the note for good, on every device. Press again to confirm.",
+                severity="warning",
+            )
+            return
+        audio_ids = self.db.purge_note(note["id"])
+        removed = purge_audio_files(audio_ids, self.audiofile_directory)
+        self.changed = True
+        self.app.notify(
+            f"Removed note {note['id'][:UUID_SHORT_LEN]} for good"
+            + (f" and {removed} recording file(s)" if removed else "")
+        )
+        self._load()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "trash-recover-btn":
+            self.recover_selected()
+        elif event.button.id == "trash-purge-btn":
+            self.purge_selected()
+        elif event.button.id == "trash-close-btn":
+            self.dismiss(self.changed)
+
+    def action_close(self) -> None:
+        self.dismiss(self.changed)
+
+
+class TranscriptionQueueScreen(ModalScreen[bool]):
+    """What is waiting to be transcribed on this machine, and what it cost.
+
+    Three groups, read downwards as time runs forwards: what is **waiting**,
+    what is being **worked on**, and what is **done**. Newest first within each
+    group, as in the notes list, so the order the waiting Recordings will really
+    be reached in is printed on the row itself.
+
+    A waiting Recording can be moved to the front (the one being worked on is
+    never interrupted) or taken out. A finished one shows how much text came
+    out, how long the Recording was, and what the work cost in clock time,
+    processor time and memory — which is where the waiting estimates come from.
+
+    Dismisses with True when the queue changed.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("n", "do_next", "Do next"),
+        Binding("r", "remove", "Remove"),
+        Binding("f5", "reload", "Reload"),
+    ]
+
+    CSS = """
+    TranscriptionQueueScreen {
+        align: center middle;
+    }
+
+    #queue-dialog {
+        width: 90%;
+        height: 85%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #queue-list {
+        height: 1fr;
+        border: solid $primary-darken-2;
+    }
+
+    #queue-detail {
+        height: 30%;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    #queue-buttons {
+        height: 3;
+        align: center middle;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, db: Database, config: Config) -> None:
+        super().__init__()
+        self.db = db
+        self.config = config
+        self.rows: List[Any] = []
+        self.changed = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="queue-dialog"):
+            yield Label("Transcription queue", id="queue-title")
+            yield ListView(id="queue-list")
+            yield Static("", id="queue-detail")
+            with Horizontal(id="queue-buttons"):
+                yield Button("Do next", id="queue-next-btn", variant="primary")
+                yield Button("Remove", id="queue-remove-btn", variant="error")
+                yield Button("Close", id="queue-close-btn")
+
+    def on_mount(self) -> None:
+        self._load()
+
+    def _load(self) -> None:
+        from src.core import transcription_queue as queue_module
+
+        view = queue_module.view(self.db, self.config)
+        title = self.query_one("#queue-title", Label)
+        if view.rate:
+            title.update(
+                f"Transcription queue — about {view.rate:.1f} s of work per second of audio here"
+            )
+        else:
+            title.update("Transcription queue")
+
+        # One flat list, in the order the groups are read: waiting, then what is
+        # being worked on, then what is done. The group is said on each row.
+        self.rows = list(view.waiting) + list(view.processing) + list(view.completed)
+        lv = self.query_one("#queue-list", ListView)
+        lv.clear()
+        for row in self.rows:
+            lv.append(ListItem(Label(self._line(row))))
+        if self.rows:
+            lv.index = 0
+            self._show(0)
+        else:
+            self.query_one("#queue-detail", Static).update(
+                "Nothing is waiting, and nothing has been transcribed on this machine yet."
+            )
+
+    def _line(self, row: Any) -> str:
+        """One row: what group it is in, its place, and what it is."""
+        from src.core import transcription_queue as queue_module
+
+        length = f"{int(row.audio_seconds) // 60}:{int(row.audio_seconds) % 60:02d}" if row.audio_seconds else "-"
+        note = (row.note_line or "(no note)")[:48]
+        if row.state == "waiting":
+            place = "next" if row.position == 1 else f"{row.position}th"
+            wait = queue_module.in_words(row.wait_seconds)
+            tail = f" · done in {wait}" if wait else ""
+            return f"waiting  {place:<6} {length:>7}  {note}{tail}"
+        if row.state == "processing":
+            return f"working         {length:>7}  {note}"
+        mark = "failed" if row.state == "failed" else "done"
+        return f"{mark:<8}        {length:>7}  {note}"
+
+    def _show(self, index: int) -> None:
+        if not (0 <= index < len(self.rows)):
+            return
+        row = self.rows[index]
+        lines = [f"{row.filename}", f"Note: {row.note_line or '(none)'}"]
+        if row.model:
+            lines.append(f"Model: {row.model}")
+        if row.state == "waiting":
+            from src.core import transcription_queue as queue_module
+
+            lines.append(f"Place in the queue: {row.position}")
+            wait = queue_module.in_words(row.wait_seconds)
+            lines.append(f"Done in: {wait or 'no estimate yet'}")
+        elif row.state == "processing":
+            lines.append(row.outcome or "working")
+        else:
+            work = row.work
+            if row.characters is not None:
+                lines.append(f"Text: {row.characters} characters")
+            if work and work.clock_seconds:
+                lines.append(f"Clock time: {work.clock_seconds:.0f} s")
+            if work and work.cpu_seconds:
+                lines.append(f"Processor time: {work.cpu_seconds:.0f} s")
+            if work and work.cores_busy:
+                lines.append(f"Cores busy: {work.cores_busy:.2f}")
+            if work and work.peak_memory_bytes:
+                lines.append(f"Memory, peak: {work.peak_memory_bytes / 1e6:.0f} MB")
+            if work and work.speed_vs_realtime:
+                lines.append(f"Speed: {work.speed_vs_realtime:.2f}× real time")
+            if row.state == "failed" and row.outcome:
+                lines.append(row.outcome)
+        self.query_one("#queue-detail", Static).update("\n".join(lines))
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        lv = self.query_one("#queue-list", ListView)
+        if lv.index is not None:
+            self._show(lv.index)
+
+    def _selected(self) -> Optional[Any]:
+        lv = self.query_one("#queue-list", ListView)
+        if lv.index is not None and 0 <= lv.index < len(self.rows):
+            return self.rows[lv.index]
+        return None
+
+    def action_do_next(self) -> None:
+        from src.core import transcription_queue as queue_module
+
+        row = self._selected()
+        if row is None or row.state != "waiting":
+            self.app.notify("Only a Recording that is waiting can be moved.", severity="warning")
+            return
+        if queue_module.Queue(self.config.config_dir).do_next(row.audio_file_id):
+            self.changed = True
+            self.app.notify("It will be transcribed next.")
+            self._load()
+        else:
+            self.app.notify("It is already next.", severity="warning")
+
+    def action_remove(self) -> None:
+        from src.core import transcription_queue as queue_module
+
+        row = self._selected()
+        if row is None or row.state != "waiting":
+            self.app.notify("Only a Recording that is waiting can be taken out.", severity="warning")
+            return
+        if queue_module.Queue(self.config.config_dir).remove(row.audio_file_id):
+            self.changed = True
+            self.app.notify("Taken out of the queue.")
+            self._load()
+
+    def action_reload(self) -> None:
+        self._load()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "queue-next-btn":
+            self.action_do_next()
+        elif event.button.id == "queue-remove-btn":
+            self.action_remove()
+        elif event.button.id == "queue-close-btn":
+            self.dismiss(self.changed)
+
+    def action_close(self) -> None:
+        self.dismiss(self.changed)
+
+
+def purge_audio_files(audio_ids: List[str], directory: Optional[Path]) -> int:
+    """Delete the files of recordings that were purged; return how many went.
+
+    The database says which recordings were removed; where their files live
+    is the application's business, not the core's.
+    """
+    if not audio_ids or directory is None:
+        return 0
+    removed = 0
+    for audio_id in audio_ids:
+        for path in Path(directory).glob(f"{audio_id}.*"):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+class ResolveConflictScreen(ModalScreen[bool]):
+    """Side-by-side resolution of one text conflict.
+
+    Shows version A, version B and the common ancestor read-only, and the
+    result in an editable area (starting from the merged text). Saving writes
+    the field once, which resolves the conflict on every device. Dismisses
+    with True when saved.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Cancel"),
+    ]
+
+    CSS = """
+    ResolveConflictScreen {
+        align: center middle;
+    }
+
+    #resolve-dialog {
+        width: 95%;
+        height: 90%;
+        border: thick $error;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #resolve-sides {
+        height: 40%;
+    }
+
+    .resolve-side {
+        width: 1fr;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    #resolve-base {
+        height: 5;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+
+    #resolve-result {
+        height: 1fr;
+    }
+
+    #resolve-buttons {
+        height: 3;
+        align: center middle;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, db: Database, conflict: Conflict) -> None:
+        super().__init__()
+        self.db = db
+        self.conflict = conflict
+        self.versions = ConflictManager(db).get_conflict_versions(conflict)
+        self.resolved = False
+
+    def compose(self) -> ComposeResult:
+        c = self.conflict
+        v = self.versions
+        with Vertical(id="resolve-dialog"):
+            yield Label(f"{c.describe()}. Edit the result, then Save.", id="resolve-title")
+            with Horizontal(id="resolve-sides"):
+                yield Static(f"[b]{c.device_a_label} (A)[/b]\n" + (v.version_a.content if v.version_a else ""), classes="resolve-side", id="resolve-side-a")
+                yield Static(f"[b]{c.device_b_label} (B)[/b]\n" + (v.version_b.content if v.version_b else ""), classes="resolve-side", id="resolve-side-b")
+            yield Static("[b]Common ancestor[/b]\n" + ((v.base.content if v.base else "") or ""), id="resolve-base")
+            yield TextArea((v.merge.content if v.merge else "") or "", id="resolve-result", language=None)
+            with Horizontal(id="resolve-buttons"):
+                yield Button("Start from A", id="resolve-use-a")
+                yield Button("Start from B", id="resolve-use-b")
+                yield Button("Start from merged", id="resolve-use-merge")
+                yield Button("Save", id="resolve-save-btn", variant="success")
+                yield Button("Cancel", id="resolve-cancel-btn")
+
+    def result_text(self) -> str:
+        return self.query_one("#resolve-result", TextArea).text
+
+    def save(self) -> bool:
+        text = self.result_text()
+        ok = ConflictManager(self.db).resolve_with_content(self.conflict.id, text)
+        if not ok:
+            self.app.notify("This conflict was already resolved", severity="warning")
+        self.resolved = True
+        return ok
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        area = self.query_one("#resolve-result", TextArea)
+        v = self.versions
+        if event.button.id == "resolve-use-a":
+            area.text = (v.version_a.content if v.version_a else "") or ""
+        elif event.button.id == "resolve-use-b":
+            area.text = (v.version_b.content if v.version_b else "") or ""
+        elif event.button.id == "resolve-use-merge":
+            area.text = (v.merge.content if v.merge else "") or ""
+        elif event.button.id == "resolve-save-btn":
+            self.save()
+            self.dismiss(True)
+        elif event.button.id == "resolve-cancel-btn":
+            self.dismiss(False)
+
+    def action_close(self) -> None:
+        self.dismiss(False)
+
+
 class SearchInput(Input):
     """Search input that skips tab focus - use Up Arrow from list to access."""
 
@@ -559,6 +1157,9 @@ class TUIAudioPlayer(Container):
         self._transcription_counts: Dict[str, int] = {}
         self._update_interval: float = 0.1
         self._db: Optional[Database] = None
+        # Audio files not on this device, split by whether they can be fetched
+        self._missing_in_cloud: List[Dict[str, Any]] = []
+        self._missing_pending: List[Dict[str, Any]] = []
 
     def compose(self) -> ComposeResult:
         yield Static("No audio files", id="audio-waveform")
@@ -568,13 +1169,52 @@ class TUIAudioPlayer(Container):
             Button("⏪3", id="skip-3-btn"),
             Button("▶", id="play-btn"),
             Button("1x", id="speed-btn", disabled=True),
+            Button("⬇ Download", id="download-btn", variant="warning"),
             id="audio-controls"
         )
+        yield Static("", id="audio-missing-label", classes="media-missing")
         yield Static("", id="audio-files-label")
 
     def on_mount(self) -> None:
         """Start update timer when mounted."""
         self.set_interval(self._update_interval, self._update_display)
+        self.query_one("#download-btn", Button).display = False
+        self.query_one("#audio-missing-label", Static).display = False
+
+    def has_downloadable_media(self) -> bool:
+        """Whether some audio files of the current note can be fetched from the cloud."""
+        return bool(self._missing_in_cloud)
+
+    def _update_missing_media(self) -> None:
+        """Show the 'media missing' notice and Download button when appropriate."""
+        if not self.audiofile_directory:
+            self._missing_in_cloud, self._missing_pending = [], []
+        else:
+            missing = missing_audio_files(self._audio_files, self.audiofile_directory)
+            self._missing_in_cloud = missing[STATUS_IN_CLOUD]
+            self._missing_pending = missing[STATUS_PENDING]
+
+        label = self.query_one("#audio-missing-label", Static)
+        button = self.query_one("#download-btn", Button)
+        parts = []
+        if self._missing_in_cloud:
+            parts.append(
+                f"Media missing: {len(self._missing_in_cloud)} file(s) not on this device. "
+                "Press Download or 'd' to fetch from cloud storage."
+            )
+        if self._missing_pending:
+            parts.append(
+                f"{len(self._missing_pending)} file(s) not uploaded by their device yet."
+            )
+        label.update(" ".join(parts))
+        label.display = bool(parts)
+        button.display = bool(self._missing_in_cloud)
+
+    def set_downloading(self, downloading: bool) -> None:
+        """Reflect an in-progress download in the controls."""
+        button = self.query_one("#download-btn", Button)
+        button.disabled = downloading
+        button.label = "Downloading…" if downloading else "⬇ Download"
 
     def set_audio_files(
         self,
@@ -597,22 +1237,22 @@ class TUIAudioPlayer(Container):
 
         if not audio_files or not self.audiofile_directory:
             self.query_one("#audio-files-label", Static).update("No audio files")
+            self._update_missing_media()
             return
 
         # Build file paths and file display strings
+        manager = AudioFileManager(self.audiofile_directory)
         file_display = []
         for af in audio_files:
             audio_id = af.get("id", "")
             filename = af.get("filename", "")
             t_count = self._transcription_counts.get(audio_id, 0)
-            file_display.append(f"{filename} | T:{t_count}")
+            path = manager.get_record_path(af)
+            marker = "" if path.is_file() else " (missing)"
+            file_display.append(f"{filename}{marker} | T:{t_count}")
+            self._file_paths.append(path)
 
-            if "." in filename:
-                ext = filename.rsplit(".", 1)[-1].lower()
-                path = self.audiofile_directory / f"{audio_id}.{ext}"
-                self._file_paths.append(path)
-            else:
-                self._file_paths.append(Path())
+        self._update_missing_media()
 
         # Set files in player
         self._player.set_audio_files(self._file_paths)
@@ -705,8 +1345,8 @@ class TUITranscriptionBox(Container):
     def compose(self) -> ComposeResult:
         service = self._transcription.get("service", "Unknown")
         content = self._transcription.get("content", "")
-        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
-        created_at = format_timestamp(self._transcription.get("created_at"))
+        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_FLAGS)
+        created_at = format_timestamp(self._transcription.get("created_at"), self._transcription.get("created_at_offset"))
 
         # Preview text (first 100 chars)
         preview = content[:100].replace("\n", " ")
@@ -754,7 +1394,7 @@ class TUITranscriptionBox(Container):
     def _start_editing(self) -> None:
         """Start editing mode."""
         content = self._transcription.get("content", "")
-        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_STATE)
+        state = self._transcription.get("state", DEFAULT_TRANSCRIPTION_FLAGS)
 
         self._original_content = content
         self._original_state = state
@@ -1033,14 +1673,75 @@ class NoteDetail(Container, NoteEditorMixin):
     Inherits from NoteEditorMixin to share editing state logic with GUI.
     """
 
-    def __init__(self, db: Database, audiofile_directory: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        db: Database,
+        audiofile_directory: Optional[Path] = None,
+        config_dir: Optional[Path] = None,
+    ) -> None:
         super().__init__(id="note-detail")
         self.db = db
         self.audiofile_directory = audiofile_directory
+        self.config_dir = config_dir
         self.init_editor_state()  # Initialize mixin state
         self.is_rtl: bool = False
         self._audio_player: Optional[TUIAudioPlayer] = None
         self._transcriptions_container: Optional[TUITranscriptionsContainer] = None
+        self._downloading: bool = False
+
+    def action_download_media(self) -> None:
+        """Download the current note's missing audio files from cloud storage.
+
+        Runs in a worker thread so the UI stays responsive; the note is
+        reloaded when the download finishes.
+        """
+        note_id = self.current_note_id
+        if not note_id:
+            self.app.notify("Select a note first", severity="warning")
+            return
+        if not self.audiofile_directory:
+            self.app.notify("audiofile_directory is not configured", severity="error")
+            return
+        if self._downloading:
+            self.app.notify("A download is already running")
+            return
+        if self._audio_player is not None and not self._audio_player.has_downloadable_media():
+            self.app.notify("No media to download for this note")
+            return
+
+        self._downloading = True
+        if self._audio_player is not None:
+            self._audio_player.set_downloading(True)
+        self.app.notify("Downloading media from cloud storage…")
+        self.run_worker(
+            partial(self._download_media_blocking, note_id),
+            thread=True,
+            exclusive=True,
+            group="media-download",
+            name="media-download",
+        )
+
+    def _download_media_blocking(self, note_id: str) -> None:
+        """Worker thread body: download and report back on the UI thread."""
+        try:
+            result = download_audio_files_for_note(note_id, self.config_dir)
+            message = f"Media: {describe_download_result(result)}"
+            ok = result.failed == 0
+            if result.errors:
+                message += " — " + "; ".join(result.errors)
+        except Exception as e:  # noqa: BLE001 - surface any failure to the user
+            message = f"Download failed: {e}"
+            ok = False
+        self.app.call_from_thread(self._on_media_download_finished, note_id, message, ok)
+
+    def _on_media_download_finished(self, note_id: str, message: str, ok: bool) -> None:
+        """Back on the UI thread: reload the note so the player picks up the files."""
+        self._downloading = False
+        if self._audio_player is not None:
+            self._audio_player.set_downloading(False)
+        self.app.notify(message, severity="information" if ok else "error", timeout=8)
+        if self.current_note_id == note_id:
+            self.load_note(note_id)
 
     def compose(self) -> ComposeResult:
         yield Label("Select a note to view", id="note-header")
@@ -1063,6 +1764,9 @@ class NoteDetail(Container, NoteEditorMixin):
             Button("Tags", id="tags-btn"),
             Button("Save", id="save-btn", variant="success"),
             Button("Cancel", id="cancel-btn"),
+            Button("Accept merge", id="accept-conflict-btn", variant="warning"),
+            Button("Resolve…", id="resolve-conflict-btn", variant="error"),
+            Button("History", id="history-btn"),
             id="note-buttons"
         )
 
@@ -1074,6 +1778,8 @@ class NoteDetail(Container, NoteEditorMixin):
         self.query_one("#tui-transcriptions").display = False
         self.query_one("#tui-audio-player").display = False
         self.query_one("#note-conflict-warning").display = False
+        self.query_one("#accept-conflict-btn", Button).display = False
+        self.query_one("#resolve-conflict-btn", Button).display = False
 
     def load_note(self, note_id: str) -> None:
         """Load and display note details.
@@ -1088,7 +1794,7 @@ class NoteDetail(Container, NoteEditorMixin):
 
             # Update header
             header = self.query_one("#note-header", Label)
-            header_text = f"Note #{note['id']} | {format_timestamp(note['created_at'])} | Tags: {tags or 'None'}"
+            header_text = f"Note #{note['id']} | {format_timestamp(note['created_at'], note.get('created_at_offset'))} | Tags: {tags or 'None'}"
             if self.is_rtl:
                 header.update(make_rtl_text(header_text))
                 header.add_class("rtl")
@@ -1098,18 +1804,25 @@ class NoteDetail(Container, NoteEditorMixin):
 
             # Check for conflicts
             conflict_warning = self.query_one("#note-conflict-warning", Label)
+            accept_btn = self.query_one("#accept-conflict-btn", Button)
             try:
                 conflict_mgr = ConflictManager(self.db)
-                conflict_types = conflict_mgr.get_note_conflict_types(note_id)
-                if conflict_types:
-                    types_str = ", ".join(conflict_types)
-                    conflict_warning.update(f"WARNING: This note has unresolved {types_str} conflict(s)")
+                description = conflict_mgr.describe_note_conflicts(note_id)
+                resolve_btn = self.query_one("#resolve-conflict-btn", Button)
+                if description:
+                    conflict_warning.update(description)
                     conflict_warning.display = True
+                    accept_btn.display = True
+                    resolve_btn.display = any(c.kind == "text" for c in conflict_mgr.get_note_conflicts(note_id))
                 else:
                     conflict_warning.display = False
+                    accept_btn.display = False
+                    resolve_btn.display = False
             except Exception as e:
                 logger.warning(f"Error checking conflicts for note {note_id}: {e}")
                 conflict_warning.display = False
+                accept_btn.display = False
+                self.query_one("#resolve-conflict-btn", Button).display = False
 
             # Update attachments - displayed BELOW content per requirements
             attachments_label = self.query_one("#note-attachments", Label)
@@ -1151,10 +1864,17 @@ class NoteDetail(Container, NoteEditorMixin):
                             id_short = af.get("id", "")[:UUID_SHORT_LEN]
                             filename = af.get("filename", "unknown")
                             t_count = transcription_counts.get(af.get("id", ""), 0)
-                            imported_at = format_timestamp(af.get("imported_at")) or "unknown"
-                            file_created_at = format_timestamp(af.get("file_created_at")) or "unknown"
+                            imported_at = format_timestamp(af.get("imported_at"), af.get("imported_at_offset")) or "unknown"
+                            file_created_at = format_timestamp(af.get("file_created_at"), af.get("file_created_at_offset")) or "unknown"
+                            media = ""
+                            if self.audiofile_directory:
+                                status = audio_file_status(af, self.audiofile_directory)
+                                if status == STATUS_IN_CLOUD:
+                                    media = " | media missing (press 'd' to download)"
+                                elif status == STATUS_PENDING:
+                                    media = " | media missing (not uploaded yet)"
                             attachment_lines.append(
-                                f"  {id_short}... | {filename} | T:{t_count} | {imported_at} | {file_created_at}"
+                                f"  {id_short}... | {filename} | T:{t_count} | {imported_at} | {file_created_at}{media}"
                             )
                         attachments_text = f"Attachments ({len(audio_files)}):\n" + "\n".join(attachment_lines)
                         attachments_label.update(attachments_text)
@@ -1219,6 +1939,22 @@ class NoteDetail(Container, NoteEditorMixin):
         """Called after a note is saved. Show notification."""
         self.app.notify(f"Note saved!")
         # Refresh the view to show updated content
+        self.load_note(self.current_note_id)
+
+    def accept_conflicts(self) -> None:
+        """Accept the merged values of every conflict on the current note."""
+        if not self.current_note_id:
+            return
+        if self.editing:
+            self.app.notify("Save or cancel your edit first", severity="warning")
+            return
+        try:
+            n = ConflictManager(self.db).accept_note_conflicts(self.current_note_id)
+        except Exception as e:
+            logger.error(f"Failed to accept conflicts for note {self.current_note_id}: {e}")
+            self.app.notify(f"Could not accept merge: {e}", severity="error")
+            return
+        self.app.notify(f"Accepted merged value for {n} conflict(s)")
         self.load_note(self.current_note_id)
 
 
@@ -1307,7 +2043,8 @@ class VoiceTUI(App):
     }}
 
     #note-conflict-warning {{
-        height: 2;
+        height: auto;
+        min-height: 2;
         color: red;
         text-style: bold;
         padding: 0 1;
@@ -1406,6 +2143,12 @@ class VoiceTUI(App):
         align: center middle;
     }}
 
+    .media-missing {{
+        color: $warning;
+        text-style: bold;
+        margin: 0 0 1 0;
+    }}
+
     Button {{
         margin: 0 1;
     }}
@@ -1422,13 +2165,21 @@ class VoiceTUI(App):
         Binding("a", "show_all", "All Notes"),
         Binding("t", "manage_tags", "Tags"),
         Binding("m", "toggle_star", "Star"),
+        Binding("d", "download_media", "Download media"),
+        Binding("ctrl+t", "show_trash", "Trash"),
+        Binding("ctrl+f", "calculate_missing_data", "Calculate missing data"),
+        Binding("ctrl+k", "show_transcription_queue", "Transcription queue"),
     ]
 
     def compose(self) -> ComposeResult:
         yield TagsTree(self.db)
         yield NotesList(self.db)
         audiofile_directory = self.config.get("audiofile_directory")
-        yield NoteDetail(self.db, audiofile_directory=Path(audiofile_directory) if audiofile_directory else None)
+        yield NoteDetail(
+            self.db,
+            audiofile_directory=Path(audiofile_directory) if audiofile_directory else None,
+            config_dir=self.config.get_config_dir(),
+        )
         footer = Footer()
         footer.command_palette_key_display = "● ^p"
         yield footer
@@ -1489,6 +2240,74 @@ class VoiceTUI(App):
                 notes_list.refresh_notes()
         elif event.button.id == "cancel-btn":
             detail.cancel_editing()
+        elif event.button.id == "accept-conflict-btn":
+            detail.accept_conflicts()
+        elif event.button.id == "resolve-conflict-btn":
+            self._open_resolve_conflict()
+        elif event.button.id == "history-btn":
+            self._open_history()
+        elif event.button.id == "download-btn":
+            detail.action_download_media()
+
+    def action_download_media(self) -> None:
+        """Download missing media for the selected note from cloud storage."""
+        detail = self.query_one("#note-detail", NoteDetail)
+        detail.action_download_media()
+
+    def action_calculate_missing_data(self) -> None:
+        """Calculate what was never calculated: lengths, dates, display caches.
+
+        Reads the audio files, so it runs in a worker thread and reports what it
+        found when it is done. See `core.missing_data`.
+        """
+        from src.core import missing_data
+
+        survey = missing_data.survey(self.db, self.config)
+        if not survey.anything_missing:
+            self.notify("Nothing is missing.")
+            return
+        if not survey.total_calculable:
+            self.notify(
+                f"{survey.gaps[0].count} gap(s) cannot be calculated; see the manual.",
+                severity="warning",
+            )
+            return
+
+        self.notify(f"Calculating {survey.total_calculable} item(s)…")
+
+        def work() -> None:
+            report = missing_data.calculate_missing_data(self.db, self.config)
+            self.call_from_thread(self._missing_data_calculated, report)
+
+        self.run_worker(work, thread=True, exclusive=False)
+
+    def _missing_data_calculated(self, report) -> None:
+        """Say what was calculated, and show it."""
+        if report.total_calculated:
+            self.notify(f"Calculated {report.total_calculated} item(s)")
+            self.action_refresh()
+        else:
+            self.notify("Nothing could be calculated", severity="warning")
+
+    def action_show_transcription_queue(self) -> None:
+        """Open the transcription queue: what is waiting here and what it cost."""
+        self.push_screen(TranscriptionQueueScreen(self.db, self.config))
+
+    def action_show_trash(self) -> None:
+        """Open the trash bin: recover a deleted note, or remove it for good."""
+        audiofile_directory = self.config.get("audiofile_directory")
+
+        def finished(changed: Optional[bool]) -> None:
+            if changed:
+                self.action_refresh()
+
+        self.push_screen(
+            TrashScreen(
+                self.db,
+                Path(audiofile_directory) if audiofile_directory else None,
+            ),
+            finished,
+        )
 
     def action_refresh(self) -> None:
         """Refresh the notes list with current search."""
@@ -1537,6 +2356,45 @@ class VoiceTUI(App):
             )
         else:
             self.notify("Select a note first", severity="warning")
+
+    def _open_history(self) -> None:
+        """Open the version history of the current note."""
+        detail = self.query_one("#note-detail", NoteDetail)
+        if not detail.current_note_id:
+            self.notify("Select a note first", severity="warning")
+            return
+        if detail.editing:
+            self.notify("Save or cancel your edit first", severity="warning")
+            return
+        self.push_screen(HistoryScreen(self.db, detail.current_note_id), self._on_note_changed_in_screen)
+
+    def _open_resolve_conflict(self) -> None:
+        """Resolve the current note's text conflict side by side."""
+        detail = self.query_one("#note-detail", NoteDetail)
+        if not detail.current_note_id:
+            self.notify("Select a note first", severity="warning")
+            return
+        if detail.editing:
+            self.notify("Save or cancel your edit first", severity="warning")
+            return
+        conflicts = [c for c in ConflictManager(self.db).get_note_conflicts(detail.current_note_id) if c.kind == "text"]
+        if not conflicts:
+            self.notify("No text conflict on this note; use Accept merge or edit the note", severity="warning")
+            return
+        self.push_screen(ResolveConflictScreen(self.db, conflicts[0]), self._on_note_changed_in_screen)
+
+    def _on_note_changed_in_screen(self, changed: Optional[bool]) -> None:
+        """After a modal that may have written the note: reload it and the list."""
+        detail = self.query_one("#note-detail", NoteDetail)
+        if detail.current_note_id:
+            detail.load_note(detail.current_note_id)
+        if changed:
+            notes_list = self.query_one("#notes-list", NotesList)
+            search_text = notes_list.get_search_text()
+            if search_text:
+                notes_list.perform_search(search_text)
+            else:
+                notes_list.refresh_notes()
 
     def _on_tag_management_closed(self, result: None) -> None:
         """Called when tag management modal is closed."""
@@ -1633,6 +2491,7 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     db = Database(db_path)
+    reconcile_transcription_settings(config, db)
 
     # Create and run TUI app
     app = VoiceTUI(db, config)
