@@ -570,3 +570,19 @@ For CI/CD integration, add to your workflow:
 - Review and update tests when refactoring
 - Run full test suite before committing
 - Maintain >80% coverage for new code
+
+## Bugs that got past the tests
+
+`BUGS-THE-TESTS-MISSED.md` lists the bugs that shipped from code that had
+tests, why each test failed to catch its bug, and the sixteen rules that
+came out of them. Read it before writing tests for anything that syncs, that
+crosses a language boundary, or that can be interrupted.
+
+The short version:
+
+- The suite is green or it is broken; there is no list of known failures.
+- Never discard a `Result`, in tests least of all.
+- Assert what the operation produced, not that it did not crash.
+- Test the second one: the second transcription, delete, device, sync.
+- Fixture text is several Hebrew words, not one ASCII word.
+- Compute the expected value by hand; do not ask the code what it produced.

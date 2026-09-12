@@ -2,7 +2,7 @@
 
 Voice stores its configuration in a JSON file located at `~/.config/voice/config.json`. The configuration directory can be customized via the `--config-dir` CLI argument.
 
-See also: Quick reference in [README.md](../README.md#configuration)
+See also: Quick reference in [USER_MANUAL.md](../USER_MANUAL.md#configuration)
 
 ## Configuration File Location
 
@@ -178,6 +178,15 @@ Whether sync is enabled for this device.
 
 The port this device listens on when running as a sync server (`python -m src.main cli sync serve`). Other peers connect to this port to sync with this device.
 
+#### sync.mirror_audio_files
+
+**Type**: `boolean`
+**Default**: `false`
+
+When `true`, every sync also downloads every audio file that is in cloud storage but missing from this installation's `audiofile_directory`, so the installation holds a complete copy of all media (a backup of the cloud bucket). This is a local-only setting: it is never synced to other devices, and other devices are not aware of it. Intended for desktop and server installations; leave it off on phones. Change it with `python -m src.main cli storage mirror enable|disable`.
+
+When `false` (the default), audio files are downloaded only when the user asks for them (Download button in the GUI, TUI and Android app; `audiofile-download` / `note-audiofiles-download` on the CLI).
+
 #### sync.peers
 
 **Type**: `array` of peer objects
@@ -228,6 +237,23 @@ python -m src.main cli sync add-peer <id> "<name>" "<url>" --fingerprint "SHA256
 **Default**: `null`
 
 The fingerprint of this device's own TLS certificate, automatically set when the certificate is generated. This is informational and used internally.
+
+### Synced settings (stored in the database, not in config.json)
+
+A few settings are about the user rather than the machine and are shared with every device through sync:
+
+| Key | Value |
+|-----|-------|
+| `transcription.preferred_languages` | JSON list of ISO 639-1 codes, e.g. `["he", "en"]` |
+| `transcription.providers.<provider>.api_key` | API key of a cloud transcription provider |
+
+On startup the synced value overrides the matching entry under `transcription` in `config.json`; a value present only in `config.json` seeds the other devices. Paths, models, ports and colours never sync. Change a synced value with:
+
+```bash
+python -m src.main cli settings set transcription.preferred_languages '["he", "en"]'
+```
+
+When two devices change the same setting before syncing, the later value is kept and a conflict is recorded (`sync conflicts`).
 
 ## Example Complete Configuration
 
@@ -332,3 +358,17 @@ Configuration can be modified by:
 3. **Using CLI commands** - For sync peer management (recommended)
 
 The application validates configuration on load. If the JSON is malformed, default values will be used and a warning will be logged.
+
+## Transcribing long recordings (this machine only)
+
+Inside the `transcription` section of `config.json`, and never synced:
+
+| Key | Meaning |
+|-----|---------|
+| `transcribe_long_recordings` | Whether this machine transcribes Recordings the phone passed over. Default `false`. |
+| `long_recording_minutes` | The length past which a Recording is this machine's work. Default `10`, the phone's own limit. |
+
+Set them with `cli transcribe-backlog --enable` / `--disable`, or by editing
+`config.json`. They are deliberately local: whether a computer can transcribe a
+two-hour meeting is a fact about that computer. See
+`VoiceFamily/TECHNICAL-DECISIONS.md` §3.4.
