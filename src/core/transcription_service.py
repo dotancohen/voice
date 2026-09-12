@@ -725,15 +725,6 @@ class TranscriptionService:
 
         return None
 
-    def get_active_transcriptions(self) -> List[str]:
-        """Get list of active transcription IDs.
-
-        Returns:
-            List of transcription ID hex strings
-        """
-        with self._lock:
-            return list(self._active_tasks.keys())
-
     def wait_for(self, transcription_id: str, timeout: Optional[float] = None) -> bool:
         """Wait until that transcription has finished, one way or the other.
 
@@ -754,15 +745,3 @@ class TranscriptionService:
             with self._lock:
                 self._finished.pop(transcription_id, None)
         return finished
-
-    def is_transcribing(self, transcription_id: str) -> bool:
-        """Check if a transcription is still in progress.
-
-        Args:
-            transcription_id: Transcription UUID hex string
-
-        Returns:
-            True if transcription is in progress
-        """
-        with self._lock:
-            return transcription_id in self._active_tasks

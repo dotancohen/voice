@@ -63,15 +63,6 @@ def set_enabled(config, enabled: bool) -> None:
     config.set_transcription_config(tcfg)
 
 
-def set_minimum_minutes(config, minutes: int) -> None:
-    """Set the length past which a recording is transcribed here."""
-    if minutes <= 0:
-        raise ValueError("The minimum must be a positive number of minutes")
-    tcfg = config.get_transcription_config()
-    tcfg[KEY_MIN_MINUTES] = int(minutes)
-    config.set_transcription_config(tcfg)
-
-
 def is_finished_transcription(transcription: Dict[str, Any]) -> bool:
     """Whether a transcription row holds real text.
 

@@ -197,15 +197,24 @@ impl PyDatabase {
             .as_ref()
             .ok_or_else(|| DatabaseError::new_err("Database has been closed"))
     }
+
+    fn inner_mut(&mut self) -> PyResult<&mut database::Database> {
+        self.inner
+            .as_mut()
+            .ok_or_else(|| DatabaseError::new_err("Database has been closed"))
+    }
 }
 
 #[pymethods]
 impl PyDatabase {
     #[new]
-    #[pyo3(signature = (db_path=None))]
-    fn new(db_path: Option<&str>) -> PyResult<Self> {
+    #[pyo3(signature = (db_path=None, account_id=None))]
+    fn new(db_path: Option<&str>, account_id: Option<&str>) -> PyResult<Self> {
         let db = match db_path {
-            Some(path) => database::Database::new(path),
+            Some(path) => match account_id {
+                Some(account) => database::Database::new_for_account(path, account),
+                None => database::Database::new(path),
+            },
             None => database::Database::new_in_memory(),
         }
         .map_err(voice_error_to_pyerr)?;
@@ -498,6 +507,85 @@ impl PyDatabase {
     /// Identity of this database (changes when the database is replaced).
     fn database_id(&self) -> PyResult<String> {
         self.inner_ref()?.database_id().map_err(voice_error_to_pyerr)
+    }
+
+    /// The account this database belongs to (ACCT-1).
+    fn account_id(&self) -> PyResult<String> {
+        self.inner_ref()?.account_id().map_err(voice_error_to_pyerr)
+    }
+
+    /// Move this database, notes and all, to another account (ACCT-5): a
+    /// snapshot first, then the id is rewritten and every peer forgotten.
+    fn move_to_account(&self, account_id: &str) -> PyResult<()> {
+        self.inner_ref()?.move_to_account(account_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// Every device of the account, as its card says (CARD-1).
+    fn list_devices<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let cards = self.inner_ref()?.list_device_cards().map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for c in cards {
+            let d = PyDict::new(py);
+            d.set_item("device_id", c.device_id)?;
+            d.set_item("name", c.name)?;
+            d.set_item("certificate_fingerprint", c.certificate_fingerprint)?;
+            d.set_item("addresses", c.addresses)?;
+            d.set_item("listens", c.listens == "1")?;
+            d.set_item("revoked", c.revoked == "1")?;
+            d.set_item("application", c.application)?;
+            list.append(d)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    /// Let a device into the account: write its card with the hash of its
+    /// key. Pairing does this; tests do it directly.
+    #[pyo3(signature = (device_id, name, key_hash, certificate_fingerprint="", application="voice"))]
+    fn admit_device(&self, device_id: &str, name: &str, key_hash: &str, certificate_fingerprint: &str, application: &str) -> PyResult<()> {
+        let card = voicecore_lib::versions::DeviceCard {
+            device_id: device_id.to_string(),
+            name: name.to_string(),
+            certificate_fingerprint: certificate_fingerprint.to_string(),
+            addresses: String::new(),
+            listens: "0".to_string(),
+            key_hash: key_hash.to_string(),
+            revoked: "0".to_string(),
+            application: application.to_string(),
+        };
+        self.inner_ref()?.write_device_card(&card).map_err(voice_error_to_pyerr)
+    }
+
+    /// Revoke a device of the account (AUTH-6): one way, and it travels.
+    fn revoke_device(&self, device_id: &str) -> PyResult<()> {
+        self.inner_ref()?.revoke_device(device_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// Copy the database into its snapshot directory; returns the path.
+    fn snapshot(&self) -> PyResult<String> {
+        let path = self.inner_ref()?.snapshot().map_err(voice_error_to_pyerr)?;
+        Ok(path.to_string_lossy().to_string())
+    }
+
+    /// Every snapshot beside this database, newest first, as dicts with
+    /// name, path, size_bytes and note_count.
+    fn list_snapshots<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let snapshots = self.inner_ref()?.list_snapshots().map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for s in snapshots {
+            let d = PyDict::new(py);
+            d.set_item("name", s.name)?;
+            d.set_item("path", s.path)?;
+            d.set_item("size_bytes", s.size_bytes)?;
+            d.set_item("note_count", s.note_count)?;
+            list.append(d)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    /// Replace the database's contents with a snapshot's (SNAP-4); the
+    /// state replaced is snapshotted first.
+    fn restore_snapshot(&mut self, name: &str) -> PyResult<()> {
+        self.inner_mut()?.restore_snapshot(name).map_err(voice_error_to_pyerr)
     }
 
     fn get_full_dataset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
@@ -1398,6 +1486,12 @@ impl PyConfig {
         cfg.set_mirror_audio_files(enabled).map_err(voice_error_to_pyerr)
     }
 
+    /// This device's key for the account, or empty before one was made.
+    fn get_device_key(&self) -> PyResult<String> {
+        let cfg = self.inner.lock().unwrap();
+        Ok(cfg.device_key().to_string())
+    }
+
     #[pyo3(signature = (key, default=None))]
     fn get(&self, key: &str, default: Option<&str>) -> PyResult<Option<String>> {
         let cfg = self.inner.lock().unwrap();
@@ -1569,6 +1663,15 @@ pub struct PySyncResult {
     pushed: i64,
     #[pyo3(get)]
     conflicts: i64,
+    /// Recordings sent to the peer (deliver, exchange, send)
+    #[pyo3(get)]
+    sent: i64,
+    /// Recordings fetched from the peer (exchange, fetch)
+    #[pyo3(get)]
+    fetched: i64,
+    /// Bytes of recordings moved either way
+    #[pyo3(get)]
+    bytes_moved: u64,
     #[pyo3(get)]
     errors: Vec<String>,
     /// Non-fatal problems (e.g. cloud uploads that will be retried next sync)
@@ -1583,6 +1686,9 @@ impl From<sync_client::SyncResult> for PySyncResult {
             pulled: result.pulled,
             pushed: result.pushed,
             conflicts: result.conflicts,
+            sent: result.sent,
+            fetched: result.fetched,
+            bytes_moved: result.bytes_moved,
             errors: result.errors,
             warnings: result.warnings,
         }
@@ -1628,10 +1734,42 @@ impl PySyncClient {
         Ok(Self { inner, runtime })
     }
 
+    /// Join an account from a setup text (PAIR-4). Returns a dict with
+    /// account_id, peer_id, peer_name and peer_url.
+    fn join<'py>(&self, py: Python<'py>, setup_text: &str) -> PyResult<PyObject> {
+        let joined = self.runtime.block_on(self.inner.join(setup_text)).map_err(voice_error_to_pyerr)?;
+        let dict = PyDict::new(py);
+        dict.set_item("account_id", joined.account_id)?;
+        dict.set_item("peer_id", joined.peer_id)?;
+        dict.set_item("peer_name", joined.peer_name)?;
+        dict.set_item("peer_url", joined.peer_url)?;
+        Ok(dict.into_any().unbind())
+    }
+
     /// Perform full bidirectional sync with a peer
     fn sync_with_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
         let result = self.runtime.block_on(self.inner.sync_with_peer(peer_id));
         Ok(PySyncResult::from(result))
+    }
+
+    /// Deliver: sync, then send the recordings the peer lacks.
+    fn deliver(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.runtime.block_on(self.inner.deliver(peer_id))))
+    }
+
+    /// Exchange: sync, then send and fetch.
+    fn exchange(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.runtime.block_on(self.inner.exchange(peer_id))))
+    }
+
+    /// Send the recordings the peer lacks, without a sync.
+    fn send_to_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.runtime.block_on(self.inner.send_to_peer(peer_id))))
+    }
+
+    /// Fetch the recordings this device lacks from the peer, without a sync.
+    fn fetch_from_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.runtime.block_on(self.inner.fetch_from_peer(peer_id))))
     }
 
     /// Pull changes from a peer (one-way)
@@ -1662,12 +1800,12 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
-    /// Download an audio file from a peer
+    /// Fetch one recording from a peer
     /// Returns a dict with {"success": bool, "bytes": int} or {"success": false, "error": str}
-    fn download_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, dest_path: &str) -> PyResult<PyObject> {
+    fn fetch_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, dest_path: &str) -> PyResult<PyObject> {
         let dest = std::path::Path::new(dest_path);
         let result = self.runtime.block_on(
-            self.inner.download_audio_file(peer_url, audio_id, dest)
+            self.inner.fetch_audio_file(peer_url, audio_id, dest)
         );
         let dict = PyDict::new(py);
         match result {
@@ -1683,12 +1821,12 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
-    /// Upload an audio file to a peer
+    /// Send one recording to a peer
     /// Returns a dict with {"success": bool, "bytes": int} or {"success": false, "error": str}
-    fn upload_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, source_path: &str) -> PyResult<PyObject> {
+    fn send_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, source_path: &str) -> PyResult<PyObject> {
         let source = std::path::Path::new(source_path);
         let result = self.runtime.block_on(
-            self.inner.upload_audio_file(peer_url, audio_id, source)
+            self.inner.send_audio_file(peer_url, audio_id, source)
         );
         let dict = PyDict::new(py);
         match result {
@@ -1704,28 +1842,65 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
-    /// Debug method to see what changes would be pushed for a peer
-    #[pyo3(signature = (peer_id, since=None))]
-    fn debug_get_changes(&self, peer_id: &str, since: Option<i64>) -> PyResult<Vec<String>> {
-        // Get local last_sync for peer
-        let local_last_sync = self.inner.debug_get_local_last_sync(peer_id);
-        let effective_since = since.or(local_last_sync);
+}
 
-        // Get changes since that timestamp
-        let changes = self.inner.debug_get_changes_since(effective_since)
-            .map_err(voice_error_to_pyerr)?;
+/// Make sure this installation has a device key for its account and that
+/// its own card is in the database (AUTH-1). Called at every start.
+/// Returns the device id.
+/// Show a code (PAIR-1): make a token and return the setup text. `urls`
+/// are where this installation listens.
+#[pyfunction]
+#[pyo3(signature = (urls, config_dir=None))]
+fn pairing_offer(urls: Vec<String>, config_dir: Option<&str>) -> PyResult<String> {
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    let setup = voicecore_lib::pairing::offer(&db, &cfg, urls).map_err(voice_error_to_pyerr)?;
+    Ok(setup.to_text())
+}
 
-        // Return a summary of each change
-        let mut result = vec![
-            format!("local_last_sync for {}: {:?}", peer_id, local_last_sync),
-            format!("effective_since: {:?}", effective_since),
-            format!("changes found: {}", changes.len()),
-        ];
-        for c in changes.iter().take(5) {
-            result.push(format!("  {} {} {} ts={}", c.entity_type, c.operation, c.entity_id, c.timestamp));
-        }
-        Ok(result)
-    }
+/// Hide the code: withdraw the offer.
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn pairing_withdraw(config_dir: Option<&str>) -> PyResult<()> {
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    voicecore_lib::pairing::withdraw(&db).map_err(voice_error_to_pyerr)
+}
+
+/// Where a listener on this machine is reachable, for a code or a person.
+#[pyfunction]
+#[pyo3(signature = (port, host="0.0.0.0", plain_http=false))]
+fn listen_urls(port: u16, host: &str, plain_http: bool) -> Vec<String> {
+    sync_server::listen_urls(host, port, plain_http)
+}
+
+/// The hash a card holds for a device key (hex SHA-256).
+#[pyfunction]
+fn device_key_hash(key: &str) -> String {
+    voicecore_lib::auth::key_hash(key)
+}
+
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn ensure_own_device_card(config_dir: Option<&str>) -> PyResult<String> {
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let mut cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    let card = voicecore_lib::auth::ensure_own_device_card(&db, &mut cfg).map_err(voice_error_to_pyerr)?;
+    Ok(card.device_id)
+}
+
+/// The fingerprint of this installation's listener certificate, making the
+/// certificate if there is none yet. What another device pins.
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn certificate_fingerprint(config_dir: Option<&str>) -> PyResult<String> {
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let (_, _, fingerprint) = voicecore_lib::tls::ensure_server_certificate(&cfg, false).map_err(voice_error_to_pyerr)?;
+    Ok(fingerprint)
 }
 
 /// Sync with all configured peers
@@ -1956,16 +2131,18 @@ fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPend
 ///     verbose: Enable verbose logging to stdout (default: False)
 ///     ansi_colors: Enable ANSI color codes in log output (default: True)
 #[pyfunction]
-#[pyo3(signature = (config_dir=None, port=None, verbose=false, ansi_colors=true))]
+#[pyo3(signature = (config_dir=None, host="0.0.0.0", port=None, plain_http=false, verbose=false, ansi_colors=true))]
 fn start_sync_server(
     config_dir: Option<&str>,
+    host: &str,
     port: Option<u16>,
+    plain_http: bool,
     verbose: bool,
     ansi_colors: bool,
 ) -> PyResult<()> {
     // Initialize tracing subscriber for logging output only if verbose is enabled
     if verbose {
-        use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+        use tracing_subscriber::{fmt, EnvFilter};
         // Use EnvFilter to explicitly set DEBUG level for all targets
         // This overrides any RUST_LOG environment variable
         let filter = EnvFilter::new("debug");
@@ -1992,7 +2169,8 @@ fn start_sync_server(
     println!("Starting Rust sync server...");
     println!("  Device ID:   {}", cfg.device_id_hex());
     println!("  Device Name: {}", cfg.device_name());
-    println!("  Listening:   http://0.0.0.0:{}", server_port);
+    println!("  Listening:   {}://{}:{}", if plain_http { "http" } else { "https" }, host, server_port);
+    println!("  Account:     {}", db.account_id().unwrap_or_default());
     println!("  Endpoints:   /sync/status, /sync/changes, /sync/full, /sync/apply");
     if verbose {
         println!("  Logging:     enabled (verbose mode)");
@@ -2015,7 +2193,7 @@ fn start_sync_server(
         });
 
         // Run the server
-        sync_server::start_server(db_arc, config_arc, server_port).await
+        sync_server::start_server(db_arc, config_arc, host, server_port, plain_http).await
     }).map_err(voice_error_to_pyerr)?;
 
     Ok(())
@@ -2506,6 +2684,12 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register sync server functions
     m.add_function(wrap_pyfunction!(start_sync_server, m)?)?;
+    m.add_function(wrap_pyfunction!(ensure_own_device_card, m)?)?;
+    m.add_function(wrap_pyfunction!(certificate_fingerprint, m)?)?;
+    m.add_function(wrap_pyfunction!(device_key_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(pairing_offer, m)?)?;
+    m.add_function(wrap_pyfunction!(pairing_withdraw, m)?)?;
+    m.add_function(wrap_pyfunction!(listen_urls, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
     m.add_function(wrap_pyfunction!(apply_sync_changes, m)?)?;
 

@@ -46,6 +46,25 @@ Non-goals: real-time collaboration, per-character merging, peer-to-peer binary t
 | ID-2 | Loading the config installs the device id and name process-wide (`Config::new` calls `set_local_device_id` / `set_local_device_name`). Every version written afterwards carries them. |
 | ID-3 | The device id is set once per process (first wins). The device name follows the last config loaded. |
 | ID-4 | Peers are identified by their `device_id`; the URL is configuration, the id is identity. Renaming a device changes only the label on future versions. |
+| ACCT-1 | Every database belongs to one **account**, `sync_meta.account_id`: 32 hex characters minted with the database (a UUID7) and the same on every device of the account. It is the identity of the *data*; `device_id` is the identity of the *installation* and `database_id` (PROTO-9) of the *file*. The three are never confused: a differing `database_id` means "re-exchange everything", a differing `account_id` means "exchange nothing". |
+| ACCT-2 | The handshake request and response both carry `account_id`. A request that names none is refused (400, `ACCOUNT_MISSING`); one that names another account is refused (403, `ACCOUNT_MISMATCH`) with a sentence naming both, and nothing is exchanged. Every refusal carries a `code` beside its sentence. |
+| ACCT-3 | The caller checks the response the same way and refuses a peer of another account before pulling or pushing anything. The account a peer held at its last agreeing handshake is kept in `sync_peers.peer_account_id`, so the refusal can say that the device at a remembered address has changed. The handshake never adopts an account from the other side. |
+| ACCT-4 | A database is authoritative for its own account. `Database::new_for_account(path, id)` gives a fresh, unused database the id; a database that holds notes or has synced under another id is refused (`ACCOUNT_DISAGREES`), never corrected. |
+| CARD-1 | Every device of an account has a **card**: entity `device`, id = the device id, fields `name`, `certificate_fingerprint`, `addresses` (JSON list of the URLs it listens on), `listens`, `key_hash`, `revoked` and `application`. Each is a versioned field (DM-1) and travels in the feed, so every device of the account knows every other. The `devices` table is the denormalised copy. |
+| CARD-2 | A device writes its own card (`auth::ensure_own_device_card`, at every start), except `revoked`, which any device may set and none may clear: the `devices` column keeps `"1"` whatever version becomes the head afterwards, and the field's kind is Membership so concurrent writes settle on `"1"` too. A revoked device id stays revoked. |
+| AUTH-1 | Every device holds one **device key** per account: 32 random bytes as 43 base64url characters, made by `ensure_own_device_card` when the device created the account, or issued at pairing. It is held in clear only in that device's `config.json` (`sync.device_key`); every other device holds its hex SHA-256 in the card's `key_hash`. A key can never be listed; a lost one means revoke and pair again. |
+| AUTH-2 | The hash is plain SHA-256: the key has 256 bits of entropy, so a slow hash buys nothing. Hashes are compared in constant time. |
+| AUTH-3 | Every request but `GET /sync/status` carries `X-Account-ID`, `X-Device-ID` and `Authorization: Bearer <device key>`. The server refuses, in this order: an account it does not hold (404 `ACCOUNT_UNKNOWN`), a missing key or device (401 `KEY_MISSING`), a device with no card (401 `DEVICE_UNKNOWN`), a revoked card (401 `DEVICE_REVOKED`), a key that does not hash to the card (401 `KEY_WRONG`). A handshake whose body names another device than the headers is refused (400 `DEVICE_MISMATCH`). The key is never written to a log or an error. |
+| AUTH-4 | The two headers name the account and the device, so a server that hosts several accounts routes and authenticates in one step; today's server holds one account and refuses every other. |
+| AUTH-5 | After three refusals from one address, each further refusal is answered after a wait that doubles from one second to eight; a success clears the count; counts are forgotten after ten minutes and the table is emptied past ten thousand addresses. |
+| AUTH-6 | `revoke_device` marks a card revoked; every peer refuses the device once the card has reached it. `device list` and `device revoke <id>` on the command line. A revoked device still holds the bucket key, which reached it by sync; the command says so. |
+| AUTH-7 | **Certificate verification is never off.** A listener serves HTTPS with its own certificate (`certs/server.crt`, made if missing; its fingerprint is on its card). A caller verifies a peer with a pinned fingerprint against the fingerprint alone (a self-signed certificate has no root), and a peer without one against the system's root certificates. Plain `http://` is accepted only to a loopback address, and a listener serves plain http (`sync serve --plain-http`) only on a loopback address, for a reverse proxy in front or a test; both are refused elsewhere with `TLS_REQUIRED`. A wrong pin is `CERTIFICATE_MISMATCH`. |
+| PAIR-1 | A device that holds an account **shows a code**: a setup text `voice://pair?v=1&a=<account>&t=<token>&d=<device id>&u=<url,…>&f=<fingerprint>`, also drawn as a QR code. The fingerprint's 32 bytes travel as 43 base64url characters. Under 300 bytes. No lasting secret is in it. |
+| PAIR-2 | The **token** is 32 random bytes. Only its hash is kept, in the local `pairing_offers` table (never synced), with an expiry ten minutes on. One offer at a time: showing a code withdraws the previous one; hiding the code withdraws it; the first right token spends it; the fifth wrong token withdraws it. |
+| PAIR-3 | **Claim**: the reading device posts `/pair/claim` with the token, its device id, name, certificate fingerprint and addresses, over TLS pinned to the fingerprint in the text. The route sits outside the device-key middleware and is authenticated by the token alone; a wrong token is refused (403 `TOKEN_INVALID`) and counts against the address like any other refusal. On success the shower makes a device key for the reader, writes the reader's card with the key's hash, and replies with the account id, the key and its own card. |
+| PAIR-4 | The reading device refuses, before any network, a code for another account when it holds notes (`DEVICE_HOLDS_NOTES`), and says to show its own code to the other device instead. An empty device takes the account (through `move_to_account`), stores the key, writes the shower's card, adds the shower as a peer with the pinned fingerprint, and writes its own card. A reply naming another account than the code is refused (`ACCOUNT_MISMATCH`). |
+| PAIR-5 | **Grant**, for an empty device that cannot reach the holder (a server): the empty device shows a code and the holder posts to it. Designed; built with hosting. |
+| ACCT-5 | The only way a database changes account is `move_to_account`: a snapshot first (SNAP-1), the id rewritten, every peer forgotten so the next sync exchanges everything, the notes kept (their ids cannot collide). On the command line it is `account move --to <id> --current <id>`, where the current id must be typed in full. |
 
 Known limitation: a single process holds one identity, so tests that drive two databases in one process attribute both sides to the same device. See LIM-1.
 
@@ -94,7 +113,19 @@ The registry lives in `versions.rs` (`FIELD_REGISTRY`). Only these fields carry 
 | `sync_peers` | Known peers and last sync times. |
 | `sync_failures` | Changes that could not be applied, kept for retry. |
 
-### 3.3 Times and timezones
+### 3.3 Snapshots
+
+A copy of the database before anything that rewrites it in one step, so that
+a bad merge, a wrong move or a restore can be undone.
+
+| ID | Requirement |
+|----|-------------|
+| SNAP-1 | `Database::snapshot` copies the whole database with SQLite's backup API into `snapshots/` beside the file, named `notes-<UTC time>.db`. Readers are never blocked. An in-memory database has no snapshots and skips them silently. |
+| SNAP-2 | The newest `SNAPSHOTS_KEPT` (five) are kept; taking the sixth deletes the oldest. Recordings are not included: they are files and never rewritten by sync. |
+| SNAP-3 | A snapshot is taken before this device applies anything from a peer: on the caller's side before the first pull of a sync, and on the responder's side at the handshake that starts the caller's operation; and before `move_to_account` and before a restore. |
+| SNAP-4 | `restore_snapshot(name)` replaces the database's contents with the snapshot's through the same API, after snapshotting the state being replaced, so a restore is itself undoable. `account snapshots` lists them with their note counts; `account restore <name>` asks first. On the phone both are under Advanced settings. |
+
+### 3.4 Times and timezones
 
 Every timestamp is an `INTEGER` count of seconds since the Unix epoch: an
 instant, the same number on every device, which is what sync compares and
@@ -288,8 +319,8 @@ Transport: HTTP or HTTPS (self-signed certificate pinned on first use, "TOFU"). 
 
 | ID | Requirement |
 |----|-------------|
-| FLOW-1 | `sync_with_peer`: upload pending binaries → handshake → compare `database_id` with the stored one (PROTO-9) → note `local_end = current_seq()` → **pull** pages `cursor=<stored>` until `is_complete`, applying each page and saving `next_cursor` after it → mirror binaries if enabled → **push** pages of our changes with `last_sent_seq < seq <= local_end` until complete, saving the high-water mark after each accepted page → record peer sync time. |
-| FLOW-2 | Before every push, pending audio binaries are uploaded to cloud storage (FILE-2). |
+| FLOW-1 | `sync_with_peer`: handshake → compare `database_id` with the stored one (PROTO-9) → note `local_end = current_seq()` → **pull** pages `cursor=<stored>` until `is_complete`, applying each page and saving `next_cursor` after it → **push** pages of our changes with `last_sent_seq < seq <= local_end` until complete, saving the high-water mark after each accepted page → record peer sync time. A sync moves database changes only; no file moves in it. |
+| FLOW-2 | A sync never uploads, downloads, sends or fetches a file. Each of those is its own action the user starts (FILE-2). |
 | FLOW-3 | Pull-only and push-only variants exist and follow the same rules. |
 | FLOW-4 | `initial_sync` resets both cursors to zero and pages the peer's whole feed from the beginning, then pushes everything from zero; memory use is bounded by one page whatever the size of the database, and an interrupted initial sync resumes like any other. |
 | FLOW-5 | A sync interrupted between pages resumes from the last saved cursor; nothing is fetched or sent twice except the page in flight, which is idempotent. |
@@ -306,7 +337,7 @@ Transport: HTTP or HTTPS (self-signed certificate pinned on first use, "TOFU"). 
 | ID | Requirement |
 |----|-------------|
 | FILE-1 | Cloud storage configuration (provider, bucket, region/endpoint, key, secret, prefix) lives in `file_storage_config` and syncs to every device. The secret is distributed by sync (accepted risk; see IMP-9). |
-| FILE-2 | Before every push, the device uploads each audio file it imported (`storage_provider IS NULL AND deleted_at IS NULL` and the file is on this device). Records without a local file are skipped silently: they belong to another device. Upload failures are warnings and retried next sync. |
+| FILE-2 | **Upload** is an action of its own (`cli storage upload-pending`, the Upload button on the phone): the device uploads each audio file it imported (`storage_provider IS NULL AND deleted_at IS NULL` and the file is on this device). Records without a local file are skipped silently: they belong to another device. A failed upload is reported and tried again at the next upload. |
 | FILE-3 | After a successful upload the record gets `storage_provider`, `storage_key`, `storage_uploaded_at`; these sync as part of the `audio_file` row. |
 | FILE-4 | Other devices download a binary only when the user asks: CLI `audiofile-download` / `note-audiofiles-download`, TUI `d` / Download button, GUI Download button, Android Download button. |
 | FILE-5 | Desktop/server may set `sync.mirror_audio_files = true` (local config, never synced, never Android) to download every missing binary after each sync. |
@@ -315,6 +346,9 @@ Transport: HTTP or HTTPS (self-signed certificate pinned on first use, "TOFU"). 
 | FILE-8 | In a batch download, the first remote failure stops the batch (`deferred` count) so the rest is retried next time instead of timing out one by one. |
 | FILE-9 | Every incoming `audio_file` row is applied (DM-4): the cloud location (`storage_provider`, `storage_key`, `storage_uploaded_at`) is set once by the uploader, never erased by a row that has none (an echo, or a peer that edited the summary before receiving the upload), and only replaced by a newer row that has one (a re-upload). Skipping older rows, as before, left such a peer without the key and unable to download until the uploader changed the record again. |
 | FILE-10 | "Cloud storage not configured" is a silent no-op for automatic paths and a clear error for on-demand ones. |
+| FILE-12 | **Send** and **fetch** (the terms table) move a recording's bytes between two instances of the account, both directions streamed and never held in memory: `GET /sync/audio/:id/file` streams the file to a fetching peer, `POST /sync/audio/:id/file` streams a sent file into `<file>.part`. Before sending, `POST /sync/audio/missing` with the ids the sender holds answers with the ids the receiver lacks and how many bytes of each it already holds, so a thousand recordings cost one round trip. **Deliver** is sync then send; **exchange** is sync then send and fetch. A sync alone moves no file. |
+| FILE-13 | A transfer **resumes**: a fetch continues with `Range: bytes=N-` from the part's length, a send with `Content-Range: bytes N-M/total` from the bytes the missing list reported. The sender announces the whole file's hex SHA-256 in `X-File-SHA256`; the receiver verifies the assembled part against it before the rename, and a part that does not agree is deleted so the next attempt starts clean. |
+| FILE-14 | Timeouts are explicit: three seconds to connect on this machine or a private address, ten elsewhere; thirty seconds for a read to make progress; no overall timeout on a file. A transfer is tried three times with waits of one, two and four seconds; a refusal (4xx) is not retried; the metadata routes do not retry. The receiver refuses a file that would leave less than 64 MB free, naming both numbers. |
 | FILE-11 | The UI distinguishes "missing, in cloud" (offers Download) from "missing, not uploaded by its device yet" (no button). |
 | FILE-12 | rust-s3 ≥ 0.37 with webpki roots: TLS works on Android, which has no OS certificate directory. |
 
@@ -376,7 +410,7 @@ These should hold for any sequence of operations on any number of devices with a
 | PROTO-4, APPLY-2, APPLY-3 | `tests/sync/test_sync_validation.py`, `sync_server.rs::test_versions_failed_change_is_queued_and_retried`, `test_partial_batch_failure_continues_processing` |
 | PROTO-7 | `tests/sync/test_sync_pagination.py` |
 | APPLY-5, VER-4 | `tests/sync/test_sync_server.py::TestSyncApply` (row-only updates create conflicts) |
-| VER-7 | `sync_server.rs::test_versions_first_edit_of_a_field_is_stamped_with_its_time`, `tests/integration/test_sync_integration.py::test_deleted_note_in_changes` |
+| VER-7 | `sync_server.rs::test_versions_first_edit_of_a_field_is_stamped_with_its_time`, `tests/sync/test_sync_server.py::TestSyncChanges::test_changes_include_a_deleted_note` |
 | FILE-2..FILE-11 | `tests/unit/test_cloud_storage.py`, `tests/cli/test_cli_storage.py`, `tests/gui/test_note_pane_media.py`, `tests/tui/test_tui_media.py`, `tests/sync/test_audiofile_*.py`, `file_storage.rs` tests |
 | SET-1..SET-4 | `tests/unit/test_synced_settings.py`, `tests/unit/test_conflicts.py::TestSettingsSync`, `tests/sync/test_sync_cli.py::TestSettingsCLI` |
 | UI-1..UI-3 | `tests/gui/test_note_pane_conflicts.py`, `tests/tui/test_tui_conflicts.py` |
@@ -389,6 +423,11 @@ These should hold for any sequence of operations on any number of devices with a
 | FILE-9, DM-4 | `sync_server.rs`: `test_files_storage_key_reaches_peer_that_edited_summary_first`, `test_files_older_audio_row_never_erases_storage_key`, `test_older_transcription_row_does_not_overwrite_newer_service_response`, `test_transcription_state_toggle_keeps_service_metadata`, `test_older_attachment_row_does_not_move_attachment_back` |
 | UI-7, UI-8 | `tests/gui/test_note_pane_conflicts.py::TestNotePaneHistoryAndResolve`, `tests/tui/test_tui_conflicts.py::TestTuiHistoryAndResolve`, `tests/sync/test_sync_cli.py::TestNoteHistoryCLI` |
 | PROTO-1..PROTO-9 (Rust server end to end) | `tests/sync/test_sync_server.py` (`TestSyncHandshake`, `TestSyncApply` incl. row-without-version ignored), `tests/sync/test_sync_conflicts.py`, `tests/sync/test_sync_partial_failures.py` |
+| ACCT-1..ACCT-5 | `database.rs::tests::account_identity` (a fresh database takes the account, a used one refuses another, a move keeps the notes and forgets the peers); `sync_server.rs::tests::account_identity` (same account let in, another refused with its code, none refused, and `a_mismatched_pair_exchanges_nothing` over a real socket); `tests/sync/test_sync_accounts.py` |
+| FILE-12..14 | `transfer.rs` tests (parts, completion by length and hash, ranges, free space); `sync_server.rs::tests::files_between_instances` (exchange both ways and a second run moving nothing; deliver sends without fetching; a transfer continuing from a part in both directions with only the missing bytes on the wire; a corrupt part discarded and refetched; the missing list in one round trip) |
+| PAIR-1..4 | `pairing.rs` tests (round trip of the setup text, what a bad one says, the compact fingerprint, a token spent once / five guesses / expiry, a device with notes refusing, admission by token); `sync_server.rs::tests::pairing` (a claim over TLS pinned from the text, a spent token refused, sync afterwards both ways); `tests/sync/test_sync_pairing.py` (`account show-code` and `account join` between two nodes) |
+| CARD-1..2, AUTH-1..7 | `auth.rs` tests (key shape, constant-time compare, the order of checks, a revocation that cannot be undone, the own card made once); `sync_server.rs::tests::authentication` (the health check open and every other route refused without a key; a paired device syncs, an unpaired and a revoked one are refused; a wrong key and the growing delay; a handshake naming another device; TLS with the pin, a wrong pin, no pin; plain http refused off this machine, on both sides); `tests/sync/test_sync_accounts.py` |
+| SNAP-1..SNAP-4 | `database.rs::tests::snapshots` (five kept, a restore brings a note back and is itself undoable, a bad name refused); `tests/sync/test_sync_accounts.py::TestSnapshots` (a sync leaves a snapshot on both sides) |
 
 ---
 
@@ -428,7 +467,7 @@ These should hold for any sequence of operations on any number of devices with a
 | IMP-9 | Keep secrets out of the synced tables: distribute S3 credentials and API keys through a separately encrypted setting (a shared passphrase entered once per device), or through the OS keyring on desktop and Android Keystore. | LIM-9. |
 | IMP-10 | *(Done)* Protocol 1.1; row values are hints once a field has history (VER-4); a 1.0 peer fails the sync with a clear message (FLOW-7). | |
 | IMP-11 | Sync log table (per peer: time, pulled, pushed, conflicts, warnings) surfaced in `sync status` and the Android sync screen. | Offline-for-hours devices need a way to see what happened last time. |
-| IMP-12 | Background upload/download queue on Android with retry and Wi-Fi-only option. | Today uploads happen only during a sync the user starts. |
+| IMP-12 | Background upload/download queue on Android with retry and Wi-Fi-only option. | Today an upload happens only when the user presses Upload. |
 | IMP-13 | Make the tag parent a Membership-like field with cycle detection at merge time (a tag moved under its own descendant on another device). | A cross-device move can currently produce a cycle that the UI must guard against. |
 | IMP-14 | Peer-transfer plugin using the existing `/sync/audio/:id/file` endpoints, selected per installation, so devices on one LAN can exchange binaries without cloud storage. | Planned second plugin (LIM-10). |
 | IMP-15 | Register `audio_file.filename` and `duration_seconds` as versioned Scalars if they ever become user-editable. | Prevents newest-wins from creeping into user data (LIM-4). |

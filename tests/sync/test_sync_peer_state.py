@@ -19,10 +19,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
-from core.sync import get_peer_last_sync, update_peer_last_sync
+from tests.sync_support import get_peer_last_sync, update_peer_last_sync
 from voicecore import SyncClient
 
 from .conftest import (
+    AUTH,
+    admit_test_device,
+    auth_for,
+    ACCOUNT_ID,
     SyncNode,
     create_note_on_node,
     sync_nodes,
@@ -293,10 +297,12 @@ class TestPeerHandshakeTimestamps:
         # Now handshake should include last_sync
         response = requests.post(
             f"{node_b.url}/sync/handshake",
+            headers=auth_for(node_a),
             json={
                 "device_id": node_a.device_id_hex,
                 "device_name": "NodeA",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -310,12 +316,15 @@ class TestPeerHandshakeTimestamps:
         """Handshake returns null last_sync for new peer."""
         import requests
 
+        new_peer = "00000000000070008000000099999999"
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=admit_test_device(running_server_a, new_peer, "NewPeer"),
             json={
-                "device_id": "00000000000070008000000099999999",
+                "device_id": new_peer,
                 "device_name": "NewPeer",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )

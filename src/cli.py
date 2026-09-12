@@ -1345,6 +1345,226 @@ def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) 
     return 0 if errors == 0 else 1
 
 
+def cmd_device_list(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Every device of the account, as its card says."""
+    devices = db.list_devices()
+    own = config.get_device_id_hex()
+    if args.format == "json":
+        print(json.dumps(devices, indent=2))
+        return 0
+    if not devices:
+        print("No device cards yet.")
+        return 0
+    for card in devices:
+        marks = []
+        if card["device_id"] == own:
+            marks.append("this device")
+        if card["revoked"]:
+            marks.append("revoked")
+        if card["listens"]:
+            marks.append("listening")
+        suffix = f"  ({', '.join(marks)})" if marks else ""
+        print(f"{card['device_id']}  {card['name'] or '-'}  {card['application']}{suffix}")
+        if card["certificate_fingerprint"]:
+            print(f"    certificate {card['certificate_fingerprint']}")
+        if card["addresses"]:
+            print(f"    listens on {card['addresses']}")
+    return 0
+
+
+def cmd_device_revoke(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Revoke a device: its card says so, and every peer refuses it once told."""
+    matches = [c for c in db.list_devices() if c["device_id"].startswith(args.device_id)]
+    if not matches:
+        print(f"Error: No device starts with {args.device_id}. Run 'device list'.", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"Error: {len(matches)} devices start with {args.device_id}; give more of the id.", file=sys.stderr)
+        return 1
+    card = matches[0]
+    if card["device_id"] == config.get_device_id_hex():
+        print("Error: This is this device. Revoke it from another device of the account.", file=sys.stderr)
+        return 1
+    db.revoke_device(card["device_id"])
+    print(f"Revoked {card['name'] or card['device_id']}. Every peer refuses it once this has reached them.")
+    print("It still holds the bucket key, if one was configured; replace the key if that matters.")
+    return 0
+
+
+def cmd_account_show(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Show which account this database belongs to."""
+    notes = len(db.get_all_notes())
+    if args.format == "json":
+        print(json.dumps({
+            "account_id": db.account_id(),
+            "database_id": db.database_id(),
+            "config_dir": str(config.get_config_dir()),
+            "notes": notes,
+        }, indent=2))
+    else:
+        print(f"Account: {db.account_id()}")
+        print(f"Database: {db.database_id()}")
+        print(f"Directory: {config.get_config_dir()}")
+        print(f"Notes: {notes}")
+    return 0
+
+
+def _format_size(size_bytes: int) -> str:
+    """A size in the unit a person reads."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.0f} KB"
+    return f"{size_bytes} B"
+
+
+def cmd_account_show_code(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Show the code another device reads to join this account (PAIR-1)."""
+    from voicecore import listen_urls, pairing_offer
+
+    urls = getattr(args, "urls", None) or listen_urls(config.get_sync_server_port())
+    if not urls:
+        print("Error: This machine's address is not known; give it with --url.", file=sys.stderr)
+        return 1
+    text = pairing_offer(urls, str(config.get_config_dir()))
+    if args.format == "json":
+        print(json.dumps({"setup_text": text, "urls": urls}))
+        return 0
+    if not getattr(args, "text_only", False):
+        try:
+            import segno
+            segno.make(text, error="m").terminal(compact=True)
+        except ImportError:
+            print("(install segno to draw the QR code; the text below is the same code)")
+    print(text)
+    print()
+    print("Treat this like a password. It is valid for ten minutes and for one device;")
+    print("the listener must be running ('sync serve') for the other device to reach it.")
+    return 0
+
+
+def cmd_account_hide_code(config: Config, args: argparse.Namespace) -> int:
+    """Withdraw the code."""
+    from voicecore import pairing_withdraw
+    pairing_withdraw(str(config.get_config_dir()))
+    print("The code is withdrawn.")
+    return 0
+
+
+def cmd_account_join(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Join an account from a setup text (PAIR-4)."""
+    client = SyncClient(str(config.get_config_dir()))
+    try:
+        joined = client.join(args.setup_text)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps(joined))
+    else:
+        print(f"Joined account {joined['account_id']}.")
+        print(f"Peer: {joined['peer_name']} ({joined['peer_id']}) at {joined['peer_url']}")
+        print("Run 'sync now' to exchange notes.")
+    return 0
+
+
+def cmd_account_snapshots(db: Database, args: argparse.Namespace) -> int:
+    """List the snapshots beside the database, newest first."""
+    snapshots = db.list_snapshots()
+    if args.format == "json":
+        print(json.dumps(snapshots, indent=2))
+        return 0
+    if not snapshots:
+        print("No snapshots yet. One is taken before every sync, move and restore.")
+        return 0
+    for snap in snapshots:
+        print(f"{snap['name']}  {snap['note_count']} notes  {_format_size(snap['size_bytes'])}")
+    return 0
+
+
+def cmd_account_snapshot(db: Database, args: argparse.Namespace) -> int:
+    """Take a snapshot now."""
+    path = db.snapshot()
+    if args.format == "json":
+        print(json.dumps({"path": path}))
+    else:
+        print(f"Snapshot written: {path}")
+    return 0
+
+
+def cmd_account_restore(db: Database, args: argparse.Namespace) -> int:
+    """Replace the database with a snapshot, after a confirmation."""
+    names = [snap["name"] for snap in db.list_snapshots()]
+    if args.name not in names:
+        print(f"Error: No snapshot named {args.name}. Run 'account snapshots' to list them.", file=sys.stderr)
+        return 1
+    if not getattr(args, "yes", False):
+        answer = input(f"Replace the database with {args.name}? The current state is snapshotted first. [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Nothing changed.")
+            return 1
+    db.restore_snapshot(args.name)
+    print(f"Restored {args.name}. The state it replaced is the newest snapshot.")
+    return 0
+
+
+def cmd_account_move(db: Database, args: argparse.Namespace) -> int:
+    """Move the database to another account: the deliberate way to merge two accounts."""
+    current = db.account_id()
+    if args.current_account != current:
+        print(
+            f"Error: This database belongs to account {current}; the id typed was {args.current_account}. "
+            "Type the full current id to confirm the move.",
+            file=sys.stderr,
+        )
+        return 1
+    if args.to_account == current:
+        print("Error: That is already this database's account.", file=sys.stderr)
+        return 1
+    notes = len(db.get_all_notes())
+    db.move_to_account(args.to_account)
+    print(f"Moved {notes} notes from account {current} to {args.to_account}.")
+    print("Every peer was forgotten; the next sync exchanges everything. A snapshot was taken first.")
+    return 0
+
+
+def _peer_by_prefix(config: Config, prefix: str) -> Optional[Dict[str, Any]]:
+    matches = [p for p in config.get_peers() if p["peer_id"].startswith(prefix)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def cmd_sync_operation(config: Config, operation: str, args: argparse.Namespace) -> int:
+    """Deliver, exchange, send or fetch with one peer (the terms table)."""
+    peer = _peer_by_prefix(config, args.peer_id)
+    if peer is None:
+        print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
+        return 1
+    client = SyncClient(str(config.get_config_dir()))
+    result = getattr(client, {"deliver": "deliver", "exchange": "exchange", "send": "send_to_peer", "fetch": "fetch_from_peer"}[operation])(peer["peer_id"])
+    if args.format == "json":
+        print(json.dumps({"peer_id": peer["peer_id"], "operation": operation, **_sync_result_to_json(result)}, indent=2))
+        return 0 if result.success else 1
+    verb = operation.capitalize()
+    parts = []
+    if operation in ("deliver", "exchange"):
+        parts.append(f"received {result.pulled} changes, sent {result.pushed}")
+    if result.sent:
+        parts.append(f"sent {result.sent} recordings")
+    if result.fetched:
+        parts.append(f"fetched {result.fetched} recordings")
+    if result.bytes_moved:
+        parts.append(f"{result.bytes_moved / (1024 * 1024):.1f} MB moved")
+    sentence = ", ".join(parts) if parts else "nothing to move"
+    if result.success:
+        print(f"{verb} with {peer['peer_name']}: {sentence}.")
+    else:
+        print(f"{verb} with {peer['peer_name']} failed: {sentence}.")
+        for error in result.errors:
+            print(f"  - {error}")
+    _print_sync_warnings(result, "  ")
+    return 0 if result.success else 1
+
+
 def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Show sync status and device information.
 
@@ -1362,6 +1582,7 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
 
     if args.format == "json":
         status = {
+            "account_id": db.account_id(),
             "device_id": device_id,
             "device_name": device_name,
             "sync_enabled": sync_config.get("enabled", False),
@@ -1373,6 +1594,7 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
         status["conflicts"] = conflict_mgr.get_unresolved_count()
         print(json.dumps(status, indent=2))
     else:
+        print(f"Account: {db.account_id()}")
         print(f"Device ID: {device_id}")
         print(f"Device Name: {device_name}")
         print(f"Sync Enabled: {sync_config.get('enabled', False)}")
@@ -1595,6 +1817,9 @@ def _sync_result_to_json(result: Any) -> Dict[str, Any]:
         "pulled": result.pulled,
         "pushed": result.pushed,
         "conflicts": result.conflicts,
+        "sent": getattr(result, "sent", 0),
+        "fetched": getattr(result, "fetched", 0),
+        "bytes_moved": getattr(result, "bytes_moved", 0),
         "errors": result.errors,
         "warnings": list(getattr(result, "warnings", None) or []),
     }
@@ -2031,7 +2256,9 @@ def cmd_sync_serve(db: Database, config: Config, args: argparse.Namespace) -> in
     try:
         start_sync_server(
             config_dir=str(config.get_config_dir()),
+            host=getattr(args, 'host', '0.0.0.0'),
             port=port,
+            plain_http=getattr(args, 'plain_http', False),
             verbose=verbose,
             ansi_colors=not no_color
         )
@@ -3172,6 +3399,16 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Certificate fingerprint (optional, for pre-trusted peers)"
     )
 
+    # sync deliver / exchange / send / fetch: the file operations of the terms table
+    for name, help_text in [
+        ("deliver", "Sync, then send the recordings the peer lacks"),
+        ("exchange", "Sync, then send the recordings the peer lacks and fetch the ones this device lacks"),
+        ("send", "Send the recordings the peer lacks, without a sync"),
+        ("fetch", "Fetch the recordings this device lacks from the peer, without a sync"),
+    ]:
+        op_parser = sync_subparsers.add_parser(name, help=help_text)
+        op_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
+
     # sync remove-peer
     remove_peer_parser = sync_subparsers.add_parser("remove-peer", help="Remove a sync peer")
     remove_peer_parser.add_argument("peer_id", type=str, help="Peer device ID to remove")
@@ -3249,6 +3486,11 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "--no-color",
         action="store_true",
         help="Disable ANSI color codes in log output"
+    )
+    serve_parser.add_argument(
+        "--plain-http",
+        action="store_true",
+        help="Serve plain http instead of https. Allowed only on a loopback address: for a reverse proxy in front, or a test"
     )
 
     # sync reset-timestamps
@@ -3384,6 +3626,56 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Cloud file storage configuration for syncing audio files"
     )
     storage_subparsers = storage_parser.add_subparsers(dest="storage_command", help="Storage commands")
+
+    # device - the devices of the account, by their cards
+    device_parser = cli_subparsers.add_parser("device", help="The devices of the account")
+    device_subparsers = device_parser.add_subparsers(dest="device_command", help="Device commands")
+    device_subparsers.add_parser("list", help="Every device of the account, with its name, fingerprint and state")
+    device_revoke_parser = device_subparsers.add_parser(
+        "revoke",
+        help="Revoke a device: it is refused by every peer once the revocation has reached them. One way"
+    )
+    device_revoke_parser.add_argument("device_id", help="The device id, or a unique prefix of it")
+
+    # account - the account this installation holds, its snapshots
+    account_parser = cli_subparsers.add_parser(
+        "account",
+        help="The account this database belongs to, and its snapshots"
+    )
+    account_subparsers = account_parser.add_subparsers(dest="account_command", help="Account commands")
+    account_subparsers.add_parser("show", help="Show the account id and the database id")
+    show_code_parser = account_subparsers.add_parser(
+        "show-code",
+        help="Show the code another device reads to join this account: a QR code and the setup text. Valid ten minutes, once"
+    )
+    show_code_parser.add_argument(
+        "--url", action="append", dest="urls",
+        help="Where this installation's listener is reachable (default: https://<this host>:<port>). May repeat"
+    )
+    show_code_parser.add_argument("--text-only", action="store_true", help="Print the setup text without the QR code")
+    account_subparsers.add_parser("hide-code", help="Withdraw the code shown by show-code")
+    join_parser = account_subparsers.add_parser(
+        "join",
+        help="Join an account from a setup text shown by another device. Refused if this installation holds notes of another account"
+    )
+    join_parser.add_argument("setup_text", help="The setup text, as copied from the other device")
+    account_subparsers.add_parser("snapshots", help="List the snapshots beside the database, newest first")
+    account_subparsers.add_parser("snapshot", help="Take a snapshot of the database now")
+    account_restore_parser = account_subparsers.add_parser(
+        "restore",
+        help="Replace the database with a snapshot (the state replaced is snapshotted first)"
+    )
+    account_restore_parser.add_argument("name", help="Snapshot file name, as listed by 'account snapshots'")
+    account_restore_parser.add_argument("--yes", action="store_true", help="Do not ask for confirmation")
+    account_move_parser = account_subparsers.add_parser(
+        "move",
+        help="Move this database, notes and all, to another account. Deliberate: the current account id must be typed in full"
+    )
+    account_move_parser.add_argument("--to", required=True, dest="to_account", help="The account id to move to (32 hex characters)")
+    account_move_parser.add_argument(
+        "--current", required=True, dest="current_account",
+        help="The full id of the account being given up, typed by hand, as proof that this is meant"
+    )
 
     # storage status - show current configuration
     storage_subparsers.add_parser("status", help="Show current cloud storage configuration")
@@ -3538,6 +3830,42 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_config(config, args)
         elif args.cli_command == "settings":
             return cmd_settings(config, db, args)
+        elif args.cli_command == "device":
+            device_cmd = getattr(args, 'device_command', None)
+            if not device_cmd:
+                print("Error: No device command specified. Use 'device --help'.", file=sys.stderr)
+                return 1
+            if device_cmd == "list":
+                return cmd_device_list(db, config, args)
+            elif device_cmd == "revoke":
+                return cmd_device_revoke(db, config, args)
+            else:
+                print(f"Error: Unknown device command '{device_cmd}'", file=sys.stderr)
+                return 1
+        elif args.cli_command == "account":
+            account_cmd = getattr(args, 'account_command', None)
+            if not account_cmd:
+                print("Error: No account command specified. Use 'account --help'.", file=sys.stderr)
+                return 1
+            if account_cmd == "show":
+                return cmd_account_show(db, config, args)
+            elif account_cmd == "show-code":
+                return cmd_account_show_code(db, config, args)
+            elif account_cmd == "hide-code":
+                return cmd_account_hide_code(config, args)
+            elif account_cmd == "join":
+                return cmd_account_join(db, config, args)
+            elif account_cmd == "snapshots":
+                return cmd_account_snapshots(db, args)
+            elif account_cmd == "snapshot":
+                return cmd_account_snapshot(db, args)
+            elif account_cmd == "restore":
+                return cmd_account_restore(db, args)
+            elif account_cmd == "move":
+                return cmd_account_move(db, args)
+            else:
+                print(f"Error: Unknown account command '{account_cmd}'", file=sys.stderr)
+                return 1
         elif args.cli_command == "sync":
             # Handle sync subcommands
             sync_cmd = getattr(args, 'sync_command', None)
@@ -3554,6 +3882,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_sync_remove_peer(config, args)
             elif sync_cmd == "now":
                 return cmd_sync_now(db, config, args)
+            elif sync_cmd in ("deliver", "exchange", "send", "fetch"):
+                return cmd_sync_operation(config, sync_cmd, args)
             elif sync_cmd == "conflicts":
                 return cmd_sync_conflicts(db, args)
             elif sync_cmd == "resolve":

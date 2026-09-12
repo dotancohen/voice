@@ -695,8 +695,8 @@ python -m src.main cli sync serve
 
 On the instance designated as the client:
 ```bash
-# Add server as a peer
-python -m src.main cli sync add-peer <peer-device-id> "PeerName" http://<peer-ip>:8384
+# Add server as a peer, with the fingerprint its 'sync serve' printed
+python -m src.main cli sync add-peer <peer-device-id> "PeerName" https://<peer-ip>:8384 --fingerprint SHA256:...
 
 # Trigger sync
 python -m src.main cli sync now                                              # Sync with all configured peers
@@ -768,6 +768,88 @@ python -m src.main cli settings get transcription.preferred_languages
 python -m src.main cli settings set transcription.preferred_languages '["he", "en"]'
 python -m src.main cli settings set transcription.providers.assemblyai.api_key <key>
 ```
+
+### The account, and snapshots
+
+Every database belongs to one **account**, a 32-character id minted with it. Two
+devices exchange changes only when they hold the same account; a device of
+another account is refused with a sentence naming both, and nothing crosses.
+That is what keeps two people's notes apart when both reach the same server or
+the same address.
+
+```bash
+python -m src.main cli account show          # the account id, the database id, the note count
+python -m src.main cli account snapshots     # the copies kept beside the database, newest first
+python -m src.main cli account snapshot      # take a copy now
+python -m src.main cli account restore <name>   # replace the database with a copy (asks first)
+```
+
+A **snapshot** is a copy of the whole notes database, taken before every sync
+and before anything else that rewrites the database in one step. The newest
+five are kept in `snapshots/` beside the database. Restoring one brings the
+notes back as they were; the state being replaced is kept as the newest
+snapshot, so a restore can itself be undone. Recordings are files and are never
+part of a snapshot.
+
+Moving a database to another account is the one way two accounts are merged,
+and it is deliberate: `account move --to <id> --current <id>` proceeds only when
+the full id of the account being given up is typed by hand. A snapshot is taken
+first, and every peer is forgotten so the next sync exchanges everything.
+
+### Moving recordings between devices
+
+A sync moves notes, tags and the list of recordings, never a recording's
+bytes. The bytes move with these, each with one peer:
+
+```bash
+python -m src.main cli sync deliver <peer>    # sync, then send the recordings the peer lacks
+python -m src.main cli sync exchange <peer>   # sync, then send and fetch
+python -m src.main cli sync send <peer>       # send only, no sync
+python -m src.main cli sync fetch <peer>      # fetch only, no sync
+```
+
+A recording travels streamed, so an eight-hour file needs no memory to speak
+of, and a transfer that stops continues from where it stopped the next time.
+The receiver checks the file's hash before it accepts it, and refuses a file
+that would fill its disk.
+
+### Pairing a new device
+
+The device that holds the account shows a **code**; the new device reads it.
+Nothing lasting is in the code: a token that is valid for ten minutes and for
+one device, the account id, and where the showing device listens.
+
+```bash
+python -m src.main cli sync serve                  # the showing device must be listening
+python -m src.main cli account show-code           # a QR code and the setup text (add --url if the address is wrong)
+python -m src.main cli account hide-code           # withdraw the code before it expires
+python -m src.main cli account join "voice://pair?..."   # on the new device: paste the setup text
+```
+
+The new device takes the account, receives a key of its own, and adds the
+showing device as a peer with its certificate pinned. A device that already
+holds notes of another account refuses the code and says to show its own code
+to the other device instead.
+
+### Devices, keys and certificates
+
+Every device of an account has a **key** of its own, made when it created the
+account or given to it when it was paired. Every request to a peer carries it,
+and every peer holds only a hash of it, on the device's **card**, which travels
+with the notes. A device nobody has let in, or one that was revoked, is
+refused with a sentence and a code.
+
+```bash
+python -m src.main cli device list                # every device of the account, with its state
+python -m src.main cli device revoke <device-id>  # refuse a device everywhere, once the revocation has travelled
+```
+
+A listener serves **HTTPS** with its own certificate. A peer that was paired
+knows the certificate's fingerprint and accepts no other; a peer without a
+fingerprint is checked against the system's root certificates, as a public
+server behind a real certificate needs. Plain `http://` is accepted only to
+this machine itself. `sync serve --plain-http` serves plain http for a reverse
+proxy in front, and only on a loopback address.
 
 ### Sync Troubleshooting
 
@@ -959,11 +1041,11 @@ python -m src.main cli storage disable
 ### How It Works
 
 - Metadata (notes, tags, audio file records, transcriptions) syncs through the sync server as before. Audio binaries never do.
-- The device that imported an audio file uploads it to cloud storage before every push. Records that were imported on another device are left for that device to upload.
+- A sync never moves a recording. The device that imported a recording uploads it when you ask: `cli storage upload-pending` here, the Upload button on the phone. Records that were imported on another device are left for that device to upload.
 - Other devices download a file **only on demand**: the GUI and TUI show a "Media missing" notice with a Download button (the TUI also uses the `d` key), the CLI has `audiofile-download` and `note-audiofiles-download`, and the Android app shows a Download button on the note. Transcribing a missing file downloads it first.
 - Until the importing device has uploaded a file, other devices show it as "not uploaded by its device yet" and cannot fetch it.
 - The storage configuration (including the credentials) syncs to all connected devices. Configure it once, on any installation.
-- Sync keeps working while cloud storage is unreachable: uploads are reported as warnings and retried on the next sync, and after the first failure the remaining uploads are deferred instead of each waiting for a timeout.
+- Sync keeps working while cloud storage is unreachable, because it never touches it. An upload that fails is reported and tried again at the next upload, and after the first failure the remaining uploads are deferred instead of each waiting for a timeout.
 - Downloads are written to a temporary `.part` file, checked against the object size and only then renamed into place, so an interrupted download never leaves a broken file behind.
 
 ### Manual Upload and Download

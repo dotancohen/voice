@@ -65,11 +65,6 @@ class Config:
 
     # ===== Sync Configuration Methods =====
 
-    def get_device_id(self) -> bytes:
-        """Get the device ID as bytes."""
-        hex_id = self._rust_config.get_device_id_hex()
-        return uuid.UUID(hex=hex_id).bytes
-
     def get_device_id_hex(self) -> str:
         """Get the device ID as hex string."""
         return self._rust_config.get_device_id_hex()
@@ -93,6 +88,10 @@ class Config:
     def set_sync_enabled(self, enabled: bool) -> None:
         """Enable or disable sync."""
         self._rust_config.set_sync_enabled(enabled)
+
+    def get_device_key(self) -> str:
+        """This device's key for the account, or empty before one was made."""
+        return self._rust_config.get_device_key()
 
     def get_sync_server_port(self) -> int:
         """Get the sync server port."""
@@ -217,12 +216,3 @@ class Config:
             "device_name": self.get_device_name(),
             "sync": self.get_sync_config(),
         }
-
-    def load_config(self) -> Dict[str, Any]:
-        """Load configuration - returns config_data for compatibility."""
-        return self.config_data
-
-    def save_config(self, config: Dict[str, Any]) -> None:
-        """Save configuration - delegates to Rust for individual keys."""
-        # The Rust Config auto-saves, so this is a no-op
-        pass

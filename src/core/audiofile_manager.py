@@ -2,7 +2,6 @@
 
 This module handles file operations for audio files:
 - Importing audio files to the audiofile_directory
-- Soft-deleting files (moving to trash directory)
 - Getting file paths and metadata
 """
 
@@ -90,7 +89,6 @@ class AudioFileManager:
     """Manages audio file operations on disk.
 
     Audio files are stored as {audiofile_directory}/{uuid}.{extension}.
-    Deleted files are moved to {audiofile_directory}/_trash/.
     """
 
     def __init__(self, audiofile_directory: Path | str) -> None:
@@ -100,12 +98,10 @@ class AudioFileManager:
             audiofile_directory: Path to the directory where audio files are stored.
         """
         self.audiofile_directory = Path(audiofile_directory)
-        self.trash_directory = self.audiofile_directory / "_trash"
 
     def ensure_directories(self) -> None:
-        """Create the audiofile and trash directories if they don't exist."""
+        """Create the audiofile directory if it does not exist."""
         self.audiofile_directory.mkdir(parents=True, exist_ok=True)
-        self.trash_directory.mkdir(parents=True, exist_ok=True)
 
     def import_file(self, source: Path | str, audio_id: str, extension: str) -> Path:
         """Import an audio file to the audiofile directory.
@@ -137,44 +133,6 @@ class AudioFileManager:
         dest = self.audiofile_directory / f"{audio_id}.{ext_lower}"
         shutil.copy2(source, dest)
         return dest
-
-    def soft_delete(self, audio_id: str, extension: str) -> bool:
-        """Move an audio file to the trash directory.
-
-        Args:
-            audio_id: UUID of the audio file (hex string).
-            extension: File extension (without dot).
-
-        Returns:
-            True if the file was moved, False if it didn't exist.
-        """
-        source = self.audiofile_directory / f"{audio_id}.{extension.lower()}"
-        if not source.exists():
-            return False
-
-        self.trash_directory.mkdir(parents=True, exist_ok=True)
-        dest = self.trash_directory / source.name
-        shutil.move(str(source), str(dest))
-        return True
-
-    def restore_from_trash(self, audio_id: str, extension: str) -> bool:
-        """Restore an audio file from the trash directory.
-
-        Args:
-            audio_id: UUID of the audio file (hex string).
-            extension: File extension (without dot).
-
-        Returns:
-            True if the file was restored, False if it wasn't in trash.
-        """
-        source = self.trash_directory / f"{audio_id}.{extension.lower()}"
-        if not source.exists():
-            return False
-
-        self.audiofile_directory.mkdir(parents=True, exist_ok=True)
-        dest = self.audiofile_directory / source.name
-        shutil.move(str(source), str(dest))
-        return True
 
     def get_file_path(self, audio_id: str, extension: str) -> Optional[Path]:
         """Get the path to an audio file if it exists.
@@ -267,32 +225,6 @@ class AudioFileManager:
     def record_file_exists(self, audio_file: dict) -> bool:
         """Whether the binary for an audio file record is on this device."""
         return self.get_record_path(audio_file).is_file()
-
-    def file_exists(self, audio_id: str, extension: str) -> bool:
-        """Check if an audio file exists.
-
-        Args:
-            audio_id: UUID of the audio file (hex string).
-            extension: File extension (without dot).
-
-        Returns:
-            True if the file exists, False otherwise.
-        """
-        path = self.audiofile_directory / f"{audio_id}.{extension.lower()}"
-        return path.exists()
-
-    def is_in_trash(self, audio_id: str, extension: str) -> bool:
-        """Check if an audio file is in the trash directory.
-
-        Args:
-            audio_id: UUID of the audio file (hex string).
-            extension: File extension (without dot).
-
-        Returns:
-            True if the file is in trash, False otherwise.
-        """
-        path = self.trash_directory / f"{audio_id}.{extension.lower()}"
-        return path.exists()
 
 
 def is_supported_audio_format(filename: str) -> bool:

@@ -280,6 +280,10 @@ def main() -> NoReturn:
     from src.core.config import Config
     config = Config(config_dir=args.config_dir)
     setup_file_logging(config.get_config_dir())
+    # This installation's key for its account, and its own device card,
+    # made once and kept up to date with the device name (AUTH-1)
+    from voicecore import ensure_own_device_card
+    ensure_own_device_card(str(config.get_config_dir()))
 
     # Always say which configuration is in use, as the first line. Machine
     # formats keep stdout clean, so the line goes to stderr there.

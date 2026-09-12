@@ -19,10 +19,11 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
-from core.sync import get_changes_since
+from tests.sync_support import get_changes_since
 from voicecore import SyncClient
 
 from .conftest import (
+    AUTH,
     SyncNode,
     create_note_on_node,
     get_note_count,
@@ -42,6 +43,7 @@ class TestChangesEndpointPagination:
         # Request with small limit
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=5",
+            headers=AUTH,
             timeout=5,
         )
 
@@ -66,6 +68,7 @@ class TestChangesEndpointPagination:
         # Request with small limit
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=5",
+            headers=AUTH,
             timeout=5,
         )
 
@@ -85,6 +88,7 @@ class TestChangesEndpointPagination:
         # Request with large limit
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=1000",
+            headers=AUTH,
             timeout=5,
         )
 
@@ -107,6 +111,7 @@ class TestChangesEndpointPagination:
         # Get current timestamp
         response = requests.get(
             f"{running_server_a.url}/sync/changes",
+            headers=AUTH,
             timeout=5,
         )
         data = response.json()
@@ -121,6 +126,7 @@ class TestChangesEndpointPagination:
         if cutoff_time is not None:
             response = requests.get(
                 f"{running_server_a.url}/sync/changes?since={cutoff_time}",
+                headers=AUTH,
                 timeout=5,
             )
             data = response.json()
@@ -134,6 +140,7 @@ class TestChangesEndpointPagination:
 
         response = requests.get(
             f"{running_server_a.url}/sync/changes",
+            headers=AUTH,
             timeout=5,
         )
         data = response.json()
@@ -257,7 +264,7 @@ class TestFollowingPaginatedResults:
             if since:
                 url += f"&since={since}"
 
-            response = requests.get(url, timeout=5)
+            response = requests.get(url, headers=AUTH, timeout=5)
             data = response.json()
 
             new_changes = data["changes"]
@@ -300,7 +307,7 @@ class TestFollowingPaginatedResults:
             if since:
                 url += f"&since={since}"
 
-            response = requests.get(url, timeout=5)
+            response = requests.get(url, headers=AUTH, timeout=5)
             data = response.json()
 
             for change in data["changes"]:
@@ -381,6 +388,7 @@ class TestLimitBoundaries:
 
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=0",
+            headers=AUTH,
             timeout=5,
         )
 
@@ -394,6 +402,7 @@ class TestLimitBoundaries:
 
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=1",
+            headers=AUTH,
             timeout=5,
         )
 
@@ -409,6 +418,7 @@ class TestLimitBoundaries:
 
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=1000000",
+            headers=AUTH,
             timeout=5,
         )
 
@@ -421,6 +431,7 @@ class TestLimitBoundaries:
 
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=-1",
+            headers=AUTH,
             timeout=5,
         )
 

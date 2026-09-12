@@ -11,7 +11,17 @@ from __future__ import annotations
 
 import pytest
 
-from core.waveform import WAVEFORM_BAR_COUNT, WaveformAccumulator, _downsample_to_waveform
+from core.waveform import WAVEFORM_BAR_COUNT, WaveformAccumulator
+
+
+def _downsample_to_waveform(samples, bar_count):
+    """Feed samples that are already in memory to an accumulator in one go."""
+    if not samples:
+        return []
+    accumulator = WaveformAccumulator(bar_count)
+    accumulator.expect(len(samples))
+    accumulator.add_samples(samples)
+    return accumulator.bars()
 
 
 def test_an_hour_of_audio_gives_the_agreed_number_of_bars():

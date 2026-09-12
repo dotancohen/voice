@@ -23,9 +23,10 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
-from core.sync import SyncChange, apply_sync_changes
+from tests.sync_support import SyncChange, apply_sync_changes
 
 from .conftest import (
+    AUTH,
     SyncNode,
     create_note_on_node,
     get_note_count,
@@ -122,9 +123,8 @@ class TestMalformedJSON:
     def test_server_rejects_invalid_json(self, running_server_a: SyncNode):
         """Server rejects malformed JSON body."""
         response = requests.post(
-            f"{running_server_a.url}/sync/handshake",
-            data="not valid json {{{",
-            headers={"Content-Type": "application/json"},
+            f"{running_server_a.url}/sync/handshake",            data="not valid json {{{",
+            headers={**AUTH, "Content-Type": "application/json"},
             timeout=5,
         )
 
@@ -133,9 +133,8 @@ class TestMalformedJSON:
     def test_server_handles_empty_body(self, running_server_a: SyncNode):
         """Server handles empty request body."""
         response = requests.post(
-            f"{running_server_a.url}/sync/handshake",
-            data="",
-            headers={"Content-Type": "application/json"},
+            f"{running_server_a.url}/sync/handshake",            data="",
+            headers={**AUTH, "Content-Type": "application/json"},
             timeout=5,
         )
 
@@ -145,6 +144,7 @@ class TestMalformedJSON:
         """Server handles null JSON body."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json=None,
             timeout=5,
         )
@@ -155,6 +155,7 @@ class TestMalformedJSON:
         """Apply endpoint handles malformed changes array."""
         response = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000001",
                 "changes": "not an array",  # Should be array
@@ -320,6 +321,7 @@ class TestMissingRequiredFields:
         """Handshake without device_id returns error."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={"device_name": "Test"},  # Missing device_id
             timeout=5,
         )
@@ -330,6 +332,7 @@ class TestMissingRequiredFields:
         """Apply without device_id returns error."""
         response = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={"changes": []},  # Missing device_id
             timeout=5,
         )

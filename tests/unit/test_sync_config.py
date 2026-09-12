@@ -25,17 +25,17 @@ class TestDeviceId:
 
     def test_device_id_generated_on_first_access(self, sync_config: Config) -> None:
         """Device ID is generated when first accessed."""
-        device_id = sync_config.get_device_id()
+        device_id = sync_config.get_device_id_hex()
         assert device_id is not None
-        assert len(device_id) == 16  # UUID bytes
+        assert len(device_id) == 32  # UUID as hex
 
     def test_device_id_persists(self, sync_config: Config) -> None:
         """Device ID persists across config reloads."""
-        device_id_1 = sync_config.get_device_id()
+        device_id_1 = sync_config.get_device_id_hex()
 
         # Reload config
         sync_config_2 = Config(config_dir=sync_config.config_dir)
-        device_id_2 = sync_config_2.get_device_id()
+        device_id_2 = sync_config_2.get_device_id_hex()
 
         assert device_id_1 == device_id_2
 
@@ -45,12 +45,6 @@ class TestDeviceId:
         assert len(device_id_hex) == 32
         # Should be valid hex
         uuid.UUID(hex=device_id_hex)
-
-    def test_device_id_bytes_matches_hex(self, sync_config: Config) -> None:
-        """Device ID bytes matches hex string."""
-        device_id_bytes = sync_config.get_device_id()
-        device_id_hex = sync_config.get_device_id_hex()
-        assert uuid.UUID(bytes=device_id_bytes).hex == device_id_hex
 
 
 class TestDeviceName:

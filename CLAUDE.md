@@ -455,37 +455,37 @@ UPDATE audio_files SET modified_at = imported_at WHERE modified_at IS NULL;
 
 ### Adding New Syncable Entity Types
 
-When adding a new entity type that needs to sync between devices, you MUST update ALL of the following locations (and add the table to `migrate_add_sync_sequence` in `database.rs` so it gets a `seq` column and triggers, or it will never appear in the cursor feed):
+The rule is DM-1 in `SYNC_SPECIFICATION.md`. A new editable field, or a new
+entity, touches all of these, in the core:
 
-1. **`sync_server.rs` - `get_changes_since()`**: Add a query to fetch changes for the new entity type. Without this, the entity will never be sent to clients during sync.
+1. **`versions.rs` - `FIELD_REGISTRY`**: register every editable field with its
+   merge kind. A field written with plain SQL is a bug: writes go through
+   `set_field`, `set_deleted` and `init_field`, and `apply_head_to_entity`
+   copies the head into the entity row.
+2. **`database.rs` - `migrate_add_sync_sequence`**: give the table a `seq` column
+   and its triggers, or the entity never appears in the cursor feed.
+3. **`database.rs` - `get_changes_since`** and **`get_full_dataset`**: add the
+   entity's rows to the feed and to the whole-dataset document.
+4. **`sync_apply.rs` - `ALL_SYNC_ENTITY_TYPES`** and **`apply_changes`**: add the
+   type to the list and a match arm that applies it. The server's
+   `test_get_changes_since_returns_all_entity_types` fails if a listed type is
+   missing from the feed.
+5. **`android.rs`** and **`Voice/rust/voice-python/src/lib.rs`**: expose what the
+   applications need.
 
-2. **`sync_server.rs` - `apply_sync_changes()`**: Add a match arm to handle applying changes for the new entity type.
-
-3. **`sync_server.rs` - `get_full_dataset()`**: Add a query to include the entity in full sync responses.
-
-4. **`sync_server.rs` - `ALL_SYNC_ENTITY_TYPES` constant**: Add the entity type string to this list.
-
-5. **`sync_server.rs` - `test_get_changes_since_returns_all_entity_types`**: Add test data creation for the new entity type.
-
-6. **`sync_client.rs` - `apply_*_change()`**: Add a function to apply incoming changes for this entity type.
-
-7. **`database.rs`**: Add `apply_sync_<entity>()` method for applying sync changes.
-
-8. **`android.rs`** (if needed for Android): Expose any new methods via UniFFI bindings.
-
-9. **`lib.rs`** (Python bindings): Expose any new methods to Python.
-
-**Why this matters:** We had a bug where transcriptions were missing from `get_changes_since()`, causing transcription changes to never sync to clients. The `test_get_changes_since_returns_all_entity_types` test now catches this - it will fail if any entity type in `ALL_SYNC_ENTITY_TYPES` is not returned by `get_changes_since()`.
+**Why this matters:** transcriptions were once missing from the feed and never
+reached the other devices. The list and the test that walks it are what stop
+that from happening again.
 
 ### Audio File Binaries: Cloud Storage, On Demand
 
 Audio file *metadata* syncs like every other entity. The *binary* is handled by `file_storage.rs` and never by the sync server:
 
-- The device that imported a file uploads it to cloud storage before every push (`storage_provider IS NULL AND deleted_at IS NULL AND the file is on this device`). Records without a local file are skipped silently: they belong to another device. Upload failures are warnings, not sync errors, and are retried on the next sync.
+- A sync never moves a file (`TECHNICAL-DECISIONS.md` 4.5). The device that imported a file uploads it when the user presses Upload (`cli storage upload-pending`, the Upload button on the phone): every record with `storage_provider IS NULL AND deleted_at IS NULL` whose file is on this device. Records without a local file are skipped silently: they belong to another device. A failed upload is reported and tried again at the next upload.
 - Other devices download a binary only when the user asks (CLI `audiofile-download` / `note-audiofiles-download`, TUI `d` / Download button, GUI Download button, Android Download button), unless `sync.mirror_audio_files` is enabled in that installation's `config.json` (desktop/server only, never synced).
 - "Cloud storage not configured" is a silent no-op for the automatic paths and a clear error for the on-demand ones.
 - Downloads go to `<file>.part`, are size-verified against the object, then renamed. A crash never leaves a truncated file that looks present.
-- After the first remote failure in a batch the batch stops (`deferred` count); the rest is retried next sync instead of timing out one by one.
+- After the first remote failure in a batch the batch stops (`deferred` count); the rest is tried at the next upload instead of timing out one by one.
 - The on-disk and cloud object name is `{audio_id}.{ext}` where `ext` comes from `audio_file_extension()` (`models.rs`, mirrored by `audio_file_extension()` in `src/core/audiofile_manager.py`): lowercase, last dot wins, `bin` when there is no extension. Every platform must use these helpers; never derive the extension by hand.
 - Every incoming `audio_file` row is applied through one upsert that merges per column: the newer row wins a metadata column, an older row only fills in NULLs, the cloud location is never erased by a row without one and only replaced by a newer row that has one, and the versioned columns (summary, deletion) are never written from a row. Do not reintroduce "skip older rows": it left a peer that edited the summary first without the `storage_key`.
 - rust-s3 must stay at 0.37 or newer: older versions load TLS roots from the OS certificate directory, which Android does not have.

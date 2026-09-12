@@ -108,8 +108,13 @@ class TestSyncClientPull:
         # fixed number: adding a system tag must not fail this test.
         system_tags = [t for t in running_server_b.db.get_all_tags()
                        if t["name"].startswith("_")]
-        assert result["pulled"] == len(system_tags)
+        # ... and the device cards of the account (CARD-1), which travel too.
+        assert result["pulled"] >= len(system_tags)
         assert get_note_count(sync_node_a) == 0
+        sync_node_a.reload_db()
+        cards_on_b = {c["device_id"] for c in running_server_b.db.list_devices()}
+        cards_on_a = {c["device_id"] for c in sync_node_a.db.list_devices()}
+        assert cards_on_b <= cards_on_a, "every card the peer holds arrived"
         assert get_tag_count(sync_node_a) == 0
 
     def test_pull_notes_from_peer(
@@ -329,8 +334,7 @@ class TestSyncClientIdempotency:
     def test_sync_after_local_update(
         self, sync_node_a: SyncNode, running_server_b: SyncNode
     ):
-        """Syncing after local update doesn't revert changes."""
-        # Create note on B
+        """A local edit made after a sync survives the next sync."""
         note_id = create_note_on_node(running_server_b, "Original content")
 
         sync_node_a.config.add_peer(
@@ -339,66 +343,23 @@ class TestSyncClientIdempotency:
             peer_url=running_server_b.url,
         )
 
-        # First sync
         result1 = sync_nodes(sync_node_a, running_server_b)
-        print(f"DEBUG First sync result: {result1}")
-        sync_node_a.reload_db()  # Refresh view after sync
+        assert result1["success"], result1
+        sync_node_a.reload_db()
+        assert sync_node_a.db.get_note(note_id)["content"] == "Original content"
 
-        # Check A's local sync_peers record (using raw database query to see actual format)
-        from core.sync import get_peer_last_sync
-        local_last_sync = get_peer_last_sync(sync_node_a.db, running_server_b.device_id_hex)
-        print(f"DEBUG A's local last_sync for B (Python): {local_last_sync}")
-
-        # Check note on A after first sync
-        note_after_first = sync_node_a.db.get_note(note_id)
-        print(f"DEBUG Note on A after first sync: {note_after_first}")
-
-        # Wait for timestamp precision (timestamps are second-precision)
+        # Timestamps are second-precision
         time.sleep(1.1)
 
-        # Update locally on A
         set_local_device_id(sync_node_a.device_id)
         sync_node_a.db.update_note(note_id, "Updated on A")
-        sync_node_a.reload_db()  # Ensure changes are visible to other connections
+        sync_node_a.reload_db()
 
-        # Check note on A after update
-        note_after_update = sync_node_a.db.get_note(note_id)
-        print(f"DEBUG Note on A after update: {note_after_update}")
-
-        # Get raw note to see actual database format
-        note_raw = sync_node_a.db.get_note_raw(note_id)
-        print(f"DEBUG Note raw (database format): {note_raw}")
-
-        # Check what changes would be gathered via Python
-        from core.sync import get_changes_since
-        changes = get_changes_since(sync_node_a.db, local_last_sync)
-        print(f"DEBUG Python get_changes_since({local_last_sync}): {len(changes[0]) if changes else 0} changes")
-        if changes and changes[0]:
-            for c in changes[0][:3]:  # Show first 3
-                print(f"  Change: {c.entity_type} {c.operation} ts={c.timestamp}")
-
-        # Close and reopen the database to ensure all WAL changes are visible
-        sync_node_a.db.close()
-        time.sleep(0.1)  # Small delay for file system sync
-        from core.database import Database
-        sync_node_a.db = Database(sync_node_a.db_path)
-
-        # Debug: check what Rust SyncClient sees
-        from voicecore import SyncClient
-        debug_client = SyncClient(str(sync_node_a.config_dir))
-        debug_info = debug_client.debug_get_changes(running_server_b.device_id_hex, None)
-        print(f"DEBUG Rust SyncClient sees:")
-        for line in debug_info:
-            print(f"  {line}")
-
-        # Sync again - should not revert (A's update is newer)
         result2 = sync_nodes(sync_node_a, running_server_b)
-        print(f"DEBUG Second sync result: {result2}")
-        sync_node_a.reload_db()  # Refresh view after sync
+        assert result2["success"], result2
+        sync_node_a.reload_db()
 
-        note = sync_node_a.db.get_note(note_id)
-        print(f"DEBUG Note on A after second sync: {note}")
-        assert note["content"] == "Updated on A"
+        assert sync_node_a.db.get_note(note_id)["content"] == "Updated on A"
 
 
 class TestSyncClientFullSync:

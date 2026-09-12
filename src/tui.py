@@ -143,13 +143,6 @@ def make_rtl_text(text: str) -> RichText:
     return RichText(text)
 
 
-def format_rtl_block(text: str) -> str:
-    """Format a multi-line text block with proper RTL handling per line."""
-    lines = text.split('\n')
-    formatted_lines = [format_rtl(line) for line in lines]
-    return '\n'.join(formatted_lines)
-
-
 class TagsTree(Tree[Dict[str, Any]]):
     """Collapsible tags tree widget."""
 
@@ -1656,10 +1649,6 @@ class NotesList(Container):
         self.current_search = ""
         self.current_filter_tag = None
         self.refresh_notes()
-
-    def show_all_notes(self) -> None:
-        """Show all notes (clear filter and search)."""
-        self.clear_search()
 
 
 class NoteDetail(Container, NoteEditorMixin):

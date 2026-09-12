@@ -14,7 +14,7 @@ from typing import Generator
 
 import pytest
 
-from .conftest import SyncNode, create_sync_node, start_sync_server
+from .conftest import AUTH, SyncNode, create_sync_node, start_sync_server
 
 
 # Device IDs for testing
@@ -79,8 +79,9 @@ class TestSyncRejectsWithoutAudiofileDirectory:
         # Attempt upload
         url = f"{server.url}/sync/audio/{audio_id}/file"
         request = urllib.request.Request(url, data=b"audio content", method="POST")
+        for name, value in AUTH.items():
+            request.add_header(name, value)
         request.add_header("Content-Type", "application/octet-stream")
-        request.add_header("X-Device-ID", "test-client")
 
         # Server should return 400 error
         try:
@@ -171,6 +172,8 @@ class TestSyncRejectsWithoutAudiofileDirectory:
         # Attempt upload - should get error response
         url = f"{server.url}/sync/audio/{audio_id}/file"
         request = urllib.request.Request(url, data=b"audio content", method="POST")
+        for name, value in AUTH.items():
+            request.add_header(name, value)
         request.add_header("Content-Type", "application/octet-stream")
 
         try:
@@ -237,6 +240,8 @@ class TestSyncConfigValidationDuringHandshake:
         # Get status - should include audiofile capability
         url = f"{server.url}/sync/status"
         request = urllib.request.Request(url)
+        for name, value in AUTH.items():
+            request.add_header(name, value)
         response = urllib.request.urlopen(request, timeout=10)
         data = json.loads(response.read().decode())
 
@@ -260,6 +265,8 @@ class TestSyncConfigValidationDuringHandshake:
         # Check status endpoint - should indicate no audiofile support
         url = f"{server.url}/sync/status"
         request = urllib.request.Request(url)
+        for name, value in AUTH.items():
+            request.add_header(name, value)
         response = urllib.request.urlopen(request, timeout=10)
         data = json.loads(response.read().decode())
 

@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from core.database import set_local_device_id
 
 from .conftest import (
+    AUTH,
+    ACCOUNT_ID,
     SyncNode,
     create_note_on_node,
 )
@@ -33,10 +35,12 @@ class TestProtocolVersionHandshake:
         """Handshake response includes protocol version."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "TestClient",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -61,10 +65,12 @@ class TestProtocolVersionHandshake:
         """Handshake accepts matching protocol version."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "TestClient",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -75,6 +81,7 @@ class TestProtocolVersionHandshake:
         """Handshake requires protocol version."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "TestClient",
@@ -94,10 +101,12 @@ class TestProtocolVersionMismatch:
         """Server handles older client protocol version."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "OldClient",
                 "protocol_version": "0.9",  # Older version
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -110,10 +119,12 @@ class TestProtocolVersionMismatch:
         """Server handles newer client protocol version."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "NewClient",
                 "protocol_version": "2.0",  # Newer version
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -125,10 +136,12 @@ class TestProtocolVersionMismatch:
         """Server handles invalid protocol version format."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "BadClient",
                 "protocol_version": "not-a-version",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -160,10 +173,12 @@ class TestProtocolCompatibility:
         # Handshake
         handshake = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -179,6 +194,7 @@ class TestProtocolCompatibility:
         # Changes - no device_id required for simple GET
         changes = requests.get(
             f"{running_server_a.url}/sync/changes",
+            headers=AUTH,
             timeout=5,
         )
         assert changes.status_code == 200
@@ -186,6 +202,7 @@ class TestProtocolCompatibility:
         # Full
         full = requests.get(
             f"{running_server_a.url}/sync/full",
+            headers=AUTH,
             timeout=5,
         )
         assert full.status_code == 200
@@ -193,6 +210,7 @@ class TestProtocolCompatibility:
         # Apply
         apply_resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
@@ -224,10 +242,12 @@ class TestProtocolVersionDiscovery:
         """Client can discover server version via handshake."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -257,10 +277,12 @@ class TestProtocolVersionNegotiation:
         """Server responds with its own protocol version."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -277,10 +299,12 @@ class TestFutureProtocolVersion:
         """Server ignores unknown fields in handshake."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
                 "unknown_field": "should be ignored",
                 "future_feature": {"nested": "data"},
             },
@@ -296,6 +320,7 @@ class TestFutureProtocolVersion:
 
         response = requests.get(
             f"{running_server_a.url}/sync/changes",
+            headers=AUTH,
             timeout=5,
         )
 
@@ -306,6 +331,7 @@ class TestFutureProtocolVersion:
         """Apply handles unknown entity types gracefully."""
         response = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
@@ -338,10 +364,12 @@ class TestProtocolVersionEdgeCases:
         """Empty protocol version is handled."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
                 "protocol_version": "",
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -353,10 +381,12 @@ class TestProtocolVersionEdgeCases:
         """Null protocol version is handled."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
                 "protocol_version": None,
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )
@@ -368,10 +398,12 @@ class TestProtocolVersionEdgeCases:
         """Numeric protocol version is handled."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
                 "protocol_version": 1.0,  # Number instead of string
+                "account_id": ACCOUNT_ID,
             },
             timeout=5,
         )

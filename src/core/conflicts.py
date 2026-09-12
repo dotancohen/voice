@@ -288,9 +288,6 @@ class ConflictManager:
         """Kinds of unresolved conflict for a note (e.g. ["content", "tag"])."""
         return self.db.get_note_conflict_types(note_id)
 
-    def note_has_conflicts(self, note_id: str) -> bool:
-        return bool(self.get_note_conflict_types(note_id))
-
     def describe_note_conflicts(self, note_id: str) -> str:
         """Warning text for editors: kinds and the devices involved."""
         conflicts = self.get_note_conflicts(note_id)

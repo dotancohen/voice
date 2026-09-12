@@ -73,27 +73,6 @@ class Tag:
 
 
 @dataclass(frozen=True)
-class NoteTag:
-    """Represents the association between a note and a tag.
-
-    This is used for syncing note-tag relationships.
-
-    Attributes:
-        note_id: UUID7 of the note
-        tag_id: UUID7 of the tag
-        created_at: When the association was created
-        device_id: UUID7 of the device that created this association
-        deleted_at: When the association was removed (None if active)
-    """
-
-    note_id: bytes
-    tag_id: bytes
-    created_at: datetime
-    device_id: bytes
-    deleted_at: Optional[datetime] = None
-
-
-@dataclass(frozen=True)
 class NoteAttachment:
     """Represents the association between a note and an attachment.
 

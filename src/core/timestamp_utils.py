@@ -95,12 +95,3 @@ def datetime_to_timestamp(dt: Optional[datetime]) -> Optional[int]:
     if dt is None:
         return None
     return int(dt.timestamp())
-
-
-def current_timestamp() -> int:
-    """Get current time as Unix timestamp.
-
-    Returns:
-        Current Unix timestamp (seconds since epoch)
-    """
-    return int(datetime.now().timestamp())

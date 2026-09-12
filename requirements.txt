@@ -17,3 +17,6 @@ uuid6>=2024.1.12
 # credentials (src/core/transcription_service.py). It was installed but never
 # declared until 2026-09-11.
 cryptography>=42.0.0
+
+# QR codes for pairing (pure Python, draws to a terminal and to PNG)
+segno>=1.6.0

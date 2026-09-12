@@ -670,7 +670,7 @@ class TestAudioFileSyncIntegration:
 
         # Now upload the binary file
         sync_client = SyncClient(str(node_a.config_dir))
-        upload_result = sync_client.upload_audio_file(
+        upload_result = sync_client.send_audio_file(
             node_b.url, audio_id, str(audio_file_a)
         )
         assert upload_result["success"], f"Upload failed: {upload_result}"
@@ -762,7 +762,7 @@ class TestAudioFileSyncIntegration:
         audiodir_a = Path(node_a.config.get_audiofile_directory())
         audio_file_a = audiodir_a / f"{audio_id}.mp3"
 
-        download_result = sync_client.download_audio_file(
+        download_result = sync_client.fetch_audio_file(
             node_b.url, audio_id, str(audio_file_a)
         )
         assert download_result["success"], f"Download failed: {download_result}"

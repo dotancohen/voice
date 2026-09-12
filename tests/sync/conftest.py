@@ -35,6 +35,59 @@ from core.validation import uuid_to_hex
 
 
 # Test device IDs - unique per node
+# Every node a test creates belongs to this account unless it says otherwise,
+# because two devices of different accounts refuse each other (ACCT-2).
+ACCOUNT_ID = "0199aaaaaaaa7000800000000000000a"
+OTHER_ACCOUNT_ID = "0199bbbbbbbb7000800000000000000b"
+
+# A device the tests speak as when they call the server by hand: admitted
+# into every node at creation, so its headers open every node of a test.
+TEST_CLIENT_ID = "00000000000070008000000000000099"
+TEST_CLIENT_KEY = "test-client-key-that-is-not-secret-at-all-000"
+AUTH = {
+    "X-Account-ID": ACCOUNT_ID,
+    "X-Device-ID": TEST_CLIENT_ID,
+    "Authorization": f"Bearer {TEST_CLIENT_KEY}",
+}
+
+# Every node created in one test is admitted into every other, as pairing
+# will do it, so the nodes of a test can sync with each other.
+_nodes_of_this_test: List["SyncNode"] = []
+
+
+@pytest.fixture(autouse=True)
+def _forget_the_nodes_of_the_last_test():
+    _nodes_of_this_test.clear()
+    yield
+    _nodes_of_this_test.clear()
+
+
+def auth_for(node: "SyncNode") -> Dict[str, str]:
+    """The headers `node` sends: its account, its device id, its key."""
+    return {
+        "X-Account-ID": node.db.account_id(),
+        "X-Device-ID": node.device_id_hex,
+        "Authorization": f"Bearer {node.config.get_device_key()}",
+    }
+
+
+def admit_test_device(server: "SyncNode", device_id: str, name: str) -> Dict[str, str]:
+    """Let an ad-hoc device into `server`'s account and return its headers."""
+    from voicecore import device_key_hash
+    key = f"key-for-{device_id}"
+    server.db.admit_device(device_id, name, device_key_hash(key))
+    return {
+        "X-Account-ID": server.db.account_id(),
+        "X-Device-ID": device_id,
+        "Authorization": f"Bearer {key}",
+    }
+
+
+def admit(server: "SyncNode", caller: "SyncNode") -> None:
+    """Give `server` the caller's card, so the caller's key opens it."""
+    from voicecore import device_key_hash
+    server.db.admit_device(caller.device_id_hex, caller.name, device_key_hash(caller.config.get_device_key()))
+
 DEVICE_A_ID = uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes
 DEVICE_B_ID = uuid.UUID("00000000-0000-7000-8000-00000000000b").bytes
 DEVICE_C_ID = uuid.UUID("00000000-0000-7000-8000-00000000000c").bytes
@@ -131,6 +184,7 @@ def create_sync_node(
     device_id: bytes,
     base_dir: Path,
     port: Optional[int] = None,
+    account_id: str = ACCOUNT_ID,
 ) -> SyncNode:
     """Create a sync node with its own database and config.
 
@@ -151,8 +205,8 @@ def create_sync_node(
     # Set device ID before creating database
     set_local_device_id(device_id)
 
-    # Create database
-    db = Database(db_path)
+    # Create database, in the test's account
+    db = Database(db_path, account_id)
 
     # Create config
     config_data = {
@@ -172,7 +226,7 @@ def create_sync_node(
 
     config = Config(config_dir=config_dir)
 
-    return SyncNode(
+    node = SyncNode(
         name=name,
         device_id=device_id,
         config_dir=config_dir,
@@ -181,6 +235,19 @@ def create_sync_node(
         config=config,
         port=config_data["sync"]["server_port"],
     )
+
+    # This node's own key and card, the test client's card, and the cards
+    # of the other nodes of this test (and this node's card on theirs)
+    from voicecore import device_key_hash, ensure_own_device_card
+    ensure_own_device_card(str(config_dir))
+    node.config = Config(config_dir=config_dir)
+    node.db.admit_device(TEST_CLIENT_ID, "Test client", device_key_hash(TEST_CLIENT_KEY))
+    for other in _nodes_of_this_test:
+        if other.db.account_id() == node.db.account_id():
+            admit(node, other)
+            admit(other, node)
+    _nodes_of_this_test.append(node)
+    return node
 
 
 def start_sync_server(node: SyncNode) -> subprocess.Popen:
@@ -202,6 +269,7 @@ def start_sync_server(node: SyncNode) -> subprocess.Popen:
         "cli", "sync", "serve",
         "--host", "127.0.0.1",
         "--port", str(node.port),
+        "--plain-http",
     ]
 
     process = subprocess.Popen(

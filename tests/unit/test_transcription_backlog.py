@@ -58,20 +58,9 @@ def test_the_default_length_is_the_phones_own_limit():
     assert backlog.PHONE_LIMIT_MINUTES == 10
 
 
-def test_the_length_can_be_set_for_this_machine():
-    config = FakeConfig()
-    backlog.set_minimum_minutes(config, 30)
-    assert backlog.minimum_minutes(config) == 30
-
-
 @pytest.mark.parametrize("bad", ["", "lots", None, 0, -5])
 def test_a_nonsense_length_falls_back_to_the_phones_limit(bad):
     assert backlog.minimum_minutes(FakeConfig({"long_recording_minutes": bad})) == 10
-
-
-def test_setting_a_length_of_zero_is_refused():
-    with pytest.raises(ValueError):
-        backlog.set_minimum_minutes(FakeConfig(), 0)
 
 
 class TestWhatIsWaiting:

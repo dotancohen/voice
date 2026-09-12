@@ -12,10 +12,11 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
+import time
+
 import pytest
 
 from core.timestamp_utils import (
-    current_timestamp,
     datetime_to_timestamp,
     format_timestamp,
     local_timezone,
@@ -127,7 +128,7 @@ class TestThisComputersZone:
     def test_a_note_written_now_reads_the_same_here(self):
         """The round trip an application makes: stamp now, show it back."""
         offset, _ = local_timezone()
-        now = current_timestamp()
+        now = int(time.time())
         here = format_timestamp(now, offset)
         assert here == format_timestamp(now)
 

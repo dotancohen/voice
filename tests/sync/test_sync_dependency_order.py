@@ -19,7 +19,7 @@ class TestSyncDependencyOrder:
     ) -> None:
         """Test that note_attachment can sync even if it comes before its parents."""
         from core.database import Database, set_local_device_id
-        from core.sync import SyncChange, apply_sync_changes
+        from tests.sync_support import SyncChange, apply_sync_changes
 
         set_local_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")
@@ -96,7 +96,7 @@ class TestSyncDependencyOrder:
     ) -> None:
         """Test that note_tag can sync even if it comes before the tag."""
         from core.database import Database, set_local_device_id
-        from core.sync import SyncChange, apply_sync_changes
+        from tests.sync_support import SyncChange, apply_sync_changes
 
         set_local_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")

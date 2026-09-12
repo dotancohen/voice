@@ -27,23 +27,6 @@ class TestAudioFileManagerInit:
         manager = AudioFileManager(audio_dir)
 
         assert manager.audiofile_directory == audio_dir
-        assert manager.trash_directory == audio_dir / "_trash"
-
-    def test_trash_directory_is_inside_audiofile_directory(self, tmp_path: Path) -> None:
-        """Test that trash directory is a subdirectory of audiofile_directory.
-
-        This is a regression test for a bug where trash_directory was
-        incorrectly set to '{audiofile_directory}_trash' instead of
-        '{audiofile_directory}/_trash'.
-        """
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-
-        # Trash should be INSIDE audiofile_directory, not a sibling
-        assert manager.trash_directory.parent == audio_dir
-        assert manager.trash_directory.name == "_trash"
-        # Ensure it's not the old buggy behavior
-        assert manager.trash_directory != Path(f"{audio_dir}_trash")
 
     def test_initializes_with_string_path(self, tmp_path: Path) -> None:
         """Test initialization with string path."""
@@ -65,19 +48,6 @@ class TestEnsureDirectories:
 
         assert audio_dir.exists()
         assert audio_dir.is_dir()
-
-    def test_creates_trash_directory(self, tmp_path: Path) -> None:
-        """Test that trash directory is created inside audiofile_directory."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-
-        manager.ensure_directories()
-
-        trash_dir = audio_dir / "_trash"
-        assert trash_dir.exists()
-        assert trash_dir.is_dir()
-        # Ensure it's not the old buggy location
-        assert not Path(f"{audio_dir}_trash").exists()
 
 
 class TestImportFile:
@@ -149,80 +119,6 @@ class TestImportFile:
         dest = manager.import_file(source, audio_id, "MP3")
 
         assert dest.name == f"{audio_id}.mp3"
-
-
-class TestSoftDelete:
-    """Test soft_delete method."""
-
-    def test_moves_file_to_trash(self, tmp_path: Path) -> None:
-        """Test that file is moved to trash directory."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-        manager.ensure_directories()
-
-        # Create file in audiofiles
-        audio_id = "0123456789abcdef0123456789abcdef"
-        audio_file = audio_dir / f"{audio_id}.mp3"
-        audio_file.write_bytes(b"audio content")
-
-        result = manager.soft_delete(audio_id, "mp3")
-
-        assert result is True
-        assert not audio_file.exists()
-        assert (manager.trash_directory / f"{audio_id}.mp3").exists()
-
-    def test_returns_false_for_nonexistent_file(self, tmp_path: Path) -> None:
-        """Test that False is returned for non-existent file."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-
-        result = manager.soft_delete("nonexistent", "mp3")
-        assert result is False
-
-    def test_creates_trash_directory_if_needed(self, tmp_path: Path) -> None:
-        """Test that trash directory is created during delete."""
-        audio_dir = tmp_path / "audiofiles"
-        audio_dir.mkdir(parents=True)
-        manager = AudioFileManager(audio_dir)
-
-        audio_id = "0123456789abcdef0123456789abcdef"
-        audio_file = audio_dir / f"{audio_id}.mp3"
-        audio_file.write_bytes(b"audio")
-
-        manager.soft_delete(audio_id, "mp3")
-
-        assert manager.trash_directory.exists()
-
-
-class TestRestoreFromTrash:
-    """Test restore_from_trash method."""
-
-    def test_restores_file_from_trash(self, tmp_path: Path) -> None:
-        """Test restoring a file from trash."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-        manager.ensure_directories()
-
-        audio_id = "0123456789abcdef0123456789abcdef"
-
-        # Put file in trash
-        trash_file = manager.trash_directory / f"{audio_id}.mp3"
-        trash_file.write_bytes(b"audio content")
-
-        result = manager.restore_from_trash(audio_id, "mp3")
-
-        assert result is True
-        assert not trash_file.exists()
-        assert (audio_dir / f"{audio_id}.mp3").exists()
-
-    def test_returns_false_for_nonexistent_in_trash(self, tmp_path: Path) -> None:
-        """Test False returned when file not in trash."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-        manager.ensure_directories()
-
-        result = manager.restore_from_trash("nonexistent", "mp3")
-        assert result is False
 
 
 class TestGetFilePath:
@@ -304,50 +200,6 @@ class TestGetExtensionFromFilename:
 
         ext = manager.get_extension_from_filename("filename")
         assert ext is None
-
-
-class TestFileExists:
-    """Test file_exists method."""
-
-    def test_returns_true_if_exists(self, tmp_path: Path) -> None:
-        """Test True returned when file exists."""
-        audio_dir = tmp_path / "audiofiles"
-        audio_dir.mkdir(parents=True)
-        manager = AudioFileManager(audio_dir)
-
-        audio_id = "0123456789abcdef0123456789abcdef"
-        (audio_dir / f"{audio_id}.mp3").write_bytes(b"audio")
-
-        assert manager.file_exists(audio_id, "mp3") is True
-
-    def test_returns_false_if_not_exists(self, tmp_path: Path) -> None:
-        """Test False returned when file doesn't exist."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-
-        assert manager.file_exists("nonexistent", "mp3") is False
-
-
-class TestIsInTrash:
-    """Test is_in_trash method."""
-
-    def test_returns_true_if_in_trash(self, tmp_path: Path) -> None:
-        """Test True returned when file is in trash."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-        manager.ensure_directories()
-
-        audio_id = "0123456789abcdef0123456789abcdef"
-        (manager.trash_directory / f"{audio_id}.mp3").write_bytes(b"audio")
-
-        assert manager.is_in_trash(audio_id, "mp3") is True
-
-    def test_returns_false_if_not_in_trash(self, tmp_path: Path) -> None:
-        """Test False returned when file not in trash."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-
-        assert manager.is_in_trash("nonexistent", "mp3") is False
 
 
 class TestIsSupportedAudioFormat:

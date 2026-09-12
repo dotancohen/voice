@@ -1,6 +1,6 @@
 """Tests for sync server endpoints.
 
-Tests the Flask sync server endpoints:
+Run against the Rust server, started as a real process:
 - GET /sync/status
 - POST /sync/handshake
 - GET /sync/changes
@@ -18,6 +18,8 @@ import requests
 import uuid
 
 from .conftest import (
+    AUTH,
+    ACCOUNT_ID,
     SyncNode,
     create_note_on_node,
     create_tag_on_node,
@@ -54,10 +56,12 @@ class TestSyncHandshake:
         """Handshake exchanges device info successfully."""
         resp = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "TestClient",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
         )
 
@@ -71,9 +75,11 @@ class TestSyncHandshake:
         """Handshake fails without device_id."""
         resp = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_name": "TestClient",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
         )
 
@@ -84,10 +90,12 @@ class TestSyncHandshake:
         """Handshake fails with invalid device_id format."""
         resp = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": "not-a-valid-uuid",
                 "device_name": "TestClient",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
         )
 
@@ -97,9 +105,8 @@ class TestSyncHandshake:
     def test_handshake_empty_body(self, running_server_a: SyncNode):
         """Handshake fails with empty body."""
         resp = requests.post(
-            f"{running_server_a.url}/sync/handshake",
-            json=None,
-            headers={"Content-Type": "application/json"},
+            f"{running_server_a.url}/sync/handshake",            json=None,
+            headers={**AUTH, "Content-Type": "application/json"},
         )
 
         # Server returns 400 for empty body
@@ -112,10 +119,12 @@ class TestSyncHandshake:
         # First handshake
         resp1 = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": peer_id,
                 "device_name": "TestClient",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
         )
         assert resp1.status_code == 200
@@ -123,10 +132,12 @@ class TestSyncHandshake:
         # Second handshake should also succeed
         resp2 = requests.post(
             f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
             json={
                 "device_id": peer_id,
                 "device_name": "TestClient",
                 "protocol_version": "1.0",
+                "account_id": ACCOUNT_ID,
             },
         )
         assert resp2.status_code == 200
@@ -137,7 +148,7 @@ class TestSyncChanges:
 
     def test_changes_empty_database(self, running_server_a: SyncNode):
         """Changes endpoint returns empty list for empty database (except system tags)."""
-        resp = requests.get(f"{running_server_a.url}/sync/changes")
+        resp = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -151,6 +162,8 @@ class TestSyncChanges:
             c for c in data["changes"]
             if not (c["entity_type"] == "tag" and c["entity_id"] in system_tag_ids)
             and not (c["entity_type"] == "field_version" and c["data"]["entity_id"] in system_tag_ids)
+            # ... and the device cards of the account (CARD-1)
+            and not (c["entity_type"] == "field_version" and c["data"]["entity_type"] == "device")
         ]
         assert non_system_changes == []
         assert data["device_id"] == running_server_a.device_id_hex
@@ -161,7 +174,7 @@ class TestSyncChanges:
         # Create a note
         note_id = create_note_on_node(running_server_a, "Test note content")
 
-        resp = requests.get(f"{running_server_a.url}/sync/changes")
+        resp = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -179,7 +192,7 @@ class TestSyncChanges:
         # Create a tag
         tag_id = create_tag_on_node(running_server_a, "TestTag")
 
-        resp = requests.get(f"{running_server_a.url}/sync/changes")
+        resp = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -200,7 +213,7 @@ class TestSyncChanges:
         note_id_1 = create_note_on_node(running_server_a, "First note")
 
         # Get changes to get timestamp
-        resp1 = requests.get(f"{running_server_a.url}/sync/changes")
+        resp1 = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
         timestamp = resp1.json()["to_timestamp"]
 
         # Wait a full second (timestamps are second-precision)
@@ -210,6 +223,7 @@ class TestSyncChanges:
         # Get changes since first note
         resp2 = requests.get(
             f"{running_server_a.url}/sync/changes",
+            headers=AUTH,
             params={"since": timestamp},
         )
 
@@ -230,6 +244,7 @@ class TestSyncChanges:
 
         resp = requests.get(
             f"{running_server_a.url}/sync/changes",
+            headers=AUTH,
             params={"limit": 2},
         )
 
@@ -245,13 +260,37 @@ class TestSyncChanges:
         assert all(len(changes) <= 2 for changes in by_type.values())
         assert data["is_complete"] is False
 
+    def test_changes_include_a_deleted_note(self, running_server_a: SyncNode):
+        """A deleted note travels in the feed with its deleted_at (VER-7)."""
+        note_id = create_note_on_node(running_server_a, "To be deleted")
+        running_server_a.db.delete_note(note_id)
+
+        resp = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
+        assert resp.status_code == 200
+        changes = resp.json()["changes"]
+
+        note_changes = [c for c in changes if c["entity_type"] == "note" and c["entity_id"] == note_id]
+        assert [c for c in note_changes if c["data"].get("deleted_at")], "the deletion is missing from the feed"
+
+    def test_changes_keep_unicode_content(self, running_server_a: SyncNode):
+        """Content in several scripts arrives unchanged."""
+        unicode_content = "שלום 世界 🌍 مرحبا"
+        note_id = create_note_on_node(running_server_a, unicode_content)
+
+        resp = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
+        changes = resp.json()["changes"]
+
+        note_changes = [c for c in changes if c["entity_type"] == "note" and c["entity_id"] == note_id]
+        assert note_changes
+        assert note_changes[0]["data"]["content"] == unicode_content
+
     def test_changes_includes_hierarchy(self, running_server_a: SyncNode):
         """Changes endpoint includes tag hierarchy."""
         # Create parent and child tags
         parent_id = create_tag_on_node(running_server_a, "Parent")
         child_id = create_tag_on_node(running_server_a, "Child", parent_id)
 
-        resp = requests.get(f"{running_server_a.url}/sync/changes")
+        resp = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -270,6 +309,7 @@ class TestSyncApply:
 
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "RemoteDevice",
@@ -309,6 +349,7 @@ class TestSyncApply:
 
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "RemoteDevice",
@@ -397,6 +438,7 @@ class TestSyncApply:
 
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={"device_id": remote, "device_name": "RemoteDevice", "changes": changes},
         )
 
@@ -418,6 +460,7 @@ class TestSyncApply:
 
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "RemoteDevice",
@@ -453,6 +496,7 @@ class TestSyncApply:
 
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={"device_id": remote, "device_name": "RemoteDevice", "changes": changes},
         )
 
@@ -464,6 +508,7 @@ class TestSyncApply:
         """Apply endpoint fails without device_id."""
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "changes": [],
             },
@@ -476,6 +521,7 @@ class TestSyncApply:
         """Apply endpoint handles empty changes list."""
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "RemoteDevice",
@@ -492,6 +538,7 @@ class TestSyncApply:
         """Apply endpoint handles multiple changes in one request."""
         resp = requests.post(
             f"{running_server_a.url}/sync/apply",
+            headers=AUTH,
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "RemoteDevice",
@@ -538,7 +585,7 @@ class TestSyncFull:
 
     def test_full_empty_database(self, running_server_a: SyncNode):
         """Full endpoint returns empty lists for empty database (except system tags)."""
-        resp = requests.get(f"{running_server_a.url}/sync/full")
+        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -558,7 +605,7 @@ class TestSyncFull:
             note_id = create_note_on_node(running_server_a, f"Note {i}")
             note_ids.append(note_id)
 
-        resp = requests.get(f"{running_server_a.url}/sync/full")
+        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -573,7 +620,7 @@ class TestSyncFull:
         parent_id = create_tag_on_node(running_server_a, "Parent")
         child_id = create_tag_on_node(running_server_a, "Child", parent_id)
 
-        resp = requests.get(f"{running_server_a.url}/sync/full")
+        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -591,7 +638,7 @@ class TestSyncFull:
         note_id = create_note_on_node(running_server_a, "To be deleted")
         running_server_a.db.delete_note(note_id)
 
-        resp = requests.get(f"{running_server_a.url}/sync/full")
+        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -607,25 +654,24 @@ class TestSyncErrorHandling:
 
     def test_invalid_endpoint(self, running_server_a: SyncNode):
         """Invalid endpoint returns 404."""
-        resp = requests.get(f"{running_server_a.url}/sync/nonexistent")
+        resp = requests.get(f"{running_server_a.url}/sync/nonexistent", headers=AUTH)
         assert resp.status_code == 404
 
     def test_wrong_method_handshake(self, running_server_a: SyncNode):
         """Handshake with GET returns 405."""
-        resp = requests.get(f"{running_server_a.url}/sync/handshake")
+        resp = requests.get(f"{running_server_a.url}/sync/handshake", headers=AUTH)
         assert resp.status_code == 405
 
     def test_wrong_method_apply(self, running_server_a: SyncNode):
         """Apply with GET returns 405."""
-        resp = requests.get(f"{running_server_a.url}/sync/apply")
+        resp = requests.get(f"{running_server_a.url}/sync/apply", headers=AUTH)
         assert resp.status_code == 405
 
     def test_malformed_json(self, running_server_a: SyncNode):
         """Malformed JSON returns 400."""
         resp = requests.post(
-            f"{running_server_a.url}/sync/handshake",
-            data="not valid json",
-            headers={"Content-Type": "application/json"},
+            f"{running_server_a.url}/sync/handshake",            data="not valid json",
+            headers={**AUTH, "Content-Type": "application/json"},
         )
         # Flask may return 400 or 500 for malformed JSON
         assert resp.status_code in (400, 500)

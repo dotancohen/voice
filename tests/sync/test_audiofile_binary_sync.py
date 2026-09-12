@@ -18,7 +18,7 @@ from typing import Generator
 
 import pytest
 
-from .conftest import SyncNode, create_sync_node, start_sync_server
+from .conftest import AUTH, SyncNode, create_sync_node, start_sync_server
 
 # Test audio file path
 TEST_AUDIO_FILE = Path(__file__).parent.parent / "audiofile-sync-test.ogg"
@@ -114,7 +114,7 @@ class TestClientUploadToServer:
         # Create sync client and upload
         sync_client = SyncClient(str(client.config_dir))
 
-        result = sync_client.upload_audio_file(server.url, audio_id, str(client_file))
+        result = sync_client.send_audio_file(server.url, audio_id, str(client_file))
 
         assert result["success"], f"Upload failed: {result.get('error')}"
 
@@ -174,7 +174,7 @@ class TestClientDownloadFromServer:
         client_audiofile_dir = Path(client.config.get_audiofile_directory())
         client_file = client_audiofile_dir / f"{audio_id}.ogg"
 
-        result = sync_client.download_audio_file(server.url, audio_id, str(client_file))
+        result = sync_client.fetch_audio_file(server.url, audio_id, str(client_file))
 
         assert result["success"], f"Download failed: {result.get('error')}"
 
@@ -234,9 +234,13 @@ class TestServerReceivesUpload:
         url = f"{server.url}/sync/audio/{audio_id}/file"
 
         request = urllib.request.Request(url, data=test_audio_content, method="POST")
+
+        for name, value in AUTH.items():
+
+            request.add_header(name, value)
         request.add_header("Content-Type", "application/octet-stream")
-        request.add_header("X-Device-ID", "test-device")
-        request.add_header("X-Device-Name", "Test Device")
+        for name, value in AUTH.items():
+            request.add_header(name, value)
 
         response = urllib.request.urlopen(request, timeout=10)
         assert response.status == 200
@@ -301,8 +305,8 @@ class TestServerServesDownload:
         url = f"{server.url}/sync/audio/{audio_id}/file"
 
         request = urllib.request.Request(url, method="GET")
-        request.add_header("X-Device-ID", "test-device")
-        request.add_header("X-Device-Name", "Test Device")
+        for name, value in AUTH.items():
+            request.add_header(name, value)
 
         response = urllib.request.urlopen(request, timeout=10)
         content = response.read()
@@ -351,12 +355,12 @@ class TestBinarySyncRoundTrip:
         # Upload to server
         sync_client = SyncClient(str(client.config_dir))
 
-        upload_result = sync_client.upload_audio_file(server.url, audio_id, str(original_file))
+        upload_result = sync_client.send_audio_file(server.url, audio_id, str(original_file))
         assert upload_result["success"], f"Upload failed: {upload_result.get('error')}"
 
         # Download to different location
         downloaded_file = client_audiofile_dir / f"{audio_id}_downloaded.ogg"
-        download_result = sync_client.download_audio_file(server.url, audio_id, str(downloaded_file))
+        download_result = sync_client.fetch_audio_file(server.url, audio_id, str(downloaded_file))
         assert download_result["success"], f"Download failed: {download_result.get('error')}"
 
         # After round-trip, content should be identical

@@ -435,14 +435,6 @@ class TranscriptionsContainer(QWidget):
 
         self._setup_ui()
 
-    def set_content_loader(self, content_loader: Optional[ContentLoader]) -> None:
-        """Set the content loader callback.
-
-        Args:
-            content_loader: Callback to load full transcription content by ID
-        """
-        self._content_loader = content_loader
-
     def _setup_ui(self) -> None:
         """Set up the user interface."""
         main_layout = QVBoxLayout(self)
@@ -541,43 +533,7 @@ class TranscriptionsContainer(QWidget):
         if tid in self._text_boxes:
             self._text_boxes[tid].update_transcription(transcription)
 
-    def add_transcription(self, transcription: Dict[str, Any]) -> None:
-        """Add a new transcription.
-
-        Args:
-            transcription: Transcription dict
-        """
-        tid = transcription.get("id", "")
-        if tid in self._text_boxes:
-            return  # Already exists
-
-        # Remove stretch
-        if self._content_layout.count() > 0:
-            item = self._content_layout.takeAt(self._content_layout.count() - 1)
-
-        box = TranscriptionTextBox(transcription, content_loader=self._content_loader)
-        box.transcription_saved.connect(self._on_transcription_saved)
-        self._text_boxes[tid] = box
-        self._content_layout.addWidget(box)
-        self._content_layout.addStretch()
-
-        # Update count
-        count = len(self._text_boxes)
-        self._count_label.setText(f"({count})")
-
     def _on_transcribe(self) -> None:
         """Handle transcribe button click."""
         if self._audio_file_id:
             self.transcribe_requested.emit(self._audio_file_id)
-
-    def get_pending_ids(self) -> List[str]:
-        """Get IDs of pending transcriptions.
-
-        Returns:
-            List of transcription IDs that are pending
-        """
-        return [
-            box.get_id()
-            for box in self._text_boxes.values()
-            if box.is_pending()
-        ]

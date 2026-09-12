@@ -374,17 +374,6 @@ class AudioPlayerWidget(QFrame):
                         break
                 break
 
-    def get_selected_audio_file_id(self) -> Optional[str]:
-        """Get the currently selected audio file ID.
-
-        Returns:
-            Audio file UUID hex string, or None if nothing selected
-        """
-        current = self._file_list.currentItem()
-        if current:
-            return current.data(Qt.UserRole)
-        return None
-
     def _on_play_pause(self) -> None:
         """Handle play/pause button click."""
         state = self._player.state

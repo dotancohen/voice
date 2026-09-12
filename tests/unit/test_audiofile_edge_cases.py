@@ -412,53 +412,6 @@ class TestFileManagerEdgeCases:
 
         assert dest.exists()
 
-    def test_soft_delete_then_reimport(self, tmp_path: Path) -> None:
-        """Test soft-deleting and then re-importing with same ID."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-
-        source = tmp_path / "song.mp3"
-        source.write_bytes(b"original content")
-
-        audio_id = "0123456789abcdef0123456789abcdef"
-
-        # Import
-        dest1 = manager.import_file(source, audio_id, "mp3")
-        assert dest1.exists()
-
-        # Soft delete
-        manager.soft_delete(audio_id, "mp3")
-        assert not dest1.exists()
-        assert manager.is_in_trash(audio_id, "mp3")
-
-        # Re-import (new content)
-        source.write_bytes(b"new content")
-        dest2 = manager.import_file(source, audio_id, "mp3")
-        assert dest2.exists()
-        assert dest2.read_bytes() == b"new content"
-
-    def test_restore_when_file_already_exists(self, tmp_path: Path) -> None:
-        """Test restoring from trash when file already exists in main dir."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-        manager.ensure_directories()
-
-        audio_id = "0123456789abcdef0123456789abcdef"
-
-        # Put file in trash
-        trash_file = manager.trash_directory / f"{audio_id}.mp3"
-        trash_file.write_bytes(b"trash content")
-
-        # Also put file in main dir
-        main_file = audio_dir / f"{audio_id}.mp3"
-        main_file.write_bytes(b"main content")
-
-        # Restore should overwrite (shutil.move behavior)
-        manager.restore_from_trash(audio_id, "mp3")
-
-        assert main_file.exists()
-        # Content depends on shutil.move behavior
-
     def test_all_supported_formats(self, tmp_path: Path) -> None:
         """Test importing all supported audio formats."""
         audio_dir = tmp_path / "audiofiles"

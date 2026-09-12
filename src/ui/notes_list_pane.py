@@ -570,34 +570,6 @@ class NotesListPane(QWidget):
         item.setData(ROLE_HTML_TEXT, html_text)
         item.setText(plain_text)
 
-    def refresh_note_item(self, note_id: str) -> bool:
-        """Refresh a specific note item in the list.
-
-        This is called when a note's tags or other display data changes
-        and the list item needs to be updated.
-
-        Args:
-            note_id: ID of the note to refresh
-
-        Returns:
-            True if the item was found and refreshed, False otherwise.
-        """
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            if item and item.data(ROLE_NOTE_ID) == note_id:
-                # Fetch fresh note data and rebuild display
-                note = self.db.get_note(note_id)
-                if note:
-                    self._refresh_item_display(item, note)
-                    self.list_widget.update()
-                    logger.info(f"Refreshed list item for note {note_id[:8]}...")
-                    return True
-                else:
-                    logger.warning(f"Note {note_id[:8]}... not found when refreshing")
-                    return False
-        logger.debug(f"Note {note_id[:8]}... not in current list view")
-        return False
-
     def select_note_by_id(self, note_id: int) -> bool:
         """Select a note in the list by its ID.
 

@@ -65,10 +65,6 @@ class AudioPlayer:
         """Set callback for state changes."""
         self._on_state_change = callback
 
-    def set_on_file_ended(self, callback: Optional[Callable[[], None]]) -> None:
-        """Set callback for when a file finishes playing."""
-        self._on_file_ended = callback
-
     def set_audio_files(self, files: List[Path | str]) -> None:
         """Set the list of audio files to play.
 

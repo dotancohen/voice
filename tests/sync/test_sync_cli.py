@@ -508,6 +508,7 @@ class TestSettingsCLI:
 class TestSyncServeCLI:
     """Tests for 'sync serve' command."""
 
+    @pytest.mark.filterwarnings("ignore::urllib3.exceptions.InsecureRequestWarning")
     def test_serve_starts_server(self, sync_node_a: SyncNode):
         """Sync serve starts a server that responds."""
         import requests
@@ -538,9 +539,11 @@ class TestSyncServeCLI:
             time.sleep(2)
 
             # Check server is responding
+            # The server serves https with its own certificate by default
             resp = requests.get(
-                f"http://127.0.0.1:{sync_node_a.port}/sync/status",
+                f"https://127.0.0.1:{sync_node_a.port}/sync/status",
                 timeout=5,
+                verify=False,
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -555,6 +558,7 @@ class TestSyncServeCLI:
             if process.stderr:
                 process.stderr.close()
 
+    @pytest.mark.filterwarnings("ignore::urllib3.exceptions.InsecureRequestWarning")
     def test_serve_custom_port(self, sync_node_a: SyncNode, tmp_path: Path):
         """Sync serve uses custom port."""
         import socket
@@ -589,8 +593,9 @@ class TestSyncServeCLI:
 
             import requests
             resp = requests.get(
-                f"http://127.0.0.1:{custom_port}/sync/status",
+                f"https://127.0.0.1:{custom_port}/sync/status",
                 timeout=5,
+                verify=False,
             )
             assert resp.status_code == 200
 

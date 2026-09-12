@@ -17,9 +17,12 @@ from typing import Generator, Tuple
 import pytest
 
 from core.database import Database, set_local_device_id
-from core.sync import SyncChange, apply_sync_changes
+from tests.sync_support import SyncChange, apply_sync_changes
 
 from .conftest import (
+    AUTH,
+    admit_test_device,
+    ACCOUNT_ID,
     DEVICE_A_ID,
     DEVICE_B_ID,
     SyncNode,
@@ -234,9 +237,8 @@ class TestServerErrorResponses:
                     ],
                 },
                 headers={
+                    **AUTH,
                     "Content-Type": "application/json",
-                    "X-Device-ID": "00000000000070008000000000000002",
-                    "X-Device-Name": "TestClient",
                 },
                 timeout=10,
             )
@@ -303,9 +305,8 @@ class TestServerErrorResponses:
                     ],
                 },
                 headers={
+                    **AUTH,
                     "Content-Type": "application/json",
-                    "X-Device-ID": "00000000000070008000000000000002",
-                    "X-Device-Name": "TestClient",
                 },
                 timeout=10,
             )
@@ -506,15 +507,18 @@ class TestServerSideSyncTimeUpdate:
             pytest.fail("Failed to start sync server")
 
         peer_device_id = "00000000000070008000000000000002"
+        peer_headers = admit_test_device(node, peer_device_id, "TestClient")
 
         try:
             # First, do a successful sync to establish baseline
             response = requests.post(
                 f"{node.url}/sync/handshake",
+                headers=peer_headers,
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
                     "protocol_version": "1.0",
+                    "account_id": ACCOUNT_ID,
                 },
                 timeout=10,
             )
@@ -526,6 +530,7 @@ class TestServerSideSyncTimeUpdate:
             # Do a successful apply to set the sync time
             response = requests.post(
                 f"{node.url}/sync/apply",
+                headers=peer_headers,
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
@@ -551,10 +556,12 @@ class TestServerSideSyncTimeUpdate:
             # Handshake again to get the updated sync time
             response = requests.post(
                 f"{node.url}/sync/handshake",
+                headers=peer_headers,
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
                     "protocol_version": "1.0",
+                    "account_id": ACCOUNT_ID,
                 },
                 timeout=10,
             )
@@ -567,6 +574,7 @@ class TestServerSideSyncTimeUpdate:
             time.sleep(1.1)  # Ensure timestamp would change if updated
             response = requests.post(
                 f"{node.url}/sync/apply",
+                headers=peer_headers,
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
@@ -590,10 +598,12 @@ class TestServerSideSyncTimeUpdate:
             # Handshake again to check sync time
             response = requests.post(
                 f"{node.url}/sync/handshake",
+                headers=peer_headers,
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
                     "protocol_version": "1.0",
+                    "account_id": ACCOUNT_ID,
                 },
                 timeout=10,
             )

@@ -54,18 +54,20 @@ class Database:
     but delegates to the Rust implementation.
     """
 
-    def __init__(self, db_path: Union[Path, str]) -> None:
+    def __init__(self, db_path: Union[Path, str], account_id: Optional[str] = None) -> None:
         """Initialize database connection.
 
         Args:
             db_path: Path to the SQLite database file, or ':memory:' for in-memory
+            account_id: The account this database belongs to. A fresh database
+                takes it; one that belongs to another account is refused.
         """
         path_str = str(db_path) if isinstance(db_path, Path) else db_path
         # Every timestamp written from here records the clock this computer
         # reads, so the time survives a journey to another timezone
         offset, zone = local_timezone()
         _rust_set_local_timezone(offset, zone)
-        self._rust_db = RustDatabase(path_str)
+        self._rust_db = RustDatabase(path_str, account_id)
         logger.info(f"Opened Rust database at {path_str} (timezone {zone or offset})")
 
     def get_all_notes(self) -> List[Dict[str, Any]]:
@@ -391,6 +393,42 @@ class Database:
     def database_id(self) -> str:
         """Identity of this database; peers reset their cursors when it changes."""
         return self._rust_db.database_id()
+
+    def account_id(self) -> str:
+        """The account this database belongs to: 32 hex characters."""
+        return self._rust_db.account_id()
+
+    def move_to_account(self, account_id: str) -> None:
+        """Move this database, notes and all, to another account.
+
+        A snapshot is taken first; every peer is forgotten so the next sync
+        exchanges everything. This is the deliberate way to merge accounts.
+        """
+        self._rust_db.move_to_account(account_id)
+
+    def list_devices(self) -> List[Dict[str, Any]]:
+        """Every device of the account, as its card says."""
+        return self._rust_db.list_devices()
+
+    def admit_device(self, device_id: str, name: str, key_hash: str, certificate_fingerprint: str = "") -> None:
+        """Let a device into the account: its card, with the hash of its key."""
+        self._rust_db.admit_device(device_id, name, key_hash, certificate_fingerprint)
+
+    def revoke_device(self, device_id: str) -> None:
+        """Revoke a device of the account. One way, and it travels to every peer."""
+        self._rust_db.revoke_device(device_id)
+
+    def snapshot(self) -> str:
+        """Copy the database into its snapshot directory; returns the path."""
+        return self._rust_db.snapshot()
+
+    def list_snapshots(self) -> List[Dict[str, Any]]:
+        """Every snapshot beside this database, newest first."""
+        return self._rust_db.list_snapshots()
+
+    def restore_snapshot(self, name: str) -> None:
+        """Replace the database's contents with a snapshot's; the state replaced is snapshotted first."""
+        self._rust_db.restore_snapshot(name)
 
     def get_full_dataset(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get the full dataset for initial sync.
