@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import platform
 import threading
 import time
 from datetime import datetime
@@ -52,6 +54,96 @@ CLOUD_PROVIDERS = {"speechtext_ai", "google"}
 
 # Default polling interval for cloud providers (seconds)
 DEFAULT_POLL_INTERVAL = 5
+
+
+class WorkWatch:
+    """What this computer was doing while a transcription ran.
+
+    Transcribing locally is minutes of solid work, and how long it takes depends
+    on the model, the cores, and what else the machine is busy with. These
+    numbers are recorded with every transcription so that the choices can be
+    compared afterwards on real recordings rather than guessed at, and so that a
+    queue can say how long the recordings still waiting will take.
+
+    The keys written are the ones ``VoiceAndroid`` writes, so the two
+    applications read each other's figures: see
+    ``transcription/TranscriptionWork.kt`` and
+    ``src/core/transcription_queue.py``.
+    """
+
+    def __init__(self) -> None:
+        self._start_wall = time.monotonic()
+        self._start_cpu = self._cpu_seconds()
+        self._start_rss = self._rss_bytes()
+        self._peak_rss = self._start_rss
+
+    def sample(self) -> None:
+        """Take one reading. Cheap enough to call every second."""
+        rss = self._rss_bytes()
+        if rss and (self._peak_rss is None or rss > self._peak_rss):
+            self._peak_rss = rss
+
+    def report(self, audio_seconds: Optional[float]) -> Dict[str, Any]:
+        """The readings, for the transcription's service response.
+
+        ``audio_seconds`` is the length of the recording, which is what makes the
+        rest comparable: a transcription is fast or slow only against the audio
+        it was given.
+        """
+        self.sample()
+        wall = time.monotonic() - self._start_wall
+        cpu = None
+        now_cpu = self._cpu_seconds()
+        if now_cpu is not None and self._start_cpu is not None:
+            cpu = now_cpu - self._start_cpu
+
+        report: Dict[str, Any] = {
+            "elapsed_seconds": round(wall, 3),
+            "total_seconds": round(wall, 3),
+            "cpu_cores": os.cpu_count(),
+            "machine": platform.machine(),
+            "platform": platform.platform(terse=True),
+            "python": platform.python_version(),
+        }
+        if cpu is not None:
+            report["cpu_seconds"] = round(cpu, 3)
+            # More than one when several cores worked at once, which is what
+            # whisper.cpp does; roughly the number of cores it kept busy.
+            report["cpu_cores_busy"] = round(cpu / wall, 3) if wall > 0 else None
+        if audio_seconds and wall > 0:
+            report["speed_vs_realtime"] = round(audio_seconds / wall, 3)
+        if self._peak_rss:
+            # The name the phone uses for the same measure, so one reader does
+            # for both: the largest the process grew while working.
+            report["peak_native_heap_bytes"] = int(self._peak_rss)
+            if self._start_rss:
+                report["native_heap_growth_bytes"] = int(self._peak_rss - self._start_rss)
+        return report
+
+    @staticmethod
+    def _cpu_seconds() -> Optional[float]:
+        """Processor time used by this process and its children, in seconds."""
+        try:
+            import resource
+
+            me = resource.getrusage(resource.RUSAGE_SELF)
+            kids = resource.getrusage(resource.RUSAGE_CHILDREN)
+            return (
+                me.ru_utime + me.ru_stime + kids.ru_utime + kids.ru_stime
+            )
+        except Exception:
+            # Not Linux or not permitted: the clock time still means something.
+            return None
+
+    @staticmethod
+    def _rss_bytes() -> Optional[int]:
+        """How much memory this process holds, in bytes."""
+        try:
+            with open("/proc/self/statm", "r", encoding="ascii") as handle:
+                pages = int(handle.read().split()[1])
+            return pages * os.sysconf("SC_PAGE_SIZE")
+        except Exception:
+            return None
 
 
 class TranscriptionService:
@@ -83,6 +175,10 @@ class TranscriptionService:
         self.audiofile_dir = audiofile_dir
         self.config = config
         self._active_tasks: Dict[str, threading.Thread] = {}
+        # One event per running transcription, so a caller can wait for it: the
+        # queue runs one recording at a time and has to know when to start the
+        # next (see src/core/transcription_queue.py).
+        self._finished: Dict[str, threading.Event] = {}
         self._lock = threading.Lock()
         self._google_token_cache: Optional[Dict[str, Any]] = None
 
@@ -122,7 +218,8 @@ class TranscriptionService:
         # Create pending record with appropriate message format
         service_name = provider_config.get("provider_id", "unknown")
         service_args = json.dumps(provider_config)
-        submit_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # With the offset, so the time is readable on a device in another zone
+        submit_time = datetime.now().astimezone().isoformat(sep=" ", timespec="seconds")
 
         if service_name in CLOUD_PROVIDERS:
             # Cloud provider format: detailed pending message
@@ -164,6 +261,7 @@ class TranscriptionService:
 
         with self._lock:
             self._active_tasks[transcription_id] = thread
+            self._finished[transcription_id] = threading.Event()
 
         thread.start()
 
@@ -188,6 +286,17 @@ class TranscriptionService:
             on_complete: Success callback
             on_error: Error callback
         """
+        watch = WorkWatch()
+        watcher_stop = threading.Event()
+
+        def watch_the_machine() -> None:
+            # Memory is watched rather than measured once: the peak is what
+            # decides whether a model fits on a machine at all.
+            while not watcher_stop.wait(1.0):
+                watch.sample()
+
+        watcher = threading.Thread(target=watch_the_machine, daemon=True)
+        watcher.start()
         try:
             start_time = time.time()
 
@@ -239,7 +348,13 @@ class TranscriptionService:
                     "confidence": seg.confidence,
                 })
 
-            # Build service response
+            # Build service response, with what the work cost: the queue view
+            # reads these back to say how long the waiting recordings will take,
+            # and the note screen shows them.
+            watcher_stop.set()
+            performance = watch.report(result.duration_seconds)
+            performance["model"] = provider_config.get("model") or merged_config.get("model")
+            performance["characters"] = len(result.content or "")
             service_response = json.dumps({
                 "elapsed_time": round(elapsed_time, 3),
                 "duration_seconds": result.duration_seconds,
@@ -247,6 +362,8 @@ class TranscriptionService:
                 "confidence": result.confidence,
                 "speaker_count": result.speaker_count,
                 "segment_count": len(result.segments),
+                "provider": provider_id,
+                "performance": performance,
             })
 
             # Update database
@@ -295,9 +412,13 @@ class TranscriptionService:
                     logger.error(f"Error in error callback: {cb_e}")
 
         finally:
-            # Remove from active tasks
+            watcher_stop.set()
+            # Remove from active tasks, and wake anything waiting for this one
             with self._lock:
                 self._active_tasks.pop(transcription_id, None)
+                done = self._finished.get(transcription_id)
+            if done is not None:
+                done.set()
 
     def _create_local_whisper_client(self, provider_config: Dict[str, Any]) -> Any:
         """Create a local Whisper transcription client.
@@ -612,6 +733,27 @@ class TranscriptionService:
         """
         with self._lock:
             return list(self._active_tasks.keys())
+
+    def wait_for(self, transcription_id: str, timeout: Optional[float] = None) -> bool:
+        """Wait until that transcription has finished, one way or the other.
+
+        What the queue uses to keep to one recording at a time: the work itself
+        runs in a thread, and the next recording must not start until this one
+        has given the machine back.
+
+        Returns True when it finished, False when the wait timed out. A
+        transcription this service never started returns True at once: there is
+        nothing to wait for.
+        """
+        with self._lock:
+            done = self._finished.get(transcription_id)
+        if done is None:
+            return True
+        finished = done.wait(timeout)
+        if finished:
+            with self._lock:
+                self._finished.pop(transcription_id, None)
+        return finished
 
     def is_transcribing(self, transcription_id: str) -> bool:
         """Check if a transcription is still in progress.

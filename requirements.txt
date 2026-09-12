@@ -1,7 +1,19 @@
 maturin>=1.7.0
-PySide6>=6.7.0
+# Essentials only: the application uses QtCore, QtGui, QtWidgets and QtTest.
+# The full PySide6 package pulls in PySide6-Addons — Qt3D, Charts, WebEngine,
+# Multimedia and the rest — which is 428 MB that nothing here imports.
+PySide6-Essentials>=6.7.0
+# The meta-package as well, without its dependencies: pytest-qt reads
+# PySide6.__version__, which only the meta-package defines. Install it with
+#   pip install --no-deps PySide6
+# so that PySide6-Addons does not come back with it.
+PySide6>=6.7.0   # install with --no-deps
 pyqtdarktheme>=2.1.0
 textual>=0.50.0
 Flask>=3.0.0
 Flask-CORS>=4.0.0
 uuid6>=2024.1.12
+# TLS certificates for the sync server (src/core/tls.py) and cloud provider
+# credentials (src/core/transcription_service.py). It was installed but never
+# declared until 2026-09-11.
+cryptography>=42.0.0

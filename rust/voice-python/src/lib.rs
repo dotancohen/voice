@@ -50,6 +50,14 @@ fn note_row_to_dict<'py>(py: Python<'py>, note: &database::NoteRow) -> PyResult<
     dict.set_item("modified_at", &note.modified_at)?;
     dict.set_item("deleted_at", &note.deleted_at)?;
     dict.set_item("tag_names", &note.tag_names)?;
+    // The timezone each timestamp was written in: the offset renders the wall
+    // clock the author was reading, the name says where that was.
+    dict.set_item("created_at_offset", &note.created_at_offset)?;
+    dict.set_item("created_at_zone", &note.created_at_zone)?;
+    dict.set_item("modified_at_offset", &note.modified_at_offset)?;
+    dict.set_item("modified_at_zone", &note.modified_at_zone)?;
+    dict.set_item("deleted_at_offset", &note.deleted_at_offset)?;
+    dict.set_item("deleted_at_zone", &note.deleted_at_zone)?;
     // Include raw display_cache JSON string (Python will parse it)
     dict.set_item("display_cache", &note.display_cache)?;
     // Include raw list_display_cache JSON string (Python will parse it)
@@ -94,6 +102,14 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     dict.set_item("storage_provider", &audio_file.storage_provider)?;
     dict.set_item("storage_key", &audio_file.storage_key)?;
     dict.set_item("storage_uploaded_at", &audio_file.storage_uploaded_at)?;
+    dict.set_item("imported_at_offset", &audio_file.imported_at_offset)?;
+    dict.set_item("imported_at_zone", &audio_file.imported_at_zone)?;
+    dict.set_item("file_created_at_offset", &audio_file.file_created_at_offset)?;
+    dict.set_item("file_created_at_zone", &audio_file.file_created_at_zone)?;
+    dict.set_item("modified_at_offset", &audio_file.modified_at_offset)?;
+    dict.set_item("modified_at_zone", &audio_file.modified_at_zone)?;
+    dict.set_item("deleted_at_offset", &audio_file.deleted_at_offset)?;
+    dict.set_item("deleted_at_zone", &audio_file.deleted_at_zone)?;
     Ok(dict)
 }
 
@@ -111,6 +127,8 @@ fn transcription_row_to_dict<'py>(py: Python<'py>, transcription: &database::Tra
     dict.set_item("created_at", &transcription.created_at)?;
     dict.set_item("modified_at", &transcription.modified_at)?;
     dict.set_item("deleted_at", &transcription.deleted_at)?;
+    dict.set_item("created_at_offset", &transcription.created_at_offset)?;
+    dict.set_item("created_at_zone", &transcription.created_at_zone)?;
     Ok(dict)
 }
 
@@ -232,6 +250,51 @@ impl PyDatabase {
             list.append(note_row_to_dict(py, note)?)?;
         }
         Ok(list.into_any().unbind())
+    }
+
+    /// Make one of a note's attachments the one that stands for it.
+    #[pyo3(signature = (note_id, attachment_id=None))]
+    fn set_primary_attachment(&self, note_id: &str, attachment_id: Option<&str>) -> PyResult<bool> {
+        self.inner_ref()?.set_primary_attachment(note_id, attachment_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// The attachment that stands for this note, if one was chosen.
+    fn get_primary_attachment(&self, note_id: &str) -> PyResult<Option<String>> {
+        self.inner_ref()?.get_primary_attachment(note_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// Make one of a recording's transcriptions the one that stands for it.
+    #[pyo3(signature = (audio_file_id, transcription_id=None))]
+    fn set_primary_transcription(&self, audio_file_id: &str, transcription_id: Option<&str>) -> PyResult<bool> {
+        self.inner_ref()?.set_primary_transcription(audio_file_id, transcription_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// The transcription that stands for this recording, if one was chosen.
+    fn get_primary_transcription(&self, audio_file_id: &str) -> PyResult<Option<String>> {
+        self.inner_ref()?.get_primary_transcription(audio_file_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// The notes in the trash: deleted, still here, newest deletion first.
+    fn get_deleted_notes<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let notes = self.inner_ref()?.get_deleted_notes().map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for note in &notes {
+            list.append(note_row_to_dict(py, note)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    /// Take a note out of the trash. False when it was not in there.
+    fn undelete_note(&self, note_id: &str) -> PyResult<bool> {
+        self.inner_ref()?.undelete_note(note_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// Empty one note out of the trash for good, on every device.
+    ///
+    /// Returns the ids of the recordings that went with it, so the caller
+    /// can delete the files themselves.
+    fn purge_note(&self, note_id: &str) -> PyResult<Vec<String>> {
+        self.inner_ref()?.purge_note(note_id).map_err(voice_error_to_pyerr)
     }
 
     #[pyo3(signature = (name, parent_id=None))]
@@ -407,6 +470,36 @@ impl PyDatabase {
         Ok(result.into_any().unbind())
     }
 
+    /// Write-order feed: changes with seq > cursor (and <= upto when given).
+    /// Returns {"changes": [...], "next_cursor": int, "is_complete": bool}.
+    #[pyo3(signature = (cursor=0, upto=None, limit=1000))]
+    fn get_changes_after_seq<'py>(&self, py: Python<'py>, cursor: i64, upto: Option<i64>, limit: i64) -> PyResult<PyObject> {
+        let feed = self
+            .inner_ref()?
+            .get_changes_after_seq(cursor, upto, limit)
+            .map_err(voice_error_to_pyerr)?;
+        let result = PyDict::new(py);
+        let changes_list = PyList::empty(py);
+        for change in &feed.changes {
+            changes_list.append(hashmap_to_pydict(py, change)?)?;
+        }
+        result.set_item("changes", changes_list)?;
+        result.set_item("next_cursor", feed.next_cursor)?;
+        result.set_item("is_complete", feed.is_complete)?;
+        result.set_item("latest_timestamp", feed.latest_timestamp)?;
+        Ok(result.into_any().unbind())
+    }
+
+    /// The largest seq written so far (end of this database's feed).
+    fn current_seq(&self) -> PyResult<i64> {
+        self.inner_ref()?.current_seq().map_err(voice_error_to_pyerr)
+    }
+
+    /// Identity of this database (changes when the database is replaced).
+    fn database_id(&self) -> PyResult<String> {
+        self.inner_ref()?.database_id().map_err(voice_error_to_pyerr)
+    }
+
     fn get_full_dataset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let dataset = self.inner_ref()?.get_full_dataset().map_err(voice_error_to_pyerr)?;
 
@@ -425,7 +518,7 @@ impl PyDatabase {
     // Sync apply methods
     // ========================================================================
 
-    #[pyo3(signature = (note_id, created_at, content, modified_at=None, deleted_at=None, sync_received_at=None))]
+    #[pyo3(signature = (note_id, created_at, content, modified_at=None, deleted_at=None, sync_received_at=None, primary_attachment_id=None))]
     fn apply_sync_note(
         &self,
         note_id: &str,
@@ -434,13 +527,22 @@ impl PyDatabase {
         modified_at: Option<i64>,
         deleted_at: Option<i64>,
         sync_received_at: Option<i64>,
+        primary_attachment_id: Option<&str>,
     ) -> PyResult<bool> {
         self.inner_ref()?
-            .apply_sync_note(note_id, created_at, content, modified_at, deleted_at, sync_received_at)
+            .apply_sync_note(
+                note_id,
+                created_at,
+                content,
+                modified_at,
+                deleted_at,
+                sync_received_at,
+                primary_attachment_id,
+            )
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (tag_id, name, parent_id, created_at, modified_at=None, sync_received_at=None))]
+    #[pyo3(signature = (tag_id, name, parent_id, created_at, modified_at=None, deleted_at=None, sync_received_at=None))]
     fn apply_sync_tag(
         &self,
         tag_id: &str,
@@ -448,10 +550,11 @@ impl PyDatabase {
         parent_id: Option<&str>,
         created_at: i64,
         modified_at: Option<i64>,
+        deleted_at: Option<i64>,
         sync_received_at: Option<i64>,
     ) -> PyResult<bool> {
         self.inner_ref()?
-            .apply_sync_tag(tag_id, name, parent_id, created_at, modified_at, sync_received_at)
+            .apply_sync_tag_with_deleted(tag_id, name, parent_id, created_at, modified_at, deleted_at, sync_received_at)
             .map_err(voice_error_to_pyerr)
     }
 
@@ -507,187 +610,11 @@ impl PyDatabase {
     }
 
     // ========================================================================
-    // Conflict creation methods
+    // Versioned fields and conflicts (see voicecore versions.rs)
     // ========================================================================
 
-    #[pyo3(signature = (note_id, local_content, local_modified_at, local_device_id=None, local_device_name=None, remote_content="", remote_modified_at=0, remote_device_id=None, remote_device_name=None))]
-    fn create_note_content_conflict(
-        &self,
-        note_id: &str,
-        local_content: &str,
-        local_modified_at: i64,
-        local_device_id: Option<&str>,
-        local_device_name: Option<&str>,
-        remote_content: &str,
-        remote_modified_at: i64,
-        remote_device_id: Option<&str>,
-        remote_device_name: Option<&str>,
-    ) -> PyResult<String> {
-        self.inner_ref()?
-            .create_note_content_conflict(
-                note_id,
-                local_content,
-                local_modified_at,
-                local_device_id,
-                local_device_name,
-                remote_content,
-                remote_modified_at,
-                remote_device_id,
-                remote_device_name,
-            )
-            .map_err(voice_error_to_pyerr)
-    }
-
-    #[pyo3(signature = (note_id, surviving_content, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_content=None, deleted_at=0, deleting_device_id=None, deleting_device_name=None))]
-    fn create_note_delete_conflict(
-        &self,
-        note_id: &str,
-        surviving_content: &str,
-        surviving_modified_at: i64,
-        surviving_device_id: Option<&str>,
-        surviving_device_name: Option<&str>,
-        deleted_content: Option<&str>,
-        deleted_at: i64,
-        deleting_device_id: Option<&str>,
-        deleting_device_name: Option<&str>,
-    ) -> PyResult<String> {
-        self.inner_ref()?
-            .create_note_delete_conflict(
-                note_id,
-                surviving_content,
-                surviving_modified_at,
-                surviving_device_id,
-                surviving_device_name,
-                deleted_content,
-                deleted_at,
-                deleting_device_id,
-                deleting_device_name,
-            )
-            .map_err(voice_error_to_pyerr)
-    }
-
-    #[pyo3(signature = (tag_id, local_name, local_modified_at, local_device_id=None, local_device_name=None, remote_name="", remote_modified_at=0, remote_device_id=None, remote_device_name=None))]
-    fn create_tag_rename_conflict(
-        &self,
-        tag_id: &str,
-        local_name: &str,
-        local_modified_at: i64,
-        local_device_id: Option<&str>,
-        local_device_name: Option<&str>,
-        remote_name: &str,
-        remote_modified_at: i64,
-        remote_device_id: Option<&str>,
-        remote_device_name: Option<&str>,
-    ) -> PyResult<String> {
-        self.inner_ref()?
-            .create_tag_rename_conflict(
-                tag_id,
-                local_name,
-                local_modified_at,
-                local_device_id,
-                local_device_name,
-                remote_name,
-                remote_modified_at,
-                remote_device_id,
-                remote_device_name,
-            )
-            .map_err(voice_error_to_pyerr)
-    }
-
-    #[pyo3(signature = (note_id, tag_id, local_created_at=None, local_modified_at=None, local_deleted_at=None, local_device_id=None, local_device_name=None, remote_created_at=None, remote_modified_at=None, remote_deleted_at=None, remote_device_id=None, remote_device_name=None))]
-    fn create_note_tag_conflict(
-        &self,
-        note_id: &str,
-        tag_id: &str,
-        local_created_at: Option<i64>,
-        local_modified_at: Option<i64>,
-        local_deleted_at: Option<i64>,
-        local_device_id: Option<&str>,
-        local_device_name: Option<&str>,
-        remote_created_at: Option<i64>,
-        remote_modified_at: Option<i64>,
-        remote_deleted_at: Option<i64>,
-        remote_device_id: Option<&str>,
-        remote_device_name: Option<&str>,
-    ) -> PyResult<String> {
-        self.inner_ref()?
-            .create_note_tag_conflict(
-                note_id,
-                tag_id,
-                local_created_at,
-                local_modified_at,
-                local_deleted_at,
-                local_device_id,
-                local_device_name,
-                remote_created_at,
-                remote_modified_at,
-                remote_deleted_at,
-                remote_device_id,
-                remote_device_name,
-            )
-            .map_err(voice_error_to_pyerr)
-    }
-
-    #[pyo3(signature = (tag_id, local_parent_id, local_modified_at, local_device_id=None, local_device_name=None, remote_parent_id=None, remote_modified_at=0, remote_device_id=None, remote_device_name=None))]
-    fn create_tag_parent_conflict(
-        &self,
-        tag_id: &str,
-        local_parent_id: Option<&str>,
-        local_modified_at: i64,
-        local_device_id: Option<&str>,
-        local_device_name: Option<&str>,
-        remote_parent_id: Option<&str>,
-        remote_modified_at: i64,
-        remote_device_id: Option<&str>,
-        remote_device_name: Option<&str>,
-    ) -> PyResult<String> {
-        self.inner_ref()?
-            .create_tag_parent_conflict(
-                tag_id,
-                local_parent_id,
-                local_modified_at,
-                local_device_id,
-                local_device_name,
-                remote_parent_id,
-                remote_modified_at,
-                remote_device_id,
-                remote_device_name,
-            )
-            .map_err(voice_error_to_pyerr)
-    }
-
-    #[pyo3(signature = (tag_id, surviving_name, surviving_parent_id, surviving_modified_at, surviving_device_id=None, surviving_device_name=None, deleted_at=0, deleting_device_id=None, deleting_device_name=None))]
-    fn create_tag_delete_conflict(
-        &self,
-        tag_id: &str,
-        surviving_name: &str,
-        surviving_parent_id: Option<&str>,
-        surviving_modified_at: i64,
-        surviving_device_id: Option<&str>,
-        surviving_device_name: Option<&str>,
-        deleted_at: i64,
-        deleting_device_id: Option<&str>,
-        deleting_device_name: Option<&str>,
-    ) -> PyResult<String> {
-        self.inner_ref()?
-            .create_tag_delete_conflict(
-                tag_id,
-                surviving_name,
-                surviving_parent_id,
-                surviving_modified_at,
-                surviving_device_id,
-                surviving_device_name,
-                deleted_at,
-                deleting_device_id,
-                deleting_device_name,
-            )
-            .map_err(voice_error_to_pyerr)
-    }
-
-    // ========================================================================
-    // Conflict query methods
-    // ========================================================================
-
+    /// Unresolved conflict counts keyed by kind ("content", "delete", "tag", ...)
+    /// plus "total".
     fn get_unresolved_conflict_counts<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let counts = self
             .inner_ref()?
@@ -700,111 +627,124 @@ impl PyDatabase {
         Ok(dict.into_any().unbind())
     }
 
+    /// All conflicts (unresolved only unless include_resolved), newest first.
     #[pyo3(signature = (include_resolved=false))]
-    fn get_note_content_conflicts<'py>(
-        &self,
-        py: Python<'py>,
-        include_resolved: bool,
-    ) -> PyResult<PyObject> {
+    fn get_conflicts<'py>(&self, py: Python<'py>, include_resolved: bool) -> PyResult<PyObject> {
         let conflicts = self
             .inner_ref()?
-            .get_note_content_conflicts(include_resolved)
+            .get_conflicts(include_resolved)
             .map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
-        for conflict in &conflicts {
-            list.append(hashmap_to_pydict(py, conflict)?)?;
+        for c in &conflicts {
+            list.append(json_value_to_pyobject(py, &c.to_json())?)?;
         }
         Ok(list.into_any().unbind())
     }
 
-    #[pyo3(signature = (include_resolved=false))]
-    fn get_note_delete_conflicts<'py>(
-        &self,
-        py: Python<'py>,
-        include_resolved: bool,
-    ) -> PyResult<PyObject> {
+    /// Unresolved conflicts for one entity (e.g. "note", note_id).
+    fn get_entity_conflicts<'py>(&self, py: Python<'py>, entity_type: &str, entity_id: &str) -> PyResult<PyObject> {
         let conflicts = self
             .inner_ref()?
-            .get_note_delete_conflicts(include_resolved)
+            .get_entity_conflicts(entity_type, entity_id)
             .map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
-        for conflict in &conflicts {
-            list.append(hashmap_to_pydict(py, conflict)?)?;
+        for c in &conflicts {
+            list.append(json_value_to_pyobject(py, &c.to_json())?)?;
         }
         Ok(list.into_any().unbind())
     }
 
-    #[pyo3(signature = (include_resolved=false))]
-    fn get_tag_rename_conflicts<'py>(
-        &self,
-        py: Python<'py>,
-        include_resolved: bool,
-    ) -> PyResult<PyObject> {
+    /// One conflict by id or unique id prefix; None when there is no match,
+    /// an error when the prefix is ambiguous.
+    fn get_conflict<'py>(&self, py: Python<'py>, id_or_prefix: &str) -> PyResult<Option<PyObject>> {
+        let c = self
+            .inner_ref()?
+            .get_conflict(id_or_prefix)
+            .map_err(voice_error_to_pyerr)?;
+        match c {
+            Some(c) => Ok(Some(json_value_to_pyobject(py, &c.to_json())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Every unresolved conflict that concerns a note (its fields, tag links,
+    /// attachments and their transcriptions).
+    fn get_note_conflicts<'py>(&self, py: Python<'py>, note_id: &str) -> PyResult<PyObject> {
         let conflicts = self
             .inner_ref()?
-            .get_tag_rename_conflicts(include_resolved)
+            .get_note_conflicts(note_id)
             .map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
-        for conflict in &conflicts {
-            list.append(hashmap_to_pydict(py, conflict)?)?;
+        for c in &conflicts {
+            list.append(json_value_to_pyobject(py, &c.to_json())?)?;
         }
         Ok(list.into_any().unbind())
     }
 
-    #[pyo3(signature = (include_resolved=false))]
-    fn get_tag_parent_conflicts<'py>(
-        &self,
-        py: Python<'py>,
-        include_resolved: bool,
-    ) -> PyResult<PyObject> {
-        let conflicts = self
+    /// Conflict kinds ("content", "delete", "tag", "attachment", "transcription", ...)
+    /// that are unresolved for a note or anything attached to it.
+    fn get_note_conflict_types(&self, note_id: &str) -> PyResult<Vec<String>> {
+        self.inner_ref()?
+            .get_note_conflict_types(note_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Accept the merged value as it stands (markers included, if any).
+    fn accept_conflict(&self, conflict_id: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .accept_conflict(conflict_id)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Resolve a conflict by writing a new value for the field.
+    fn resolve_conflict_with_content(&self, conflict_id: &str, content: &str) -> PyResult<bool> {
+        self.inner_ref()?
+            .resolve_conflict_with_content(conflict_id, content)
+            .map_err(voice_error_to_pyerr)
+    }
+
+    /// Every version of one field, oldest first.
+    fn get_field_history<'py>(&self, py: Python<'py>, entity_type: &str, entity_id: &str, field: &str) -> PyResult<PyObject> {
+        let versions = self
             .inner_ref()?
-            .get_tag_parent_conflicts(include_resolved)
+            .get_field_history(entity_type, entity_id, field)
             .map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
-        for conflict in &conflicts {
-            list.append(hashmap_to_pydict(py, conflict)?)?;
+        for v in &versions {
+            list.append(json_value_to_pyobject(py, &v.to_json())?)?;
         }
         Ok(list.into_any().unbind())
     }
 
-    #[pyo3(signature = (include_resolved=false))]
-    fn get_tag_delete_conflicts<'py>(
-        &self,
-        py: Python<'py>,
-        include_resolved: bool,
-    ) -> PyResult<PyObject> {
-        let conflicts = self
-            .inner_ref()?
-            .get_tag_delete_conflicts(include_resolved)
-            .map_err(voice_error_to_pyerr)?;
-        let list = PyList::empty(py);
-        for conflict in &conflicts {
-            list.append(hashmap_to_pydict(py, conflict)?)?;
+    /// One version by hex id.
+    fn get_version<'py>(&self, py: Python<'py>, version_id: &str) -> PyResult<Option<PyObject>> {
+        let bytes = voicecore_lib::versions::hex_to_bytes(version_id).map_err(voice_error_to_pyerr)?;
+        let v = self.inner_ref()?.get_version(&bytes).map_err(voice_error_to_pyerr)?;
+        match v {
+            Some(v) => Ok(Some(json_value_to_pyobject(py, &v.to_json())?)),
+            None => Ok(None),
         }
-        Ok(list.into_any().unbind())
     }
 
     // ========================================================================
-    // Conflict resolution methods
+    // Synced settings (versioned key/value store shared by every device)
     // ========================================================================
 
-    fn resolve_note_content_conflict(&self, conflict_id: &str, new_content: &str) -> PyResult<bool> {
-        self.inner_ref()?
-            .resolve_note_content_conflict(conflict_id, new_content)
-            .map_err(voice_error_to_pyerr)
+    fn get_setting(&self, key: &str) -> PyResult<Option<String>> {
+        self.inner_ref()?.get_setting(key).map_err(voice_error_to_pyerr)
     }
 
-    fn resolve_note_delete_conflict(&self, conflict_id: &str, restore_note: bool) -> PyResult<bool> {
-        self.inner_ref()?
-            .resolve_note_delete_conflict(conflict_id, restore_note)
-            .map_err(voice_error_to_pyerr)
+    fn set_setting(&self, key: &str, value: &str) -> PyResult<()> {
+        self.inner_ref()?.set_setting(key, value).map_err(voice_error_to_pyerr)
     }
 
-    fn resolve_tag_rename_conflict(&self, conflict_id: &str, new_name: &str) -> PyResult<bool> {
-        self.inner_ref()?
-            .resolve_tag_rename_conflict(conflict_id, new_name)
-            .map_err(voice_error_to_pyerr)
+    fn get_all_settings<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let settings = self.inner_ref()?.get_all_settings().map_err(voice_error_to_pyerr)?;
+        let dict = PyDict::new(py);
+        for (k, v) in &settings {
+            dict.set_item(k, v)?;
+        }
+        Ok(dict.into_any().unbind())
     }
 
     // ========================================================================
@@ -946,6 +886,12 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
+    fn update_audio_file_created_at(&self, audio_file_id: &str, file_created_at: i64) -> PyResult<bool> {
+        self.inner_ref()?
+            .update_audio_file_created_at(audio_file_id, file_created_at)
+            .map_err(voice_error_to_pyerr)
+    }
+
     /// Get audio files missing duration
     fn get_audio_files_missing_duration<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let audio_files = self.inner_ref()?
@@ -1005,7 +951,7 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
@@ -1020,9 +966,24 @@ impl PyDatabase {
         storage_provider: Option<&str>,
         storage_key: Option<&str>,
         storage_uploaded_at: Option<i64>,
+        primary_transcription_id: Option<&str>,
     ) -> PyResult<()> {
         self.inner_ref()?
-            .apply_sync_audio_file(id, imported_at, filename, file_created_at, duration_seconds, summary, modified_at, deleted_at, sync_received_at, storage_provider, storage_key, storage_uploaded_at)
+            .apply_sync_audio_file(
+                id,
+                imported_at,
+                filename,
+                file_created_at,
+                duration_seconds,
+                summary,
+                modified_at,
+                deleted_at,
+                sync_received_at,
+                storage_provider,
+                storage_key,
+                storage_uploaded_at,
+                primary_transcription_id,
+            )
             .map_err(voice_error_to_pyerr)
     }
 
@@ -1106,6 +1067,27 @@ impl PyDatabase {
             Some(t) => Ok(Some(transcription_row_to_dict(py, &t)?.into_any().unbind())),
             None => Ok(None),
         }
+    }
+
+    /// The most recent transcriptions, newest first.
+    ///
+    /// What the transcription queue shows once the work is done. `service`
+    /// narrows it to one transcription service; None returns every service.
+    #[pyo3(signature = (service=None, limit=50))]
+    fn get_recent_transcriptions<'py>(
+        &self,
+        py: Python<'py>,
+        service: Option<&str>,
+        limit: u32,
+    ) -> PyResult<PyObject> {
+        let transcriptions = self.inner_ref()?
+            .get_recent_transcriptions(service, limit)
+            .map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for transcription in &transcriptions {
+            list.append(transcription_row_to_dict(py, transcription)?)?;
+        }
+        Ok(list.into_any().unbind())
     }
 
     fn get_transcriptions_for_audio_file<'py>(&self, py: Python<'py>, audio_file_id: &str) -> PyResult<PyObject> {
@@ -1404,6 +1386,18 @@ impl PyConfig {
         cfg.set_max_sync_file_size_mb(size_mb).map_err(voice_error_to_pyerr)
     }
 
+    /// Whether this installation downloads every cloud audio file on sync
+    fn get_mirror_audio_files(&self) -> PyResult<bool> {
+        let cfg = self.inner.lock().unwrap();
+        Ok(cfg.mirror_audio_files())
+    }
+
+    /// Enable or disable mirroring of all cloud audio files on sync
+    fn set_mirror_audio_files(&self, enabled: bool) -> PyResult<()> {
+        let mut cfg = self.inner.lock().unwrap();
+        cfg.set_mirror_audio_files(enabled).map_err(voice_error_to_pyerr)
+    }
+
     #[pyo3(signature = (key, default=None))]
     fn get(&self, key: &str, default: Option<&str>) -> PyResult<Option<String>> {
         let cfg = self.inner.lock().unwrap();
@@ -1577,6 +1571,9 @@ pub struct PySyncResult {
     conflicts: i64,
     #[pyo3(get)]
     errors: Vec<String>,
+    /// Non-fatal problems (e.g. cloud uploads that will be retried next sync)
+    #[pyo3(get)]
+    warnings: Vec<String>,
 }
 
 impl From<sync_client::SyncResult> for PySyncResult {
@@ -1587,6 +1584,7 @@ impl From<sync_client::SyncResult> for PySyncResult {
             pushed: result.pushed,
             conflicts: result.conflicts,
             errors: result.errors,
+            warnings: result.warnings,
         }
     }
 }
@@ -1777,10 +1775,122 @@ fn sync_all_peers<'py>(
 pub struct PyUploadPendingResult {
     #[pyo3(get)]
     uploaded: usize,
+    /// Pending records whose file is not on this device (another device owns them)
+    #[pyo3(get)]
+    skipped: usize,
+    #[pyo3(get)]
+    failed: usize,
+    /// Files not attempted because an earlier remote failure stopped the batch
+    #[pyo3(get)]
+    deferred: usize,
+    #[pyo3(get)]
+    errors: Vec<String>,
+}
+
+/// Result of downloading audio files from cloud storage
+#[pyclass(name = "DownloadResult")]
+pub struct PyDownloadResult {
+    #[pyo3(get)]
+    downloaded: usize,
+    #[pyo3(get)]
+    already_local: usize,
+    #[pyo3(get)]
+    not_in_cloud: usize,
     #[pyo3(get)]
     failed: usize,
     #[pyo3(get)]
+    deferred: usize,
+    #[pyo3(get)]
     errors: Vec<String>,
+}
+
+impl From<file_storage::DownloadMissingResult> for PyDownloadResult {
+    fn from(r: file_storage::DownloadMissingResult) -> Self {
+        Self {
+            downloaded: r.downloaded,
+            already_local: r.already_local,
+            not_in_cloud: r.not_in_cloud,
+            failed: r.failed,
+            deferred: r.deferred,
+            errors: r.errors,
+        }
+    }
+}
+
+/// Open config, database and audio directory for a cloud storage operation.
+fn cloud_context(
+    config_dir: Option<&str>,
+) -> PyResult<(tokio::runtime::Runtime, database::Database, std::path::PathBuf)> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    let audiofile_dir = cfg.audiofile_directory().ok_or_else(|| {
+        pyo3::exceptions::PyRuntimeError::new_err(
+            "Audiofile directory not configured. Set it with 'cli config set audiofile_directory <path>'",
+        )
+    })?;
+    Ok((runtime, db, std::path::PathBuf::from(audiofile_dir)))
+}
+
+/// Download one audio file from cloud storage on demand.
+///
+/// Returns a dict: {"status": "downloaded" | "already_local" | "not_in_cloud", "bytes": int}
+///
+/// Raises:
+///     RuntimeError: storage not configured, offline, object missing, etc.
+#[pyfunction]
+#[pyo3(signature = (audio_file_id, config_dir=None))]
+fn download_audio_file_from_cloud<'py>(
+    py: Python<'py>,
+    audio_file_id: &str,
+    config_dir: Option<&str>,
+) -> PyResult<PyObject> {
+    let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
+    let outcome = runtime
+        .block_on(file_storage::download_audio_file(&db, &audiofile_dir, audio_file_id))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    let dict = PyDict::new(py);
+    match outcome {
+        file_storage::DownloadOutcome::Downloaded(bytes) => {
+            dict.set_item("status", "downloaded")?;
+            dict.set_item("bytes", bytes)?;
+        }
+        file_storage::DownloadOutcome::AlreadyLocal => {
+            dict.set_item("status", "already_local")?;
+            dict.set_item("bytes", 0u64)?;
+        }
+        file_storage::DownloadOutcome::NotInCloud => {
+            dict.set_item("status", "not_in_cloud")?;
+            dict.set_item("bytes", 0u64)?;
+        }
+    }
+    Ok(dict.into_any().unbind())
+}
+
+/// Download every audio file attached to a note that is in cloud storage but
+/// not on this device.
+#[pyfunction]
+#[pyo3(signature = (note_id, config_dir=None))]
+fn download_audio_files_for_note(note_id: &str, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
+    let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
+    runtime
+        .block_on(file_storage::download_audio_files_for_note(&db, &audiofile_dir, note_id))
+        .map(PyDownloadResult::from)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+}
+
+/// Download every non-deleted audio file that is in cloud storage but not on
+/// this device (the "mirror everything" action).
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn download_missing_audio_files(config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
+    let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
+    runtime
+        .block_on(file_storage::download_missing_audio_files(&db, &audiofile_dir))
+        .map(PyDownloadResult::from)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
 
 /// Upload pending audio files to cloud storage (S3).
@@ -1823,7 +1933,9 @@ fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPend
     match result {
         Ok(r) => Ok(PyUploadPendingResult {
             uploaded: r.uploaded,
+            skipped: r.skipped,
             failed: r.failed,
+            deferred: r.deferred,
             errors: r.errors,
         }),
         Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
@@ -2345,6 +2457,31 @@ fn py_get_local_device_id() -> PyResult<String> {
     Ok(validation::uuid_to_hex(&uuid))
 }
 
+/// Human-readable name stamped on every version this device creates, so that
+/// conflicts can say which devices disagreed.
+#[pyfunction]
+#[pyo3(name = "set_local_device_name")]
+fn py_set_local_device_name(name: &str) -> PyResult<()> {
+    database::set_local_device_name(name);
+    Ok(())
+}
+
+/// Tell the core which timezone this device is in, so that every timestamp it
+/// writes also records the clock the user was reading. Call it at start and
+/// whenever the timezone changes.
+#[pyfunction]
+#[pyo3(name = "set_local_timezone", signature = (offset_seconds, name=None))]
+fn py_set_local_timezone(offset_seconds: i32, name: Option<String>) -> PyResult<()> {
+    voicecore_lib::timezone::set_local_timezone(offset_seconds, name);
+    Ok(())
+}
+
+#[pyfunction]
+#[pyo3(name = "get_local_device_name")]
+fn py_get_local_device_name() -> Option<String> {
+    database::get_local_device_name()
+}
+
 // ============================================================================
 // Python module
 // ============================================================================
@@ -2375,6 +2512,10 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register file storage functions
     m.add_class::<PyUploadPendingResult>()?;
     m.add_function(wrap_pyfunction!(upload_pending_audio_files, m)?)?;
+    m.add_class::<PyDownloadResult>()?;
+    m.add_function(wrap_pyfunction!(download_audio_file_from_cloud, m)?)?;
+    m.add_function(wrap_pyfunction!(download_audio_files_for_note, m)?)?;
+    m.add_function(wrap_pyfunction!(download_missing_audio_files, m)?)?;
 
     // Register search classes and functions
     m.add_class::<PySearchResult>()?;
@@ -2409,6 +2550,9 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register database helper functions
     m.add_function(wrap_pyfunction!(py_set_local_device_id, m)?)?;
     m.add_function(wrap_pyfunction!(py_get_local_device_id, m)?)?;
+    m.add_function(wrap_pyfunction!(py_set_local_device_name, m)?)?;
+    m.add_function(wrap_pyfunction!(py_get_local_device_name, m)?)?;
+    m.add_function(wrap_pyfunction!(py_set_local_timezone, m)?)?;
 
     Ok(())
 }

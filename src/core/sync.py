@@ -66,7 +66,7 @@ class HandshakeRequest:
 
     device_id: str
     device_name: str
-    protocol_version: str = "1.0"
+    protocol_version: str = "1.1"
 
 
 @dataclass
@@ -75,7 +75,7 @@ class HandshakeResponse:
 
     device_id: str
     device_name: str
-    protocol_version: str = "1.0"
+    protocol_version: str = "1.1"
     last_sync_timestamp: Optional[int] = None
     server_timestamp: Optional[int] = None  # For clock skew detection
     supports_audiofiles: bool = False  # Whether server supports audiofile sync
@@ -110,14 +110,14 @@ def create_sync_blueprint(
             {
                 "device_id": "...",
                 "device_name": "...",
-                "protocol_version": "1.0"
+                "protocol_version": "1.1"
             }
 
         Response:
             {
                 "device_id": "...",
                 "device_name": "...",
-                "protocol_version": "1.0",
+                "protocol_version": "1.1",
                 "last_sync_timestamp": "..."
             }
         """
@@ -153,13 +153,17 @@ def create_sync_blueprint(
             response = HandshakeResponse(
                 device_id=device_id,
                 device_name=device_name,
-                protocol_version="1.0",
+                protocol_version="1.1",
                 last_sync_timestamp=last_sync,
                 server_timestamp=int(datetime.now().timestamp()),
                 supports_audiofiles=audiofile_directory is not None,
             )
+            payload = asdict(response)
+            # Protocol 1.1: cursor feed identity
+            payload["database_id"] = db.database_id()
+            payload["cursor"] = db.current_seq()
 
-            return jsonify(asdict(response)), 200
+            return jsonify(payload), 200
 
         except Exception as e:
             error_msg = f"Internal server error during handshake: {e}"
@@ -186,6 +190,7 @@ def create_sync_blueprint(
         """
         try:
             since_str = request.args.get("since")
+            cursor_str = request.args.get("cursor")
             limit_str = request.args.get("limit", "1000")
 
             # Convert since to int if provided
@@ -205,6 +210,29 @@ def create_sync_blueprint(
                 logger.warning(f"Get changes rejected: {error_msg}")
                 return jsonify({"error": error_msg}), 400
 
+            if cursor_str is not None:
+                # Write-order cursor feed (primary, protocol 1.1)
+                try:
+                    cursor = int(cursor_str)
+                except ValueError:
+                    error_msg = f"Invalid cursor parameter: '{cursor_str}' - must be an integer"
+                    logger.warning(f"Get changes rejected: {error_msg}")
+                    return jsonify({"error": error_msg}), 400
+                feed = db.get_changes_after_seq(cursor, None, limit)
+                changes = [_feed_item_to_change(c) for c in feed["changes"]]
+                payload = asdict(SyncBatch(
+                    changes=changes,
+                    from_timestamp=None,
+                    to_timestamp=feed.get("latest_timestamp"),
+                    device_id=device_id,
+                    device_name=device_name,
+                    is_complete=feed["is_complete"],
+                ))
+                payload["next_cursor"] = feed["next_cursor"]
+                payload["database_id"] = db.database_id()
+                logger.debug(f"Returning {len(changes)} changes after cursor {cursor}")
+                return jsonify(payload), 200
+
             changes, latest_timestamp = get_changes_since(db, since, limit)
 
             batch = SyncBatch(
@@ -215,9 +243,11 @@ def create_sync_blueprint(
                 device_name=device_name,
                 is_complete=len(changes) < limit,
             )
+            payload = asdict(batch)
+            payload["database_id"] = db.database_id()
 
             logger.debug(f"Returning {len(changes)} changes since {since}")
-            return jsonify(asdict(batch)), 200
+            return jsonify(payload), 200
 
         except Exception as e:
             error_msg = f"Internal server error getting changes: {e}"
@@ -264,17 +294,32 @@ def create_sync_blueprint(
             changes = []
             for i, c in enumerate(changes_data):
                 try:
+                    # A peer that sends the wrong shape is the peer's mistake,
+                    # not this server's: say so with 400 rather than letting the
+                    # type error surface as an internal error
+                    timestamp = c["timestamp"]
+                    if isinstance(timestamp, bool) or not isinstance(timestamp, int):
+                        raise TypeError(
+                            f"timestamp must be a whole number of seconds since the epoch, "
+                            f"got {type(timestamp).__name__}"
+                        )
+                    if not isinstance(c["data"], dict):
+                        raise TypeError(f"data must be an object, got {type(c['data']).__name__}")
                     changes.append(SyncChange(
                         entity_type=c["entity_type"],
                         entity_id=c["entity_id"],
                         operation=c["operation"],
                         data=c["data"],
-                        timestamp=c["timestamp"],
+                        timestamp=timestamp,
                         device_id=c["device_id"],
                         device_name=c.get("device_name"),
                     ))
                 except KeyError as e:
                     error_msg = f"Invalid change at index {i}: missing required field {e}"
+                    logger.warning(f"Apply rejected from {peer_device_name}: {error_msg}")
+                    return jsonify({"error": error_msg}), 400
+                except TypeError as e:
+                    error_msg = f"Invalid change at index {i}: {e}"
                     logger.warning(f"Apply rejected from {peer_device_name}: {error_msg}")
                     return jsonify({"error": error_msg}), 400
 
@@ -344,6 +389,8 @@ def create_sync_blueprint(
             )
 
             return jsonify({
+                "database_id": db.database_id(),
+                "cursor": db.current_seq(),
                 "notes": full_data["notes"],
                 "tags": full_data["tags"],
                 "note_tags": full_data["note_tags"],
@@ -368,7 +415,7 @@ def create_sync_blueprint(
                 "status": "ok",
                 "device_id": "...",
                 "device_name": "...",
-                "protocol_version": "1.0",
+                "protocol_version": "1.1",
                 "supports_audiofiles": true/false
             }
         """
@@ -376,7 +423,7 @@ def create_sync_blueprint(
             "status": "ok",
             "device_id": device_id,
             "device_name": device_name,
-            "protocol_version": "1.0",
+            "protocol_version": "1.1",
             "supports_audiofiles": audiofile_directory is not None,
         }), 200
 
@@ -527,6 +574,18 @@ def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[int]:
     except Exception as e:
         logger.warning(f"Error getting peer last sync: {e}")
     return None
+
+
+def _feed_item_to_change(c: Dict[str, Any]) -> SyncChange:
+    """Convert one feed map from the database into a SyncChange."""
+    return SyncChange(
+        entity_type=c["entity_type"],
+        entity_id=c["entity_id"],
+        operation=c["operation"],
+        data=c["data"],
+        timestamp=c["timestamp"],
+        device_id="",
+    )
 
 
 def get_changes_since(

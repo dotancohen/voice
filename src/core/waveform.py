@@ -6,10 +6,11 @@ Uses FFmpeg/FFprobe for decoding.
 
 from __future__ import annotations
 
+import array
 import logging
 import shutil
-import struct
 import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,6 +18,34 @@ logger = logging.getLogger(__name__)
 
 # Number of bars to display in waveform visualization
 WAVEFORM_BAR_COUNT = 150
+
+# When a recording is large enough that its waveform is drawn only when the
+# user asks for it.
+#
+# Drawing one means decoding the whole recording: on this desktop about 870
+# times real time, so an hour is a few seconds and eight hours most of a
+# minute, and on a phone many times slower. The duration is the measure that
+# matters — the work tracks the length of the audio — and the size is the
+# guard for when the duration is not known or the header is wrong. 100 MiB is
+# about 52 minutes of 16 kHz WAV, 1.8 hours of Opus at 128 kb/s, or 2.4 hours
+# of AAC at 96.
+#
+# The same two numbers are in VoiceAndroid's `util/MagicNumbers.kt`, and both
+# user manuals state them.
+LONG_RECORDING_SECONDS = 60 * 60
+LARGE_RECORDING_BYTES = 100 * 1024 * 1024
+
+# What the user is offered in place of the waveform of a large recording. The
+# same two lines as on the phone.
+GENERATE_WAVEFORM_PROMPT = (
+    "Click to generate waveform\n"
+    "Resource intensive operation on large file"
+)
+
+# How much decoded audio is read at a time. Large enough that the reading is
+# not the slow part, small enough that memory never depends on the length of
+# the recording: 64 kB is four seconds of 8 kHz mono.
+BLOCK_BYTES = 64 * 1024
 
 
 def _check_ffmpeg() -> bool:
@@ -67,6 +96,127 @@ def get_audio_duration(file_path: Path | str) -> Optional[float]:
     return None
 
 
+
+class WaveformAccumulator:
+    """The bars of a waveform, built as the audio arrives.
+
+    Holds a few hundred floats and nothing else, however long the recording
+    is. The number of samples is not known in advance, so the accumulator
+    starts fine and halves its own resolution whenever it runs out of slots:
+    two slots become one, and every slot from then on covers twice as much
+    audio. The picture is the same either way, and the memory never moves.
+
+    This replaced turning the whole recording into a list of samples. An hour
+    of audio is about 29 million samples, and a Python ``int`` is 28 bytes
+    plus a pointer: a gigabyte for one recording, which is how the Android
+    application was killed by the same mistake on 2026-09-10 (see
+    ``BUGS-THE-TESTS-MISSED.md``).
+    """
+
+    SLOTS_PER_BAR = 8
+
+    def __init__(self, bar_count: int = WAVEFORM_BAR_COUNT) -> None:
+        self._bar_count = max(1, bar_count)
+        self._slots = [0.0] * (self._bar_count * self.SLOTS_PER_BAR)
+        self._filled = 0
+        self._samples_per_slot = 1
+        self._in_slot = 0
+        self._peak = 0.0
+        self._any = False
+
+    def expect(self, total_samples: int) -> None:
+        """Say roughly how many samples are coming, where that is known."""
+        if total_samples > 0 and self._filled == 0 and self._in_slot == 0:
+            self._samples_per_slot = max(1, total_samples // len(self._slots))
+
+    def add_samples(self, samples) -> None:
+        """Add a block of 16-bit samples (anything iterable of ints)."""
+        for sample in samples:
+            self._any = True
+            value = float(abs(sample))
+            if value > self._peak:
+                self._peak = value
+            self._in_slot += 1
+            if self._in_slot >= self._samples_per_slot:
+                self._commit()
+
+    def bars(self) -> List[float]:
+        """The bars, scaled so the loudest fills the height."""
+        if not self._any:
+            return []
+        if self._in_slot > 0:
+            self._commit()
+        if self._filled == 0:
+            return []
+
+        loudest = max(self._slots[: self._filled])
+
+        def scaled(value: float) -> float:
+            return value / loudest if loudest > 0 else 0.0
+
+        if self._filled <= self._bar_count:
+            return [scaled(v) for v in self._slots[: self._filled]]
+
+        bars: List[float] = []
+        for bar in range(self._bar_count):
+            start = bar * self._filled // self._bar_count
+            end = max(start + 1, (bar + 1) * self._filled // self._bar_count)
+            bars.append(scaled(max(self._slots[start : min(end, self._filled)])))
+        return bars
+
+    def _commit(self) -> None:
+        if self._filled == len(self._slots):
+            self._halve()
+        self._slots[self._filled] = self._peak
+        self._filled += 1
+        self._peak = 0.0
+        self._in_slot = 0
+
+    def _halve(self) -> None:
+        write = 0
+        read = 0
+        while read < self._filled:
+            a = self._slots[read]
+            b = self._slots[read + 1] if read + 1 < self._filled else 0.0
+            self._slots[write] = max(a, b)
+            write += 1
+            read += 2
+        for i in range(write, len(self._slots)):
+            self._slots[i] = 0.0
+        self._filled = write
+        self._samples_per_slot *= 2
+
+
+def is_large_recording(
+    file_path: Path | str,
+    duration_seconds: Optional[float] = None,
+) -> bool:
+    """Whether drawing this recording's waveform is worth asking about first.
+
+    A recording of a meeting, or of somebody sleeping, is kept, played and
+    synced like any other; only the decoding of the whole of it to draw a
+    picture is offered rather than assumed.
+
+    Args:
+        file_path: The recording.
+        duration_seconds: Its length where that is already known. Read from
+            the file when it is not, which costs one ffprobe call.
+
+    Returns:
+        True when the recording is past either limit.
+    """
+    path = Path(file_path)
+    try:
+        if path.exists() and path.stat().st_size >= LARGE_RECORDING_BYTES:
+            return True
+    except OSError:
+        return False
+
+    if duration_seconds is None:
+        duration_seconds = get_audio_duration(path)
+    return bool(duration_seconds and duration_seconds >= LONG_RECORDING_SECONDS)
+
+
 def extract_waveform(file_path: Path | str, bar_count: int = WAVEFORM_BAR_COUNT) -> List[float]:
     """Extract waveform data from an audio file.
 
@@ -87,12 +237,18 @@ def extract_waveform(file_path: Path | str, bar_count: int = WAVEFORM_BAR_COUNT)
         logger.warning(f"File not found: {file_path}")
         return []
 
+    accumulator = WaveformAccumulator(bar_count)
+    duration = get_audio_duration(file_path)
+    if duration:
+        accumulator.expect(int(duration * 8000))
+
+    process = None
     try:
-        # Use ffmpeg to decode to raw 16-bit PCM mono audio
-        # -ar 8000: low sample rate for faster processing
-        # -ac 1: mono
-        # -f s16le: signed 16-bit little-endian PCM
-        result = subprocess.run(
+        # ffmpeg decodes to raw 16-bit PCM mono at 8 kHz — fine for a picture
+        # of the loudness — and it is read in blocks as it arrives. Nothing
+        # holds the whole recording: a long one would otherwise be a list of
+        # tens of millions of Python ints, which is gigabytes.
+        process = subprocess.Popen(
             [
                 "ffmpeg",
                 "-i", str(file_path),
@@ -101,41 +257,49 @@ def extract_waveform(file_path: Path | str, bar_count: int = WAVEFORM_BAR_COUNT)
                 "-f", "s16le",
                 "-",  # Output to stdout
             ],
-            capture_output=True,
-            timeout=60,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
+        assert process.stdout is not None
+        block = array.array("h")
+        while True:
+            chunk = process.stdout.read(BLOCK_BYTES)
+            if not chunk:
+                break
+            # An odd tail byte would break the unpacking; keep it for the
+            # next block.
+            if len(chunk) % 2:
+                chunk = chunk[:-1]
+            del block[:]
+            block.frombytes(chunk)
+            if sys.byteorder != "little":
+                block.byteswap()
+            accumulator.add_samples(block)
 
-        if result.returncode != 0:
-            logger.warning(f"ffmpeg failed for {file_path}: {result.stderr.decode()[:200]}")
+        process.stdout.close()
+        if process.wait(timeout=300) != 0:
+            logger.warning(f"ffmpeg failed for {file_path}")
             return []
 
-        pcm_data = result.stdout
-        if not pcm_data:
-            return []
-
-        # Convert to list of 16-bit samples
-        sample_count = len(pcm_data) // 2
-        samples = struct.unpack(f"<{sample_count}h", pcm_data)
-
-        if not samples:
-            return []
-
-        # Downsample to bar_count bars
-        return _downsample_to_waveform(list(samples), bar_count)
+        return accumulator.bars()
 
     except subprocess.TimeoutExpired:
-        logger.warning(f"ffmpeg timeout for {file_path}")
+        logger.warning(f"ffmpeg took too long for {file_path}")
         return []
-    except subprocess.SubprocessError as e:
-        logger.warning(f"ffmpeg error for {file_path}: {e}")
+    except Exception as e:
+        logger.warning(f"Error extracting waveform for {file_path}: {e}")
         return []
-    except struct.error as e:
-        logger.warning(f"Error unpacking PCM data for {file_path}: {e}")
-        return []
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
 
 
 def _downsample_to_waveform(samples: List[int], bar_count: int) -> List[float]:
     """Downsample PCM samples to amplitude values for bars.
+
+    For samples already in memory. The extraction itself feeds a
+    :class:`WaveformAccumulator` as ffmpeg decodes, so it never holds the whole
+    recording.
 
     Args:
         samples: List of 16-bit PCM samples.
@@ -147,29 +311,10 @@ def _downsample_to_waveform(samples: List[int], bar_count: int) -> List[float]:
     if not samples:
         return []
 
-    samples_per_bar = len(samples) // bar_count
-
-    if samples_per_bar <= 0:
-        # Fewer samples than bars
-        return [abs(s) / 32768.0 for s in samples[:bar_count]]
-
-    result = []
-    max_amplitude = 0.0
-
-    for bar in range(bar_count):
-        start = bar * samples_per_bar
-        end = min(start + samples_per_bar, len(samples))
-
-        # Find peak amplitude in this segment
-        peak = max(abs(s) for s in samples[start:end]) if start < end else 0
-        amplitude = float(peak)
-        result.append(amplitude)
-        max_amplitude = max(max_amplitude, amplitude)
-
-    # Normalize to 0.0 - 1.0 range
-    if max_amplitude > 0:
-        return [a / max_amplitude for a in result]
-    return [0.0] * bar_count
+    accumulator = WaveformAccumulator(bar_count)
+    accumulator.expect(len(samples))
+    accumulator.add_samples(samples)
+    return accumulator.bars()
 
 
 def waveform_to_ascii(waveform: List[float], width: int = 50, height: int = 1) -> str:

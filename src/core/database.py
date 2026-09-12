@@ -25,6 +25,9 @@ class TagChangeResult(TypedDict):
 # Import Database from the Rust extension
 from voicecore import Database as RustDatabase
 from voicecore import set_local_device_id as _rust_set_local_device_id
+from voicecore import set_local_timezone as _rust_set_local_timezone
+
+from .timestamp_utils import local_timezone
 import uuid as uuid_module
 
 logger = logging.getLogger(__name__)
@@ -58,8 +61,12 @@ class Database:
             db_path: Path to the SQLite database file, or ':memory:' for in-memory
         """
         path_str = str(db_path) if isinstance(db_path, Path) else db_path
+        # Every timestamp written from here records the clock this computer
+        # reads, so the time survives a journey to another timezone
+        offset, zone = local_timezone()
+        _rust_set_local_timezone(offset, zone)
         self._rust_db = RustDatabase(path_str)
-        logger.info(f"Opened Rust database at {path_str}")
+        logger.info(f"Opened Rust database at {path_str} (timezone {zone or offset})")
 
     def get_all_notes(self) -> List[Dict[str, Any]]:
         """Get all non-deleted notes."""
@@ -89,6 +96,41 @@ class Database:
             import uuid
             note_id = uuid.UUID(bytes=note_id).hex
         return self._rust_db.delete_note(note_id)
+
+    def get_deleted_notes(self) -> List[Dict[str, Any]]:
+        """The notes in the trash: deleted, still here, newest deletion first.
+
+        Deleting a note has always been a soft delete, so every note that was
+        ever deleted is still in the database with its history and its
+        recordings. This is what the trash bin shows.
+        """
+        return self._rust_db.get_deleted_notes()
+
+    def undelete_note(self, note_id: Union[bytes, str]) -> bool:
+        """Take a note out of the trash. False when it was not in there.
+
+        The recovery is a version like any other, so it reaches the other
+        devices by the ordinary route.
+        """
+        if isinstance(note_id, bytes):
+            import uuid
+            note_id = uuid.UUID(bytes=note_id).hex
+        return self._rust_db.undelete_note(note_id)
+
+    def purge_note(self, note_id: Union[bytes, str]) -> List[str]:
+        """Empty one note out of the trash for good, on every device.
+
+        The note, its history, its tag links, its attachments and the
+        recordings that hung on this note alone are removed, here and on
+        every device this one syncs with. It cannot be undone.
+
+        Returns the ids of the audio files that were removed, so the caller
+        can delete the files from disk.
+        """
+        if isinstance(note_id, bytes):
+            import uuid
+            note_id = uuid.UUID(bytes=note_id).hex
+        return self._rust_db.purge_note(note_id)
 
     def merge_notes(self, note_id_1: Union[bytes, str], note_id_2: Union[bytes, str]) -> str:
         """Merge two notes into one.
@@ -326,6 +368,30 @@ class Database:
         """
         return self._rust_db.get_changes_since(since, limit)
 
+    def get_changes_after_seq(
+        self, cursor: int = 0, upto: Optional[int] = None, limit: int = 1000
+    ) -> Dict[str, Any]:
+        """Write-order feed (the primary sync feed).
+
+        Args:
+            cursor: Return changes with seq greater than this
+            upto: Optional upper bound on seq
+            limit: Maximum number of changes in this page
+
+        Returns:
+            Dict with 'changes', 'next_cursor' (pass back to continue),
+            'is_complete' and 'latest_timestamp'
+        """
+        return self._rust_db.get_changes_after_seq(cursor, upto, limit)
+
+    def current_seq(self) -> int:
+        """End of this database's write-order feed."""
+        return self._rust_db.current_seq()
+
+    def database_id(self) -> str:
+        """Identity of this database; peers reset their cursors when it changes."""
+        return self._rust_db.database_id()
+
     def get_full_dataset(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get the full dataset for initial sync.
 
@@ -387,170 +453,61 @@ class Database:
         """Get raw note_tag data (for sync)."""
         return self._rust_db.get_note_tag_raw(note_id, tag_id)
 
-    def create_note_content_conflict(
-        self,
-        note_id: str,
-        local_content: str,
-        local_modified_at: int,
-        remote_content: str,
-        remote_modified_at: int,
-        remote_device_id: Optional[str] = None,
-        remote_device_name: Optional[str] = None,
-    ) -> str:
-        """Create a note content conflict record."""
-        return self._rust_db.create_note_content_conflict(
-            note_id, local_content, local_modified_at,
-            remote_content, remote_modified_at,
-            remote_device_id, remote_device_name,
-        )
-
-    def create_note_delete_conflict(
-        self,
-        note_id: str,
-        surviving_content: str,
-        surviving_modified_at: int,
-        surviving_device_id: Optional[str] = None,
-        deleted_content: Optional[str] = None,
-        deleted_at: int = 0,
-        deleting_device_id: Optional[str] = None,
-        deleting_device_name: Optional[str] = None,
-    ) -> str:
-        """Create a note delete conflict record."""
-        return self._rust_db.create_note_delete_conflict(
-            note_id, surviving_content, surviving_modified_at,
-            surviving_device_id, deleted_content, deleted_at,
-            deleting_device_id, deleting_device_name,
-        )
-
-    def create_tag_rename_conflict(
-        self,
-        tag_id: str,
-        local_name: str,
-        local_modified_at: int,
-        remote_name: str,
-        remote_modified_at: int,
-        remote_device_id: Optional[str] = None,
-        remote_device_name: Optional[str] = None,
-    ) -> str:
-        """Create a tag rename conflict record."""
-        return self._rust_db.create_tag_rename_conflict(
-            tag_id, local_name, local_modified_at,
-            remote_name, remote_modified_at,
-            remote_device_id, remote_device_name,
-        )
-
-    def create_note_tag_conflict(
-        self,
-        note_id: str,
-        tag_id: str,
-        local_created_at: Optional[int] = None,
-        local_modified_at: Optional[int] = None,
-        local_deleted_at: Optional[int] = None,
-        remote_created_at: Optional[int] = None,
-        remote_modified_at: Optional[int] = None,
-        remote_deleted_at: Optional[int] = None,
-        remote_device_id: Optional[str] = None,
-        remote_device_name: Optional[str] = None,
-    ) -> str:
-        """Create a note_tag conflict record."""
-        return self._rust_db.create_note_tag_conflict(
-            note_id, tag_id,
-            local_created_at, local_modified_at, local_deleted_at,
-            remote_created_at, remote_modified_at, remote_deleted_at,
-            remote_device_id, remote_device_name,
-        )
-
-    def create_tag_parent_conflict(
-        self,
-        tag_id: str,
-        local_parent_id: Optional[str],
-        local_modified_at: int,
-        remote_parent_id: Optional[str],
-        remote_modified_at: int,
-        remote_device_id: Optional[str] = None,
-        remote_device_name: Optional[str] = None,
-    ) -> str:
-        """Create a tag parent_id conflict record."""
-        return self._rust_db.create_tag_parent_conflict(
-            tag_id, local_parent_id, local_modified_at,
-            remote_parent_id, remote_modified_at,
-            remote_device_id, remote_device_name,
-        )
-
-    def create_tag_delete_conflict(
-        self,
-        tag_id: str,
-        surviving_name: str,
-        surviving_parent_id: Optional[str],
-        surviving_modified_at: int,
-        surviving_device_id: Optional[str] = None,
-        surviving_device_name: Optional[str] = None,
-        deleted_at: int = 0,
-        deleting_device_id: Optional[str] = None,
-        deleting_device_name: Optional[str] = None,
-    ) -> str:
-        """Create a tag delete conflict record (rename vs delete)."""
-        return self._rust_db.create_tag_delete_conflict(
-            tag_id, surviving_name, surviving_parent_id, surviving_modified_at,
-            surviving_device_id, surviving_device_name,
-            deleted_at, deleting_device_id, deleting_device_name,
-        )
-
     # ============================================================================
-    # Conflict query and resolution methods
+    # Versioned fields, conflicts and synced settings (voicecore versions.rs)
     # ============================================================================
 
     def get_unresolved_conflict_counts(self) -> Dict[str, int]:
-        """Get counts of unresolved conflicts by type."""
+        """Counts of unresolved conflicts keyed by kind, plus "total"."""
         return self._rust_db.get_unresolved_conflict_counts()
 
-    def get_note_content_conflicts(
-        self, include_resolved: bool = False
-    ) -> List[Dict[str, Any]]:
-        """Get note content conflicts."""
-        return self._rust_db.get_note_content_conflicts(include_resolved)
+    def get_conflicts(self, include_resolved: bool = False) -> List[Dict[str, Any]]:
+        """All conflicts, newest first (unresolved only unless include_resolved)."""
+        return self._rust_db.get_conflicts(include_resolved)
 
-    def get_note_delete_conflicts(
-        self, include_resolved: bool = False
-    ) -> List[Dict[str, Any]]:
-        """Get note delete conflicts."""
-        return self._rust_db.get_note_delete_conflicts(include_resolved)
+    def get_entity_conflicts(self, entity_type: str, entity_id: str) -> List[Dict[str, Any]]:
+        """Unresolved conflicts of one entity, e.g. ("note", note_id)."""
+        return self._rust_db.get_entity_conflicts(entity_type, entity_id)
 
-    def get_tag_rename_conflicts(
-        self, include_resolved: bool = False
-    ) -> List[Dict[str, Any]]:
-        """Get tag rename conflicts."""
-        return self._rust_db.get_tag_rename_conflicts(include_resolved)
+    def get_conflict(self, id_or_prefix: str) -> Optional[Dict[str, Any]]:
+        """One conflict by id or unique prefix; None when nothing matches."""
+        return self._rust_db.get_conflict(id_or_prefix)
 
-    def get_tag_parent_conflicts(
-        self, include_resolved: bool = False
-    ) -> List[Dict[str, Any]]:
-        """Get tag parent_id conflicts."""
-        return self._rust_db.get_tag_parent_conflicts(include_resolved)
+    def get_note_conflicts(self, note_id: str) -> List[Dict[str, Any]]:
+        """Unresolved conflicts touching a note: its fields, tag links, attachments, transcriptions."""
+        return self._rust_db.get_note_conflicts(note_id)
 
-    def get_tag_delete_conflicts(
-        self, include_resolved: bool = False
-    ) -> List[Dict[str, Any]]:
-        """Get tag delete conflicts (rename vs delete)."""
-        return self._rust_db.get_tag_delete_conflicts(include_resolved)
+    def get_note_conflict_types(self, note_id: str) -> List[str]:
+        """Kinds of unresolved conflict touching a note (content, delete, tag, ...)."""
+        return self._rust_db.get_note_conflict_types(note_id)
 
-    def resolve_note_content_conflict(
-        self, conflict_id: str, new_content: str
-    ) -> bool:
-        """Resolve a note content conflict."""
-        return self._rust_db.resolve_note_content_conflict(conflict_id, new_content)
+    def accept_conflict(self, conflict_id: str) -> bool:
+        """Accept the merged value as it stands. Propagates to every peer."""
+        return self._rust_db.accept_conflict(conflict_id)
 
-    def resolve_note_delete_conflict(
-        self, conflict_id: str, restore_note: bool
-    ) -> bool:
-        """Resolve a note delete conflict."""
-        return self._rust_db.resolve_note_delete_conflict(conflict_id, restore_note)
+    def resolve_conflict_with_content(self, conflict_id: str, content: str) -> bool:
+        """Resolve a conflict by writing a new value for the field."""
+        return self._rust_db.resolve_conflict_with_content(conflict_id, content)
 
-    def resolve_tag_rename_conflict(
-        self, conflict_id: str, new_name: str
-    ) -> bool:
-        """Resolve a tag rename conflict."""
-        return self._rust_db.resolve_tag_rename_conflict(conflict_id, new_name)
+    def get_field_history(self, entity_type: str, entity_id: str, field: str) -> List[Dict[str, Any]]:
+        """Every version of one field, oldest first."""
+        return self._rust_db.get_field_history(entity_type, entity_id, field)
+
+    def get_version(self, version_id: str) -> Optional[Dict[str, Any]]:
+        """One field version by hex id."""
+        return self._rust_db.get_version(version_id)
+
+    def get_setting(self, key: str) -> Optional[str]:
+        """A synced setting value (shared by every device), or None."""
+        return self._rust_db.get_setting(key)
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Set a synced setting. Concurrent changes are merged and flagged."""
+        self._rust_db.set_setting(key, value)
+
+    def get_all_settings(self) -> Dict[str, str]:
+        """All synced settings as a dict."""
+        return self._rust_db.get_all_settings()
 
     # ============================================================================
     # AudioFile and NoteAttachment methods
@@ -710,6 +667,21 @@ class Database:
         """Update an audio file's duration."""
         return self._rust_db.update_audio_file_duration(audio_id, duration_seconds)
 
+    def update_audio_file_created_at(self, audio_id: str, file_created_at: int) -> bool:
+        """Set when a recording was made, for a row that never had it.
+
+        Read off the file or its name by whichever device holds the file; see
+        `core.missing_data`. A repair, not an edit by the user.
+
+        Args:
+            audio_id: Audio file UUID hex string
+            file_created_at: Unix timestamp of when the recording was made
+
+        Returns:
+            True if updated, False if the audio file was not found
+        """
+        return self._rust_db.update_audio_file_created_at(audio_id, file_created_at)
+
     def get_note_attachment_raw(
         self, association_id: str
     ) -> Optional[Dict[str, Any]]:
@@ -802,6 +774,31 @@ class Database:
             List of transcription dicts
         """
         return self._rust_db.get_transcriptions_for_audio_file(audio_file_id)
+
+    def get_recent_transcriptions(
+        self, service: Optional[str] = None, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """The most recent transcriptions, newest first.
+
+        What the transcription queue shows once the work is done; the
+        `service_response` of each row carries what that work cost.
+
+        Args:
+            service: Only this transcription service, or every service if None.
+            limit: At most this many rows. A queue view is a screenful of recent
+                work, not a history.
+
+        Returns:
+            List of transcription dicts, newest first.
+        """
+        return self._rust_db.get_recent_transcriptions(service, limit)
+
+    def get_notes_for_audio_file(self, audio_file_id: str) -> List[str]:
+        """The notes a recording is attached to, as hex ids. Normally one.
+
+        The queue view uses it to say which note each transcription belongs to.
+        """
+        return self._rust_db.get_notes_for_audio_file(audio_file_id)
 
     def delete_transcription(self, transcription_id: str) -> bool:
         """Soft delete a transcription.

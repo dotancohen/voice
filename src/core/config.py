@@ -147,6 +147,18 @@ class Config:
         """Get the directory for TLS certificates."""
         return Path(self._rust_config.get_certs_dir())
 
+    def get_mirror_audio_files(self) -> bool:
+        """Whether this installation downloads every cloud audio file on sync.
+
+        This is a local-only setting (never synced) meant for desktop or server
+        installations that should hold a complete copy of all media.
+        """
+        return self._rust_config.get_mirror_audio_files()
+
+    def set_mirror_audio_files(self, enabled: bool) -> None:
+        """Enable or disable mirroring of all cloud audio files on sync."""
+        self._rust_config.set_mirror_audio_files(enabled)
+
     # ===== AudioFile Configuration =====
 
     def get_audiofile_directory(self) -> Optional[str]:

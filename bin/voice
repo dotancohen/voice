@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run Voice from anywhere: `voice cli sync status`, `voice tui`, `voice gui`.
+# Uses the repository's virtual environment. Honours $VOICE_CONFIG_DIR and -d.
+set -euo pipefail
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+cd "$REPO"
+exec "$REPO/.venv/bin/python" -m src.main "$@"
