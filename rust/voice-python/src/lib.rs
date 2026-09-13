@@ -949,7 +949,7 @@ impl PyDatabase {
     #[pyo3(signature = (filename, file_created_at=None, audio_dir=None))]
     fn create_audio_file(&self, filename: &str, file_created_at: Option<i64>, audio_dir: Option<&str>) -> PyResult<String> {
         self.inner_ref()?
-            .create_audio_file_with_duration(filename, file_created_at, None, voicecore_lib::models::FileOrigin::Imported, audio_dir.map(std::path::Path::new))
+            .create_audio_file(filename, file_created_at, None, voicecore_lib::models::FileOrigin::Imported, audio_dir.map(std::path::Path::new))
             .map_err(voice_error_to_pyerr)
     }
 
@@ -994,20 +994,6 @@ impl PyDatabase {
     fn delete_audio_file(&self, audio_file_id: &str) -> PyResult<bool> {
         self.inner_ref()?
             .delete_audio_file(audio_file_id)
-            .map_err(voice_error_to_pyerr)
-    }
-
-    /// Create audio file with duration
-    #[pyo3(signature = (filename, file_created_at=None, duration_seconds=None, audio_dir=None))]
-    fn create_audio_file_with_duration(
-        &self,
-        filename: &str,
-        file_created_at: Option<i64>,
-        duration_seconds: Option<i64>,
-        audio_dir: Option<&str>,
-    ) -> PyResult<String> {
-        self.inner_ref()?
-            .create_audio_file_with_duration(filename, file_created_at, duration_seconds, voicecore_lib::models::FileOrigin::Imported, audio_dir.map(std::path::Path::new))
             .map_err(voice_error_to_pyerr)
     }
 
@@ -1062,7 +1048,7 @@ impl PyDatabase {
         storage_key: &str,
     ) -> PyResult<bool> {
         self.inner_ref()?
-            .update_audio_file_storage(audio_file_id, storage_provider, storage_key)
+            .update_audio_file_storage(audio_file_id, storage_provider, storage_key, false)
             .map_err(voice_error_to_pyerr)
     }
 
@@ -1479,7 +1465,7 @@ impl PyConfig {
             (Some(root), Some(dir)) if std::path::Path::new(root) != dir.as_path() => {
                 config::Config::open_account(std::path::Path::new(root), dir).map_err(voice_error_to_pyerr)?
             }
-            _ => config::Config::new(path).map_err(voice_error_to_pyerr)?,
+            _ => config::Config::new(path, None).map_err(voice_error_to_pyerr)?,
         };
         Ok(Self {
             inner: std::sync::Mutex::new(cfg),
@@ -1876,7 +1862,7 @@ impl PySyncClient {
 
         // Create Config from config_dir
         let config_path = config_dir.map(std::path::PathBuf::from);
-        let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+        let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
 
         // Create Database from config's database_file path
         let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
@@ -2035,7 +2021,7 @@ impl PySyncClient {
     fn send_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, source_path: &str) -> PyResult<PyObject> {
         let source = std::path::Path::new(source_path);
         let result = self.runtime.block_on(
-            self.inner.send_audio_file(peer_url, audio_id, source)
+            self.inner.send_audio_file(peer_url, audio_id, source, 0, 0, 0, 1)
         );
         let dict = PyDict::new(py);
         match result {
@@ -2146,7 +2132,7 @@ fn account_remove(root: &str, selector: &str) -> PyResult<()> {
 #[pyo3(signature = (urls, config_dir=None))]
 fn pairing_offer(urls: Vec<String>, config_dir: Option<&str>) -> PyResult<String> {
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     let setup = voicecore_lib::pairing::offer(&db, &cfg, urls).map_err(voice_error_to_pyerr)?;
     Ok(setup.to_text())
@@ -2160,7 +2146,7 @@ fn pairing_offer(urls: Vec<String>, config_dir: Option<&str>) -> PyResult<String
 fn hosting_offer(root: &str, urls: Vec<String>, label: Option<&str>) -> PyResult<String> {
     let root = std::path::Path::new(root);
     let index = voicecore_lib::accounts::AccountIndex::open(root).map_err(voice_error_to_pyerr)?;
-    let cfg = config::Config::new(Some(root.to_path_buf())).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(Some(root.to_path_buf()), None).map_err(voice_error_to_pyerr)?;
     let setup = voicecore_lib::pairing::offer_hosting(&index, &cfg, label, urls).map_err(voice_error_to_pyerr)?;
     Ok(setup.to_text())
 }
@@ -2170,7 +2156,7 @@ fn hosting_offer(root: &str, urls: Vec<String>, label: Option<&str>) -> PyResult
 #[pyo3(signature = (config_dir=None))]
 fn pairing_withdraw(config_dir: Option<&str>) -> PyResult<()> {
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     voicecore_lib::pairing::withdraw(&db).map_err(voice_error_to_pyerr)
 }
@@ -2192,7 +2178,7 @@ fn device_key_hash(key: &str) -> String {
 #[pyo3(signature = (config_dir=None))]
 fn ensure_own_device_card(config_dir: Option<&str>) -> PyResult<String> {
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let mut cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let mut cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     let card = voicecore_lib::auth::ensure_own_device_card(&db, &mut cfg).map_err(voice_error_to_pyerr)?;
     Ok(card.device_id)
@@ -2204,7 +2190,7 @@ fn ensure_own_device_card(config_dir: Option<&str>) -> PyResult<String> {
 #[pyo3(signature = (config_dir=None))]
 fn certificate_fingerprint(config_dir: Option<&str>) -> PyResult<String> {
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let (_, _, fingerprint) = voicecore_lib::tls::ensure_server_certificate(&cfg, false).map_err(voice_error_to_pyerr)?;
     Ok(fingerprint)
 }
@@ -2228,7 +2214,7 @@ fn sync_all_peers<'py>(
 
     // Create Config and Database from config_dir
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
 
     // Wrap in Arc<Mutex<>> for sync_all_peers
@@ -2305,7 +2291,7 @@ fn cloud_context(
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     let audiofile_dir = cfg.audiofile_directory().ok_or_else(|| {
         pyo3::exceptions::PyRuntimeError::new_err(
@@ -2397,7 +2383,7 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
 
     // Create Config and Database from config_dir
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
 
     // Get audiofile directory
@@ -2411,7 +2397,7 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
 
     // Run the upload without the interpreter lock; the database moves in
     let result: Result<file_storage::UploadPendingResult, file_storage::FileStorageError> =
-        py.allow_threads(move || runtime.block_on(file_storage::upload_pending_audio_files(&db, &audiofile_path, key.as_ref())));
+        py.allow_threads(move || runtime.block_on(file_storage::upload_pending_audio_files(&db, &audiofile_path, None, None, key.as_ref())));
 
     match result {
         Ok(r) => Ok(PyUploadPendingResult {
@@ -2430,7 +2416,7 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
 fn recording_key_export(config_dir: Option<&str>) -> PyResult<String> {
-    let mut cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    let mut cfg = config::Config::new(config_dir.map(std::path::PathBuf::from), None).map_err(voice_error_to_pyerr)?;
     if cfg.recording_key_text().is_empty() {
         cfg.set_recording_key(&voicecore_lib::crypto::RecordingKey::generate().to_text()).map_err(voice_error_to_pyerr)?;
     }
@@ -2442,7 +2428,7 @@ fn recording_key_export(config_dir: Option<&str>) -> PyResult<String> {
 #[pyfunction]
 #[pyo3(signature = (text, config_dir=None))]
 fn recording_key_import(text: &str, config_dir: Option<&str>) -> PyResult<()> {
-    let mut cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    let mut cfg = config::Config::new(config_dir.map(std::path::PathBuf::from), None).map_err(voice_error_to_pyerr)?;
     cfg.set_recording_key(text).map_err(voice_error_to_pyerr)?;
     cfg.set_recording_key_exported(true).map_err(voice_error_to_pyerr)
 }
@@ -2451,7 +2437,7 @@ fn recording_key_import(text: &str, config_dir: Option<&str>) -> PyResult<()> {
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
 fn encryption_state<'py>(py: Python<'py>, config_dir: Option<&str>) -> PyResult<PyObject> {
-    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from), None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     let d = PyDict::new(py);
     d.set_item("has_key", !cfg.recording_key_text().is_empty())?;
@@ -2464,7 +2450,7 @@ fn encryption_state<'py>(py: Python<'py>, config_dir: Option<&str>) -> PyResult<
 #[pyfunction]
 #[pyo3(signature = (on, config_dir=None))]
 fn set_encryption_on(on: bool, config_dir: Option<&str>) -> PyResult<()> {
-    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from), None).map_err(voice_error_to_pyerr)?;
     if on && (cfg.recording_key_text().is_empty() || !cfg.recording_key_exported()) {
         return Err(pyo3::exceptions::PyRuntimeError::new_err("Export the recording key first: without it these recordings cannot be played"));
     }
@@ -2530,7 +2516,7 @@ fn start_sync_server(
 
     if let Some(root) = root {
         let root_path = std::path::PathBuf::from(root);
-        let machine = config::Config::new(Some(root_path.clone())).map_err(voice_error_to_pyerr)?;
+        let machine = config::Config::new(Some(root_path.clone()), None).map_err(voice_error_to_pyerr)?;
         let server_port = port.unwrap_or_else(|| machine.sync_server_port());
         let served = voicecore_lib::accounts::AccountIndex::open(&root_path)
             .and_then(|i| i.list())
@@ -2564,7 +2550,7 @@ fn start_sync_server(
 
     // Create Config and Database from config_dir
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
 
     // Get port from config if not specified
@@ -2624,7 +2610,7 @@ fn backup_now(py: Python<'_>, config_dir: Option<&str>, root: Option<&str>) -> P
             Arc::new(source)
         }
         (_, Some(dir)) => {
-            let cfg = config::Config::new(Some(std::path::PathBuf::from(dir))).map_err(voice_error_to_pyerr)?;
+            let cfg = config::Config::new(Some(std::path::PathBuf::from(dir)), None).map_err(voice_error_to_pyerr)?;
             let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
             let account_id = db.account_id().map_err(voice_error_to_pyerr)?;
             Arc::new(sync_server::SingleAccount { account_id, handle: sync_server::AccountHandle { db: Arc::new(Mutex::new(db)), config: Arc::new(Mutex::new(cfg)) } })
@@ -2632,8 +2618,8 @@ fn backup_now(py: Python<'_>, config_dir: Option<&str>, root: Option<&str>) -> P
         _ => return Err(pyo3::exceptions::PyValueError::new_err("Give a config_dir or a root")),
     };
     let keep = match config_dir {
-        Some(dir) => config::Config::new(Some(std::path::PathBuf::from(dir))).map_err(voice_error_to_pyerr)?.backup().keep as usize,
-        None => config::Config::new(root.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?.backup().keep as usize,
+        Some(dir) => config::Config::new(Some(std::path::PathBuf::from(dir)), None).map_err(voice_error_to_pyerr)?.backup().keep as usize,
+        None => config::Config::new(root.map(std::path::PathBuf::from), None).map_err(voice_error_to_pyerr)?.backup().keep as usize,
     };
     let (made, failed) = py.allow_threads(move || sync_server::backup_open_accounts(source.as_ref(), keep));
     if !failed.is_empty() {
@@ -2647,7 +2633,7 @@ fn backup_now(py: Python<'_>, config_dir: Option<&str>, root: Option<&str>) -> P
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
 fn backup_due(config_dir: Option<&str>) -> PyResult<bool> {
-    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from), None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     let account_id = db.account_id().map_err(voice_error_to_pyerr)?;
     Ok(sync_server::backup_due(&cfg, &account_id))
@@ -2801,7 +2787,7 @@ fn bucket_check_with<'py>(py: Python<'py>, access_key_id: &str, secret_access_ke
 #[pyo3(signature = (config_dir=None))]
 fn bucket_check<'py>(py: Python<'py>, config_dir: Option<&str>) -> PyResult<PyObject> {
     let config_path = config_dir.map(std::path::PathBuf::from);
-    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
     let saved = db.get_file_storage_config_struct().map_err(voice_error_to_pyerr)?;
     if !saved.is_enabled() {
