@@ -567,17 +567,20 @@ class Database:
         self,
         filename: str,
         file_created_at: Optional[int] = None,
+        audio_dir: "Path | str | None" = None,
     ) -> str:
-        """Create a new audio file record.
+        """Create the record of an imported file.
 
         Args:
-            filename: Original filename
+            filename: The file's own name; it keeps it in the audio folder, with
+                " (2)" and so on before the extension when the name is taken
             file_created_at: Optional Unix timestamp for file creation time
+            audio_dir: The audio folder, so a file already there takes its name too
 
         Returns:
             Audio file ID (hex string)
         """
-        return self._rust_db.create_audio_file(filename, file_created_at)
+        return self._rust_db.create_audio_file(filename, file_created_at, str(audio_dir) if audio_dir else None)
 
     def store_content_hash(self, audio_id: str, audio_dir: "Path | str") -> str:
         """Compute and store the recording's content hash from its file under

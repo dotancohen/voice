@@ -104,13 +104,16 @@ class AudioFileManager:
         self.audiofile_directory.mkdir(parents=True, exist_ok=True)
 
     def import_file(self, source: Path | str, local_name: str) -> Path:
-        """Copy a recording into the audio directory under the name its row
-        carries (``local_name``, decided by the core: the recording's start,
-        a hyphen, the tail of its id, and the extension).
+        """Copy a file into the audio directory under the name its row carries
+        (``local_name``, decided by the core: an imported file's own name, with
+        " (2)" and so on when the name was taken). A file already there is
+        never overwritten.
 
         Raises:
             FileNotFoundError: If the source file doesn't exist.
-            ValueError: If the name's extension is not a supported format.
+            FileExistsError: If a file of that name is already in the directory.
+            ValueError: If the name's extension is not a supported format, or
+                the name is not a file name.
         """
         source = Path(source)
         if not source.exists():
@@ -122,11 +125,14 @@ class AudioFileManager:
                 f"Unsupported audio format: {extension or local_name}. "
                 f"Supported formats: {', '.join(sorted(AUDIO_FILE_FORMATS))}"
             )
-        if "/" in local_name or local_name.startswith("."):
-            raise ValueError(f"Not a file name: {local_name}")
+        # Any POSIX name: everything but empty, ".", "..", "/" and NUL
+        if local_name in ("", ".", "..") or "/" in local_name or "\0" in local_name:
+            raise ValueError(f"Not a file name: {local_name!r}")
 
         self.ensure_directories()
         dest = self.audiofile_directory / local_name
+        if dest.exists():
+            raise FileExistsError(f"A file named {local_name} is already in the audio folder; nothing was overwritten")
         shutil.copy2(source, dest)
         return dest
 

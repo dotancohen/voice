@@ -140,7 +140,9 @@ class TestAudiofileShowMediaStatus:
         name = local_name_of(config_dir, audio_id)
         (audio_dir / name).write_bytes(b"x")
         result = run_cli(config_dir, "audiofile-show", audio_id)
-        assert name in result.stdout and name.endswith(".mp3")
+        # An imported file keeps its own name, extension case and all (FILE-15)
+        assert name == "הקלטה.MP3"
+        assert name in result.stdout
         assert "not on this device" not in result.stdout
 
     def test_list_reports_media_status(self, storage_env) -> None:

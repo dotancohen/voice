@@ -108,7 +108,7 @@ class TestImportFile:
             manager.import_file(source, f"{audio_id}.txt")
 
     def test_the_name_is_used_as_the_row_gives_it(self, tmp_path: Path) -> None:
-        """The core decides the name (the start, the id's tail, a lowercase extension); the manager copies to it."""
+        """The core decides the name (FILE-15); the manager copies to it and refuses a path that leaves the folder."""
         audio_dir = tmp_path / "audiofiles"
         manager = AudioFileManager(audio_dir)
 
@@ -119,6 +119,24 @@ class TestImportFile:
         assert dest.name == "2026_09_21_14_30_59-abcdefgh.mp3"
         with pytest.raises(ValueError, match="Not a file name"):
             manager.import_file(source, "../escape.mp3")
+
+    def test_any_posix_name_is_kept_and_nothing_is_overwritten(self, tmp_path: Path) -> None:
+        """FILE-15: an imported file keeps its own name, a leading dot and spaces
+        included; a file already in the folder is never overwritten."""
+        audio_dir = tmp_path / "audiofiles"
+        manager = AudioFileManager(audio_dir)
+        first = tmp_path / "first.mp3"
+        first.write_bytes(b"the first file")
+        second = tmp_path / "second.mp3"
+        second.write_bytes(b"another file")
+
+        assert manager.import_file(first, ".הקלטה עם רווח.mp3").name == ".הקלטה עם רווח.mp3"
+        with pytest.raises(FileExistsError, match="nothing was overwritten"):
+            manager.import_file(second, ".הקלטה עם רווח.mp3")
+        assert (audio_dir / ".הקלטה עם רווח.mp3").read_bytes() == b"the first file"
+        for not_a_name in ("a/b.mp3", "sub/../x.mp3"):
+            with pytest.raises(ValueError, match="Not a file name"):
+                manager.import_file(second, not_a_name)
 
 
 class TestGetFileCreatedAt:

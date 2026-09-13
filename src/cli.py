@@ -422,7 +422,8 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
     2. Get file_created_at from filesystem metadata
     3. Create Note with content="Audio: {filename}", created_at=file_created_at
     4. Create AudioFile record
-    5. Copy file to {audiofile_directory}/{uuid}.{ext}
+    5. Copy file to {audiofile_directory} under its own name, with " (2)" and
+       so on before the extension when the name is taken
 
     Args:
         db: Database instance
@@ -478,8 +479,8 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
             file_created_at = manager.get_file_created_at(audio_path)
             file_created_at_ts = datetime_to_timestamp(file_created_at)
 
-            # Create AudioFile record in database; its row names the file
-            audio_file_id = db.create_audio_file(audio_path.name, file_created_at_ts)
+            # Create AudioFile record in database; the file keeps its own name
+            audio_file_id = db.create_audio_file(audio_path.name, file_created_at_ts, manager.audiofile_directory)
             row = db.get_audio_file(audio_file_id)
 
             # Copy file to audiofile_directory

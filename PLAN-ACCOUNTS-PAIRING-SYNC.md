@@ -749,6 +749,11 @@ a bug in any of them, or in this plan, must be undoable.
   the only way a file is found: the server's lookup by id prefix in
   `sync_server.rs` and `audio_local_path` in `models.rs` are replaced by it.
   A file arriving by fetch or download is named the same way from its row.
+  **Changed by the owner, 2026-09-13:** only files Voice records are named
+  this way. An imported file keeps its own name, any POSIX name, in the same
+  folder; a taken name gets ` (2)` and so on; the name on the row is always
+  the name on disk; a row from before the column keeps `<id>.<ext>`, because
+  a migration does not change names that refer to files (FILE-15).
 - **A speech bitrate for recordings.** `RecorderPreferences.kt` offers Opus at
   128 kb/s, AAC at 96 kb/s and 16 kHz WAV. A fourth option is **added**, not
   substituted: Opus at 32 kb/s, 48 kHz, in the same Ogg container, labelled
@@ -1045,6 +1050,17 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    marked to run on request (`-m audit`) rather than in every offline run.
    Install with `cargo install cargo-audit` and `.venv/bin/pip install
    pip-audit`.
+7. **The name of a recording on a device it arrives at** by sync, fetch or
+   download: named like a recording today, whether it was recorded or
+   imported. Not decided.
+8. **Importing a file without a known audio extension** (for example `memo`
+   or `memo.aac`): the desktop importer refuses it today. Not decided.
+9. **The form of the suffix** for a taken name: ` (2)` before the extension
+   was chosen, as Android and most file managers do. Not confirmed.
+10. **Code that accommodates data from before this branch:** a content hash
+    computed when a row has none; a clear key in an old `config.json`
+    rewritten wrapped; columns added by migration instead of in the schema;
+    functions kept as wrappers around their replacements. Not decided.
 
 Resolved on 2026-09-12: `$VOICE_CONFIG_DIR` is the only root override; any
 device can show its code; the tests of removed modules go with them, with the

@@ -944,10 +944,12 @@ impl PyDatabase {
     // AudioFile methods
     // ========================================================================
 
-    #[pyo3(signature = (filename, file_created_at=None))]
-    fn create_audio_file(&self, filename: &str, file_created_at: Option<i64>) -> PyResult<String> {
+    /// An imported file's row: it keeps its own name, and a name taken by a
+    /// row or by a file in `audio_dir` gets " (2)" and so on (FILE-15).
+    #[pyo3(signature = (filename, file_created_at=None, audio_dir=None))]
+    fn create_audio_file(&self, filename: &str, file_created_at: Option<i64>, audio_dir: Option<&str>) -> PyResult<String> {
         self.inner_ref()?
-            .create_audio_file(filename, file_created_at)
+            .create_audio_file_with_duration(filename, file_created_at, None, voicecore_lib::models::FileOrigin::Imported, audio_dir.map(std::path::Path::new))
             .map_err(voice_error_to_pyerr)
     }
 
@@ -996,15 +998,16 @@ impl PyDatabase {
     }
 
     /// Create audio file with duration
-    #[pyo3(signature = (filename, file_created_at=None, duration_seconds=None))]
+    #[pyo3(signature = (filename, file_created_at=None, duration_seconds=None, audio_dir=None))]
     fn create_audio_file_with_duration(
         &self,
         filename: &str,
         file_created_at: Option<i64>,
         duration_seconds: Option<i64>,
+        audio_dir: Option<&str>,
     ) -> PyResult<String> {
         self.inner_ref()?
-            .create_audio_file_with_duration(filename, file_created_at, duration_seconds)
+            .create_audio_file_with_duration(filename, file_created_at, duration_seconds, voicecore_lib::models::FileOrigin::Imported, audio_dir.map(std::path::Path::new))
             .map_err(voice_error_to_pyerr)
     }
 
