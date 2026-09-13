@@ -911,7 +911,10 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    The index commands and the listener run on a root without an account
    and never create the default one.
 7. Stage 7, discovery; Stage 5's remaining interface work; Stage 10, proof;
-   Stage 12, diagnostics.
+   Stage 12, diagnostics. **Stage 12 done 2026-09-13**: the page-commit
+   proof, the request id on every request and result, the clock skew
+   warning, `sync check` and "Check connection" (DIAG-1..5), the gzipped
+   feed.
 8. Stage 8, the wizard, with Stage 14's bucket hardening and Stage 13's
    bucket items.
 9. Stage 13's bitrate option can go in at any point; it touches only the

@@ -1715,6 +1715,12 @@ pub struct PySyncResult {
     /// Non-fatal problems (e.g. cloud uploads that will be retried next sync)
     #[pyo3(get)]
     warnings: Vec<String>,
+    /// The id of the operation, on every request of it and in both logs
+    #[pyo3(get)]
+    request_id: String,
+    /// The peer's clock minus this device's, in seconds, past a minute; else 0
+    #[pyo3(get)]
+    clock_skew_seconds: i64,
 }
 
 impl From<sync_client::SyncResult> for PySyncResult {
@@ -1729,6 +1735,8 @@ impl From<sync_client::SyncResult> for PySyncResult {
             bytes_moved: result.bytes_moved,
             errors: result.errors,
             warnings: result.warnings,
+            request_id: result.request_id,
+            clock_skew_seconds: result.clock_skew_seconds,
         }
     }
 }
@@ -1793,6 +1801,22 @@ impl PySyncClient {
         dict.set_item("peer_name", joined.peer_name)?;
         dict.set_item("peer_url", joined.peer_url)?;
         Ok(dict.into_any().unbind())
+    }
+
+    /// Check the connection to a peer (Stage 12): one row per thing that
+    /// can be wrong, as dicts with name, passed, detail and code.
+    fn check<'py>(&self, py: Python<'py>, peer_id: &str) -> PyResult<PyObject> {
+        let rows = self.runtime.block_on(self.inner.check(peer_id));
+        let list = pyo3::types::PyList::empty(py);
+        for row in rows {
+            let d = PyDict::new(py);
+            d.set_item("name", row.name)?;
+            d.set_item("passed", row.passed)?;
+            d.set_item("detail", row.detail)?;
+            d.set_item("code", row.code)?;
+            list.append(d)?;
+        }
+        Ok(list.into_any().unbind())
     }
 
     /// Perform full bidirectional sync with a peer

@@ -1667,6 +1667,32 @@ def _peer_by_prefix(config: Config, prefix: str) -> Optional[Dict[str, Any]]:
     return matches[0] if len(matches) == 1 else None
 
 
+def cmd_sync_check(config: Config, args: argparse.Namespace) -> int:
+    """Check the connection to a peer: one row per thing that can be wrong (Stage 12)."""
+    peer = _peer_by_prefix(config, args.peer_id)
+    if peer is None:
+        print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
+        return 1
+    client = SyncClient(str(config.get_config_dir()))
+    rows = client.check(peer["peer_id"])
+    passed = all(r["passed"] for r in rows)
+    if args.format == "json":
+        print(json.dumps({"peer_id": peer["peer_id"], "passed": passed, "rows": rows}, indent=2))
+        return 0 if passed else 1
+    width = max(len(r["name"]) for r in rows)
+    for r in rows:
+        mark = "ok  " if r["passed"] else "FAIL"
+        code = f"  ({r['code']})" if r["code"] else ""
+        print(f"{mark}  {r['name']:<{width}}  {r['detail']}{code}")
+    return 0 if passed else 1
+
+
+def _request_line(result: Any) -> str:
+    """The request id of an operation, for the end of its result (Stage 12)."""
+    request_id = getattr(result, "request_id", "")
+    return f"  Request {request_id}" if request_id else ""
+
+
 def cmd_sync_operation(config: Config, operation: str, args: argparse.Namespace) -> int:
     """Deliver, exchange, send or fetch with one peer (the terms table)."""
     peer = _peer_by_prefix(config, args.peer_id)
@@ -1696,6 +1722,8 @@ def cmd_sync_operation(config: Config, operation: str, args: argparse.Namespace)
         for error in result.errors:
             print(f"  - {error}")
     _print_sync_warnings(result, "  ")
+    if _request_line(result):
+        print(_request_line(result))
     return 0 if result.success else 1
 
 
@@ -1890,11 +1918,15 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
                     for error in result.errors:
                         print(f"    - {error}")
                 _print_sync_warnings(result, "  ")
+                if _request_line(result):
+                    print(_request_line(result))
             else:
                 print(f"Sync with {peer_id} failed:")
                 for error in result.errors:
                     print(f"  - {error}")
                 _print_sync_warnings(result, "  ")
+                if _request_line(result):
+                    print(_request_line(result))
                 return 1
     else:
         # Sync with all peers
@@ -1956,6 +1988,8 @@ def _sync_result_to_json(result: Any) -> Dict[str, Any]:
         "bytes_moved": getattr(result, "bytes_moved", 0),
         "errors": result.errors,
         "warnings": list(getattr(result, "warnings", None) or []),
+        "request_id": getattr(result, "request_id", ""),
+        "clock_skew_seconds": getattr(result, "clock_skew_seconds", 0),
     }
 
 
@@ -3533,6 +3567,10 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # sync status
     sync_subparsers.add_parser("status", help="Show sync status and device info")
 
+    # sync check
+    check_parser = sync_subparsers.add_parser("check", help="Check the connection to a peer: reachability, certificate, account, key, clock, free space, listener, each with its code")
+    check_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
+
     # sync list-peers
     sync_subparsers.add_parser("list-peers", help="List configured sync peers")
 
@@ -4080,6 +4118,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_sync_remove_peer(config, args)
             elif sync_cmd == "now":
                 return cmd_sync_now(db, config, args)
+            elif sync_cmd == "check":
+                return cmd_sync_check(config, args)
             elif sync_cmd in ("deliver", "exchange", "send", "fetch"):
                 return cmd_sync_operation(config, sync_cmd, args)
             elif sync_cmd == "conflicts":
