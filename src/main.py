@@ -345,7 +345,14 @@ def main() -> NoReturn:
                 break
 
         new_argv.insert(insert_pos, default_interface)
-        args = parser.parse_args(new_argv[1:])
+        reparsed = parser.parse_args(new_argv[1:])
+        # The second parse makes new arguments: carry over everything startup
+        # has already worked out (the account's directory, root and label),
+        # or the interface starts without its account
+        for name, value in vars(args).items():
+            if not hasattr(reparsed, name):
+                setattr(reparsed, name, value)
+        args = reparsed
 
     # Dispatch to appropriate interface
     if args.interface == "gui":
