@@ -11,10 +11,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -97,6 +98,34 @@ def refusal_code(errors: List[str]) -> str:
             if code in sentence:
                 return code
     return ""
+
+
+class OperationWorker(QThread):
+    """One operation on a thread of its own, so the window stays alive and
+    Cancel works; progress arrives as sentences (Stage 4)."""
+
+    progressed = Signal(str)
+    done = Signal(object)
+
+    def __init__(self, client, method_name: str, peer_id: str, parent=None) -> None:
+        super().__init__(parent)
+        self.client = client
+        self.method_name = method_name
+        self.peer_id = peer_id
+
+    def run(self) -> None:
+        self.client.set_progress(lambda stage, done, total, bytes_moved, sentence: self.progressed.emit(sentence))
+        try:
+            result = getattr(self.client, self.method_name)(self.peer_id)
+        except Exception as e:  # noqa: BLE001 - handed to the window
+            result = e
+        finally:
+            self.client.set_progress(None)
+        self.done.emit(result)
+
+
+# The idle-stop choices: hours of silence after which the listener stops
+IDLE_STOP_CHOICES = [(0, "keep listening"), (1, "stop after 1 hour of silence"), (4, "stop after 4 hours of silence"), (8, "stop after 8 hours of silence")]
 
 
 class SyncDialog(QDialog):
@@ -202,8 +231,17 @@ class SyncDialog(QDialog):
         self._fix: Optional[Callable[[], None]] = None
         self.fix_button.clicked.connect(lambda: self._fix() if self._fix else None)
         layout.addWidget(self.fix_button)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setAccessibleDescription("Stop the operation under way; a transfer continues from where it stopped next time")
+        self.cancel_button.hide()
+        self.cancel_button.clicked.connect(self._cancel)
+        layout.addWidget(self.cancel_button)
+        self._worker: Optional[OperationWorker] = None
+        self._client = None
 
-        # Stage 6: the listener, the same switch as the File menu's
+        # Stage 6: the listener, the same switch as the File menu's, and
+        # the hours of silence after which it stops itself
+        listen_row = QHBoxLayout()
         self.listen_checkbox = QCheckBox("Listen for peers")
         self.listen_checkbox.setAccessibleDescription("Let other devices of the account reach this computer")
         if listen_action is not None:
@@ -212,7 +250,17 @@ class SyncDialog(QDialog):
             listen_action.toggled.connect(self.listen_checkbox.setChecked)
         else:
             self.listen_checkbox.setEnabled(False)
-        layout.addWidget(self.listen_checkbox)
+        listen_row.addWidget(self.listen_checkbox)
+        self.idle_stop = QComboBox()
+        self.idle_stop.setAccessibleName("When the listener stops itself")
+        for hours, label in IDLE_STOP_CHOICES:
+            self.idle_stop.addItem(label, hours)
+        current = self.config.listener_idle_stop_hours()
+        self.idle_stop.setCurrentIndex(next((i for i, (h, _) in enumerate(IDLE_STOP_CHOICES) if h == current), 0))
+        self.idle_stop.currentIndexChanged.connect(lambda i: self.config.set_listener_idle_stop_hours(int(self.idle_stop.itemData(i))))
+        listen_row.addWidget(self.idle_stop)
+        listen_row.addStretch()
+        layout.addLayout(listen_row)
 
         # This device, in plain sight
         self.device_label = QLabel()
@@ -374,25 +422,47 @@ class SyncDialog(QDialog):
         self._run("exchange", peer)
 
     def _run(self, operation: str, peer: Dict[str, Any]) -> None:
+        """The operation on a worker thread, with progress and Cancel (Stage 4)."""
         from voicecore import SyncClient
 
+        if self._worker is not None and self._worker.isRunning():
+            self.result_label.setText("An operation is under way; cancel it first.")
+            return
         self.result_label.setText(f"{dict((k, v) for k, v, _ in OPERATIONS)[operation]} with {peer['peer_name']}…")
         self.fix_button.hide()
-        client = SyncClient(str(self.config.get_config_dir()))
-        method = {
-            "sync": client.sync_with_peer,
-            "deliver": client.deliver,
-            "exchange": client.exchange,
-            "send": client.send_to_peer,
-            "fetch": client.fetch_from_peer,
-        }[operation]
-        from src.core.discovery import run_with_discovery
+        self.cancel_button.show()
+        self.operation_button.setEnabled(False)
+        self._client = SyncClient(str(self.config.get_config_dir()))
+        method_name = {"sync": "sync_with_peer", "deliver": "deliver", "exchange": "exchange", "send": "send_to_peer", "fetch": "fetch_from_peer"}[operation]
+        self._worker = OperationWorker(self._client, method_name, peer["peer_id"], parent=self)
+        self._worker.progressed.connect(self.result_label.setText)
+        self._worker.done.connect(lambda result, o=operation, p=peer: self._finished(o, p, result))
+        self._worker.start()
 
-        try:
-            result = run_with_discovery(self.config, self.db.account_id(), peer, method)
-        except Exception as e:  # noqa: BLE001
-            self.result_label.setText(f"{operation} with {peer['peer_name']} could not run: {e}")
+    def _cancel(self) -> None:
+        if self._client is not None:
+            self._client.cancel()
+            self.result_label.setText("Cancelling at the next page, file or chunk…")
+
+    def _finished(self, operation: str, peer: Dict[str, Any], result: Any) -> None:
+        self.cancel_button.hide()
+        self.operation_button.setEnabled(True)
+        if isinstance(result, Exception):
+            self.result_label.setText(f"{operation} with {peer['peer_name']} could not run: {result}")
             return
+        # The remembered address was silent: the network is asked once, on this thread
+        from src.core.discovery import looks_unreachable, find_peer_url
+
+        if not result.success and looks_unreachable(list(result.errors)):
+            try:
+                found = find_peer_url(self.db.account_id(), peer["peer_id"], 3.0)
+            except Exception:  # noqa: BLE001
+                found = None
+            if found is not None and found.urls and found.urls[0].rstrip("/") != (peer.get("peer_url") or "").rstrip("/"):
+                self.config.add_peer(peer["peer_id"], peer["peer_name"], found.urls[0], found.certificate_fingerprint or None, True)
+                self.result_label.setText(f"{peer['peer_name']} answered from {found.urls[0]}; trying there…")
+                self._run(operation, {**peer, "peer_url": found.urls[0]})
+                return
         self.result_label.setText(result_sentence(operation, peer["peer_name"], result))
         code = refusal_code(list(result.errors))
         if code:

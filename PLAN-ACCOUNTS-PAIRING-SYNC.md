@@ -955,7 +955,11 @@ At this point the owner's phone delivers to the owner's desktop. Then:
     open account, inside the desktop while open, `account backup` now.
     **Stage 1's move by code done 2026-09-13** (ACCT-10): `account move
     --to <setup text>` with the tag paths merged, and the phone's Advanced
-    Settings entry.
+    Settings entry. **Stage 4's cancel and progress and Stage 6's idle stop
+    done 2026-09-13** (FILE-17, LISTEN-4): a progress sink and a cancel flag
+    in the core, the phone's operation service with a progress notification
+    and a Cancel action, the desktop dialogue's worker thread, progress
+    label and Cancel, the idle-stop choice on both.
 
 ---
 

@@ -172,6 +172,11 @@ class MainWindow(QMainWindow):
         self._backup_timer.start(15 * 60 * 1000)
         QTimer.singleShot(60 * 1000, self._backup_if_due)
 
+        # The listener stops itself after the chosen hours of silence (Stage 6)
+        self._idle_timer = QTimer(self)
+        self._idle_timer.timeout.connect(self._stop_listener_if_idle)
+        self._idle_timer.start(60 * 1000)
+
         # Listen for peers: the listener runs only while this is checked
         self.listen_action = QAction("&Listen for peers", self)
         self.listen_action.setCheckable(True)
@@ -664,6 +669,18 @@ class MainWindow(QMainWindow):
             stop_sync_server()
             self._stop_announcing()
             self.statusBar().showMessage("No longer listening for peers", 5000)
+
+    def _stop_listener_if_idle(self) -> None:
+        """Stop the listener after the chosen hours of silence; never starts it."""
+        from voicecore import listener_idle_seconds
+
+        hours = self.config.listener_idle_stop_hours()
+        if hours <= 0 or not self.listen_action.isChecked():
+            return
+        idle = listener_idle_seconds()
+        if idle is not None and idle >= hours * 3600:
+            logger.info(f"The listener was silent for {hours} hours; stopping it")
+            self.listen_action.setChecked(False)
 
     def _backup_if_due(self) -> None:
         """The periodic backup, when its interval has passed (SNAP-5)."""

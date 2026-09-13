@@ -707,6 +707,11 @@ VoiceAndroid's user manual.
   the dialogue's "Find on this network" list the devices of the account
   nearby. A listener without a configured `public_url` serves its own
   network only; a phone on hotel wifi is not a server for the hotel.
+- **While an operation runs** the dialogue (and the phone's notification)
+  says what it is doing and how far it is, and has a Cancel button: a
+  transfer stopped continues from where it stopped next time.
+- **The listener can stop itself** after one, four or eight hours of
+  silence, chosen beside the switch; by default it keeps listening.
 - Instances can be run as a systemd service to run in the background.
 
 On the instance designated as the server:

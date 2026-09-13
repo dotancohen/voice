@@ -1641,6 +1641,15 @@ impl PyConfig {
         self.inner.lock().unwrap().rename_peer(peer_id, name).map_err(voice_error_to_pyerr)
     }
 
+    /// Hours of silence after which the listener stops itself; 0 means never.
+    fn listener_idle_stop_hours(&self) -> u32 {
+        self.inner.lock().unwrap().listener_idle_stop_hours()
+    }
+
+    fn set_listener_idle_stop_hours(&self, hours: u32) -> PyResult<()> {
+        self.inner.lock().unwrap().set_listener_idle_stop_hours(hours).map_err(voice_error_to_pyerr)
+    }
+
     /// The peer of the last operation, or an empty string.
     fn last_peer_id(&self) -> String {
         self.inner.lock().unwrap().last_peer().map(|p| p.peer_id.clone()).unwrap_or_default()
@@ -1812,6 +1821,20 @@ pub struct PySyncClient {
     runtime: tokio::runtime::Runtime,
 }
 
+/// Progress handed to a Python callable (stage, done, total, bytes, sentence),
+/// taking the interpreter lock for the call only.
+struct PyProgressSink(Py<PyAny>);
+
+impl sync_client::ProgressSink for PyProgressSink {
+    fn report(&self, progress: sync_client::Progress) {
+        Python::with_gil(|py| {
+            if let Err(e) = self.0.call1(py, (progress.stage, progress.done, progress.total, progress.bytes, progress.sentence)) {
+                e.print(py);
+            }
+        });
+    }
+}
+
 impl PySyncClient {
     /// Run a future of the client without holding the interpreter lock: the
     /// interface stays alive while a sync runs, and a server in the same
@@ -1889,6 +1912,18 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
+    /// Where progress goes (Stage 4): a callable of (stage, done, total, bytes, sentence), or None.
+    #[pyo3(signature = (callback=None))]
+    fn set_progress(&self, callback: Option<Py<PyAny>>) {
+        self.inner.set_progress_sink(callback.map(|c| Arc::new(PyProgressSink(c)) as Arc<dyn sync_client::ProgressSink>));
+    }
+
+    /// Cancel the operation under way, from another thread: it stops at its
+    /// next page, file or chunk, and a transfer under way stays resumable.
+    fn cancel(&self) {
+        self.inner.cancel();
+    }
+
     /// Check the connection to a peer (Stage 12): one row per thing that
     /// can be wrong, as dicts with name, passed, detail and code.
     fn check<'py>(&self, py: Python<'py>, peer_id: &str) -> PyResult<PyObject> {
@@ -1964,7 +1999,7 @@ impl PySyncClient {
     fn fetch_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, dest_path: &str) -> PyResult<PyObject> {
         let dest = std::path::Path::new(dest_path);
         let result = self.runtime.block_on(
-            self.inner.fetch_audio_file(peer_url, audio_id, dest)
+            self.inner.fetch_audio_file(peer_url, audio_id, dest, 0, 0, 1)
         );
         let dict = PyDict::new(py);
         match result {
@@ -2546,6 +2581,13 @@ fn backup_due(config_dir: Option<&str>) -> PyResult<bool> {
 #[pyfunction]
 fn sync_server_running() -> bool {
     sync_server::server_running()
+}
+
+/// Seconds since the listener last served a request or started; None when
+/// no listener has run in this process (Stage 6: the idle stop).
+#[pyfunction]
+fn listener_idle_seconds() -> Option<u64> {
+    sync_server::idle_seconds()
 }
 
 // ---------------------------------------------------------------------------
@@ -3209,6 +3251,7 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(listen_urls, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
     m.add_function(wrap_pyfunction!(sync_server_running, m)?)?;
+    m.add_function(wrap_pyfunction!(listener_idle_seconds, m)?)?;
     m.add_function(wrap_pyfunction!(backup_now, m)?)?;
     m.add_function(wrap_pyfunction!(backup_due, m)?)?;
     for f in [

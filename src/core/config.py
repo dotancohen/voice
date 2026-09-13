@@ -163,6 +163,13 @@ class Config:
         """A local name for a peer, shown in place of its card's."""
         return self._rust_config.rename_peer(peer_id, name)
 
+    def listener_idle_stop_hours(self) -> int:
+        """Hours of silence after which the listener stops itself; 0 means never."""
+        return self._rust_config.listener_idle_stop_hours()
+
+    def set_listener_idle_stop_hours(self, hours: int) -> None:
+        self._rust_config.set_listener_idle_stop_hours(hours)
+
     def last_peer_id(self) -> str:
         """The peer of the last operation, or an empty string."""
         return self._rust_config.last_peer_id()
