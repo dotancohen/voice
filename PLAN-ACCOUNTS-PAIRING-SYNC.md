@@ -1033,12 +1033,18 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    under the Keystore needs a local shadow row that the feed excludes and
    the phone reads first. Whether that is worth doing is not decided; the
    device key is wrapped (AUTH-9), the bucket secret is not.
-5. **Two recorder formats share `.ogg`** (Stage 13): the Android test "each
-   format's extension is its own" holds that no two formats write the same
-   extension, and the speech option is Opus in Ogg like the 128 kb/s one.
-   Nothing in the app reads a format back from an extension. Whether the
-   premise stands, or the test is rewritten to say what the extension is
-   for, is not decided; the test is left failing until it is.
+5. Resolved 2026-09-13: two recorder formats may share `.ogg`; an extension
+   names the container, not the bitrate. The test that held otherwise was
+   written with the tests of 2026-09-12, not from a requirement, and now
+   says what the extension is for.
+6. **Dependency audits** (Stage 14, for later): `cargo audit` for the three
+   Rust crates, `pip-audit` for the desktop, and Gradle's dependency check
+   for the phone, run in each suite and failing it on a known
+   vulnerability. Neither tool is installed on the development machine, and
+   each needs the network for its vulnerability list, so the tests must be
+   marked to run on request (`-m audit`) rather than in every offline run.
+   Install with `cargo install cargo-audit` and `.venv/bin/pip install
+   pip-audit`.
 
 Resolved on 2026-09-12: `$VOICE_CONFIG_DIR` is the only root override; any
 device can show its code; the tests of removed modules go with them, with the
