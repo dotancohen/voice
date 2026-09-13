@@ -950,7 +950,12 @@ At this point the owner's phone delivers to the owner's desktop. Then:
     `application` and `entity_types` in the handshake, `?types=` on the
     feed, apply refusing undeclared types. The opaque relay table waits for
     the first other application, as planned. **Stage 13's speech bitrate
-    done 2026-09-13**: "Opus, speech, 32 kb/s" beside the three.
+    done 2026-09-13**: "Opus, speech, 32 kb/s" beside the three. **Stage 11's
+    periodic backup done 2026-09-13** (SNAP-5): inside the listener for every
+    open account, inside the desktop while open, `account backup` now.
+    **Stage 1's move by code done 2026-09-13** (ACCT-10): `account move
+    --to <setup text>` with the tag paths merged, and the phone's Advanced
+    Settings entry.
 
 ---
 

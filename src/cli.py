@@ -1663,8 +1663,11 @@ def cmd_account_restore(db: Database, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_account_move(db: Database, args: argparse.Namespace) -> int:
-    """Move the database to another account: the deliberate way to merge two accounts."""
+def cmd_account_move(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Move the database to another account: the deliberate way to merge two
+    accounts. With a setup text, the other account's device is paired with, its
+    tags are pulled and tags with one path become one, and everything is
+    exchanged; with a bare id, only the id is rewritten."""
     current = db.account_id()
     if args.current_account != current:
         print(
@@ -1673,13 +1676,47 @@ def cmd_account_move(db: Database, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    notes = len(db.get_all_notes())
+    if args.to_account.startswith("voice://pair?"):
+        db.close()
+        client = SyncClient(str(config.get_config_dir()))
+        try:
+            moved = client.move_to(args.to_account)
+        except Exception as e:  # noqa: BLE001
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        if args.format == "json":
+            print(json.dumps({**moved, "notes_moved": notes}))
+        else:
+            print(f"Moved {notes} notes from account {current} to {moved['account_id']} through {moved['peer_name']}; {moved['tags_merged']} tags with one path became one.")
+            print("A snapshot was taken first; every earlier peer was forgotten.")
+        return 0
     if args.to_account == current:
         print("Error: That is already this database's account.", file=sys.stderr)
         return 1
-    notes = len(db.get_all_notes())
     db.move_to_account(args.to_account)
     print(f"Moved {notes} notes from account {current} to {args.to_account}.")
     print("Every peer was forgotten; the next sync exchanges everything. A snapshot was taken first.")
+    return 0
+
+
+def cmd_account_backup(config: Config, args: argparse.Namespace) -> int:
+    """The periodic backup, now (SNAP-5): every account of the root, or this one."""
+    from voicecore import backup_now
+
+    root = _index_root(config)
+    try:
+        made = backup_now(config_dir=None if root else str(config.get_config_dir()), root=root)
+    except Exception as e:  # noqa: BLE001
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps({"copies": made}))
+    else:
+        for path in made:
+            print(f"Backed up to {path}")
+        backup = config.get_backup()
+        print(f"The listener and the desktop do this every {backup['interval_hours']} hours, keeping {backup['keep']} copies.")
     return 0
 
 
@@ -4123,6 +4160,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     join_parser.add_argument("setup_text", help="The setup text, as copied from the other device")
     account_subparsers.add_parser("snapshots", help="List the snapshots beside the database, newest first")
     account_subparsers.add_parser("snapshot", help="Take a snapshot of the database now")
+    account_subparsers.add_parser("backup", help="The periodic backup, now: copy the database to the backup directory (every account of the root)")
     account_restore_parser = account_subparsers.add_parser(
         "restore",
         help="Replace the database with a snapshot (the state replaced is snapshotted first)"
@@ -4133,7 +4171,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "move",
         help="Move this database, notes and all, to another account. Deliberate: the current account id must be typed in full"
     )
-    account_move_parser.add_argument("--to", required=True, dest="to_account", help="The account id to move to (32 hex characters)")
+    account_move_parser.add_argument("--to", required=True, dest="to_account", help="A code shown by a device of the other account (the setup text), or its account id")
     account_move_parser.add_argument(
         "--current", required=True, dest="current_account",
         help="The full id of the account being given up, typed by hand, as proof that this is meant"
@@ -4364,12 +4402,14 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_account_join(db, config, args)
             elif account_cmd == "snapshots":
                 return cmd_account_snapshots(db, args)
+            elif account_cmd == "backup":
+                return cmd_account_backup(config, args)
             elif account_cmd == "snapshot":
                 return cmd_account_snapshot(db, args)
             elif account_cmd == "restore":
                 return cmd_account_restore(db, args)
             elif account_cmd == "move":
-                return cmd_account_move(db, args)
+                return cmd_account_move(db, config, args)
             else:
                 print(f"Error: Unknown account command '{account_cmd}'", file=sys.stderr)
                 return 1

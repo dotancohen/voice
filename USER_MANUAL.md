@@ -845,6 +845,22 @@ of, and a transfer that stops continues from where it stopped the next time.
 The receiver checks the file's hash before it accepts it, and refuses a file
 that would fill its disk.
 
+### The periodic backup
+
+Every 24 hours (`backup.interval_hours` in the root's `config.json`; 0 turns
+it off) the listener and the open desktop copy each account's database to
+`<root>/backups/<account id>/`, keeping the newest 30. It is separate from
+the snapshots taken before every sync. `account backup` does it now.
+
+### Merging two accounts
+
+For a phone and a desktop that ended up with different accounts:
+`account move --to "<the other account's code>" --current <this account's full id, typed by hand>`
+(on the phone, Advanced Settings → Move this device to another account).
+A snapshot is taken, the device joins the other account keeping its notes,
+tags with one path become one, and everything is exchanged. Nothing is
+deleted.
+
 ### Where recordings are, and what they are called
 
 A recording's file is named after its start and the end of its id:

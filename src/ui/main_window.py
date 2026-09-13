@@ -165,6 +165,13 @@ class MainWindow(QMainWindow):
         replace_key_action.triggered.connect(self.open_replace_key)
         file_menu.addAction(replace_key_action)
 
+        # The periodic backup (SNAP-5) while the desktop is open: checked
+        # every quarter hour, copied when the interval has passed
+        self._backup_timer = QTimer(self)
+        self._backup_timer.timeout.connect(self._backup_if_due)
+        self._backup_timer.start(15 * 60 * 1000)
+        QTimer.singleShot(60 * 1000, self._backup_if_due)
+
         # Listen for peers: the listener runs only while this is checked
         self.listen_action = QAction("&Listen for peers", self)
         self.listen_action.setCheckable(True)
@@ -657,6 +664,18 @@ class MainWindow(QMainWindow):
             stop_sync_server()
             self._stop_announcing()
             self.statusBar().showMessage("No longer listening for peers", 5000)
+
+    def _backup_if_due(self) -> None:
+        """The periodic backup, when its interval has passed (SNAP-5)."""
+        from voicecore import backup_due, backup_now
+
+        config_dir = str(self.config.get_config_dir())
+        try:
+            if backup_due(config_dir):
+                for path in backup_now(config_dir=config_dir):
+                    logger.info(f"Backed up the database to {path}")
+        except Exception as e:  # noqa: BLE001 - reported, never fatal
+            logger.error(f"The periodic backup failed: {e}")
 
     def _announce_listener(self, port: int) -> None:
         """Announce this listener on the local network (Stage 7) while it runs."""

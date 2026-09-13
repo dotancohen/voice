@@ -33,6 +33,39 @@ def cli(node: SyncNode, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+class TestMoveByCode:
+    def test_a_device_with_notes_moves_by_the_other_account_s_code_and_its_tags_merge_by_path(self, tmp_path: Path):
+        desk = create_sync_node("desk", DEVICE_A_ID, tmp_path)
+        phone = create_sync_node("phone", DEVICE_B_ID, tmp_path, account_id=OTHER_ACCOUNT_ID)
+        work_on_desk = desk.db.create_tag("עבודה")
+        desk.db.add_tag_to_note(create_note_on_node(desk, "על השולחן"), work_on_desk)
+        work_on_phone = phone.db.create_tag("עבודה")
+        phone_note = create_note_on_node(phone, "מהטלפון")
+        phone.db.add_tag_to_note(phone_note, work_on_phone)
+        start_sync_server(desk)
+        try:
+            assert desk.wait_for_server()
+            text = json.loads(cli(desk, "account", "show-code", "--url", desk.url).stdout)["setup_text"]
+            current = phone.db.account_id()
+            phone.db.close()
+            refused = cli(phone, "account", "join", text)
+            assert refused.returncode == 1, "a join refuses a device with notes"
+            wrong = cli(phone, "account", "move", "--to", text, "--current", current[:8])
+            assert wrong.returncode == 1 and "Type the full current id" in wrong.stderr
+            moved = cli(phone, "account", "move", "--to", text, "--current", current)
+            assert moved.returncode == 0, moved.stderr
+            result = json.loads(moved.stdout)
+            assert result["account_id"] == desk.db.account_id() and result["tags_merged"] == 1 and result["notes_moved"] == 1
+            desk.reload_db()
+            assert sorted(n["content"] for n in desk.db.get_all_notes()) == ["מהטלפון", "על השולחן"]
+            assert [t["name"] for t in desk.db.get_all_tags() if t["name"] == "עבודה"] == ["עבודה"], "one tag, not two"
+            phone.reload_db()
+            assert phone.db.account_id() == desk.db.account_id()
+            assert [t["name"] for t in phone.db.get_note_tags(phone_note)] == ["עבודה"]
+        finally:
+            desk.stop_server()
+
+
 class TestPairing:
     def test_a_fresh_device_joins_from_the_code_and_syncs(self, tmp_path: Path):
         """show-code on the holder, join on the fresh device, then a sync."""

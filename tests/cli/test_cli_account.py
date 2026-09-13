@@ -64,6 +64,15 @@ class TestAccountCommands:
         assert result.returncode == 1
         assert "No snapshot named" in result.stderr
 
+    def test_backup_now_copies_the_database_and_keeps_the_newest(self, test_db_path: Path, cli_db: Database) -> None:
+        cli_db.create_note("לגיבוי")
+        cli_db.close()
+        first = run_cli(test_db_path.parent, "--format", "json", "account", "backup")
+        assert first.returncode == 0, first.stderr
+        copies = json.loads(first.stdout)["copies"]
+        assert len(copies) == 1 and copies[0].startswith(str(test_db_path.parent / "backups"))
+        assert Database(Path(copies[0])).get_all_notes()[0]["content"] == "לגיבוי"
+
     def test_move_needs_the_current_id_typed_in_full(self, test_db_path: Path, cli_db: Database) -> None:
         current = cli_db.account_id()
         note_id = cli_db.create_note("עובר")

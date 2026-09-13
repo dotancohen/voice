@@ -1865,6 +1865,19 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
+    /// Move this device to another account by its code (Stage 1): a dict
+    /// with account_id, peer_id, peer_name, peer_url and tags_merged.
+    fn move_to<'py>(&self, py: Python<'py>, setup_text: &str) -> PyResult<PyObject> {
+        let (joined, merged) = self.run(py, self.inner.move_to(setup_text)).map_err(voice_error_to_pyerr)?;
+        let dict = PyDict::new(py);
+        dict.set_item("account_id", joined.account_id)?;
+        dict.set_item("peer_id", joined.peer_id)?;
+        dict.set_item("peer_name", joined.peer_name)?;
+        dict.set_item("peer_url", joined.peer_url)?;
+        dict.set_item("tags_merged", merged)?;
+        Ok(dict.into_any().unbind())
+    }
+
     /// Give a server this device's account by its grant text (PAIR-5).
     fn grant_host<'py>(&self, py: Python<'py>, setup_text: &str, label: &str) -> PyResult<PyObject> {
         let joined = self.run(py, self.inner.grant_host(setup_text, label)).map_err(voice_error_to_pyerr)?;
@@ -2482,6 +2495,51 @@ fn start_sync_server(
     .map_err(voice_error_to_pyerr)?;
 
     Ok(())
+}
+
+/// The periodic backup, now (SNAP-5): every account of a root, or the one
+/// account of a directory. Returns the copies made; raises when any account
+/// could not be copied.
+#[pyfunction]
+#[pyo3(signature = (config_dir=None, root=None))]
+fn backup_now(py: Python<'_>, config_dir: Option<&str>, root: Option<&str>) -> PyResult<Vec<String>> {
+    let source: Arc<dyn sync_server::AccountSource> = match (root, config_dir) {
+        (Some(root), _) if voicecore_lib::accounts::AccountIndex::exists(std::path::Path::new(root)) => {
+            use sync_server::AccountSource;
+            let source = sync_server::IndexedAccounts::new(std::path::Path::new(root), Vec::new());
+            for account in source.served() {
+                source.account(&account);
+            }
+            Arc::new(source)
+        }
+        (_, Some(dir)) => {
+            let cfg = config::Config::new(Some(std::path::PathBuf::from(dir))).map_err(voice_error_to_pyerr)?;
+            let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+            let account_id = db.account_id().map_err(voice_error_to_pyerr)?;
+            Arc::new(sync_server::SingleAccount { account_id, handle: sync_server::AccountHandle { db: Arc::new(Mutex::new(db)), config: Arc::new(Mutex::new(cfg)) } })
+        }
+        _ => return Err(pyo3::exceptions::PyValueError::new_err("Give a config_dir or a root")),
+    };
+    let keep = match config_dir {
+        Some(dir) => config::Config::new(Some(std::path::PathBuf::from(dir))).map_err(voice_error_to_pyerr)?.backup().keep as usize,
+        None => config::Config::new(root.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?.backup().keep as usize,
+    };
+    let (made, failed) = py.allow_threads(move || sync_server::backup_open_accounts(source.as_ref(), keep));
+    if !failed.is_empty() {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err(failed.join("; ")));
+    }
+    Ok(made.into_iter().map(|p| p.to_string_lossy().to_string()).collect())
+}
+
+/// Whether an account's periodic backup is due: no copy yet, or the newest
+/// older than the interval.
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn backup_due(config_dir: Option<&str>) -> PyResult<bool> {
+    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    let account_id = db.account_id().map_err(voice_error_to_pyerr)?;
+    Ok(sync_server::backup_due(&cfg, &account_id))
 }
 
 /// Whether a listener runs in this process.
@@ -3151,6 +3209,8 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(listen_urls, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
     m.add_function(wrap_pyfunction!(sync_server_running, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_now, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_due, m)?)?;
     for f in [
         wrap_pyfunction!(bucket_policy_text, m)?,
         wrap_pyfunction!(bucket_clean_key_id, m)?,
