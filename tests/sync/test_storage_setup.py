@@ -95,6 +95,43 @@ class TestTheWizardSteps:
         assert rows["Not duplicated"]["done"]
         assert not rows["Last exchange"]["done"]
 
+    def test_a_large_recording_goes_up_in_parts_and_a_dropped_part_is_the_only_one_sent_again(self, s3: FakeS3, test_config, test_config_dir: Path) -> None:
+        """FILE-19: a file larger than one part is uploaded in parts through
+        the bucket's three requests; the part that failed is sent again at the
+        next upload and the parts already there are not; the object is the
+        whole file, keyed by its content hash (FILE-18)."""
+        from voicecore import upload_pending_audio_files
+
+        empty_db = Database(Path(test_config._rust_config.get_database_file()))  # the one the upload opens by the configuration
+        state = state_for(s3)
+        assert create_bucket(state) is None
+        save(state, empty_db)
+        audio_dir = test_config_dir / "audio"
+        audio_dir.mkdir()
+        test_config.set_audiofile_directory(str(audio_dir))
+        audio_id = empty_db.create_audio_file("שיעור.ogg", 1735689600)
+        row = empty_db.get_audio_file(audio_id)
+        one_mib = 1024 * 1024
+        content = bytes(range(256)) * (9 * one_mib // 256)  # 9 MiB: a full part and a short one
+        (audio_dir / row["local_name"]).write_bytes(content)
+        content_hash = empty_db.store_content_hash(audio_id, audio_dir)
+
+        s3.fail_part = 2
+        first = upload_pending_audio_files(str(test_config_dir))
+        assert (first.uploaded, first.failed) == (0, 1), first.errors
+        assert "voice-abc123" in s3.buckets and not s3.buckets["voice-abc123"], "no object until every part is there"
+        assert empty_db.get_audio_file(audio_id)["storage_key"] is None
+
+        second = upload_pending_audio_files(str(test_config_dir))
+        assert (second.uploaded, second.failed) == (1, 0), second.errors
+        key = f"{content_hash}.ogg"
+        assert s3.buckets["voice-abc123"][key] == content
+        assert empty_db.get_audio_file(audio_id)["storage_key"] == key
+        part_puts = [q for m, _, k, q in s3.requests if m == "PUT" and k == key and "partNumber" in q]
+        assert len(part_puts) == 3, "part 1 once, part 2 twice (the dropped one and its retry); never part 1 again"
+        assert [m for m, _, _, q in s3.requests if m == "POST" and "uploads" in q].count("POST") == 1, "one upload begun, continued at the second run"
+        assert not s3.deleted_anything()
+
 
 @pytest.mark.cli
 class TestFromTheCommandLine:

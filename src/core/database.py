@@ -579,6 +579,11 @@ class Database:
         """
         return self._rust_db.create_audio_file(filename, file_created_at)
 
+    def store_content_hash(self, audio_id: str, audio_dir: "Path | str") -> str:
+        """Compute and store the recording's content hash from its file under
+        ``audio_dir`` (Stage 13); call it after the file is copied there."""
+        return self._rust_db.store_content_hash(audio_id, str(audio_dir))
+
     def get_audio_file(self, audio_id: str) -> Optional[Dict[str, Any]]:
         """Get an audio file by ID.
 

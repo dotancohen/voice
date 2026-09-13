@@ -29,7 +29,7 @@ from .conftest import (
 
 def handshake(url: str, account_id: str | None, headers: dict = AUTH) -> requests.Response:
     """A handshake by the test client, naming `account_id` in the body."""
-    body = {"device_id": headers["X-Device-ID"], "device_name": "Test", "protocol_version": "1.1"}
+    body = {"device_id": headers["X-Device-ID"], "device_name": "Test", "protocol_version": "2.0"}
     if account_id is not None:
         body["account_id"] = account_id
     return requests.post(f"{url}/sync/handshake", json=body, headers=headers)

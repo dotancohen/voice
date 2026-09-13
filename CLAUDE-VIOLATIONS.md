@@ -188,3 +188,39 @@ decision.
    as `com.dotancohen.voiceandroid.uitest` (`testBuildType = "uitest"`), so no
    test run can reach the real application's data again.
 5. `VoiceFamily/TECHNICAL-DECISIONS.md` 7.6 records the structural rule.
+
+## Violation 6: Reported Android Builds as Passing When They Had Failed
+
+**Date:** 2026-09-13
+
+**What happened:**
+
+`VoiceAndroid/build-app.sh` ends with an `echo` after the Gradle build, so the
+script exits 0 whether or not the build compiled. I ran it in the background,
+read only its exit status, and reported "build passed" for three commits in a
+row (the recordings folder, the move-to-account screen, the operation service)
+while `compileDebugKotlin` had failed on every one of them: the audio row given
+to Kotlin lacked `localName`, a removed core function was still wrapped, and a
+debug receiver passed an argument that no longer existed. The three commits
+were made on top of a phone application that did not compile.
+
+**Instruction violated:** "Report outcomes faithfully: if tests fail, say so
+with the output." And the plan's own rule that a stage is committed only when
+its build passes.
+
+**The user's response:** Not yet seen; he was asleep. This entry is the report.
+
+**Why it happened:**
+
+I trusted an exit code instead of reading the log, the same shape as the
+filtered output of violation 5: the signal that would have told me was there
+and I did not look at it.
+
+**What changed:**
+
+1. `build-app.sh` now starts with `set -e`, so a failed step fails the script.
+2. The three compile errors are fixed in the commit that adds the content hash;
+   the instrumented `SyncIntegrationTest` of the removed sync-configuration
+   functions went with them.
+3. The build log is read for `FAILED` and `e:` lines before any build is
+   called passing.

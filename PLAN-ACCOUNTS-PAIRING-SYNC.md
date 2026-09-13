@@ -761,11 +761,13 @@ a bug in any of them, or in this plan, must be undoable.
   devices importing one file share one bucket object, keyed by the hash rather
   than the row id; fetch and the copies list verify a file by it; and the
   resumable transfer of Stage 4 uses it instead of hashing before every send.
-- **Multipart upload with resume to the bucket.** Files above 100 MiB
-  (`TECHNICAL-DECISIONS.md` 3.2) go up in parts; the upload id and completed
-  parts are kept on the row's local state, and an interrupted upload continues
-  with the next part. Stale multipart uploads are abandoned by the lifecycle
-  rule after two days, so they never accumulate as hidden cost.
+- **Multipart upload with resume to the bucket.** Files larger than one part
+  (8 MiB; the plan first said 100 MiB, but an hour at the default bitrate is
+  57 MB and a dropped connection would have repeated all of it) go up in
+  parts; the upload id and completed parts are kept in `upload_parts`, and an
+  interrupted upload continues with the next part. Stale multipart uploads
+  are abandoned by the lifecycle rule after two days, so they never
+  accumulate as hidden cost. **Done 2026-09-13** (FILE-18, FILE-19).
 - **Purge reaches the bucket** (closes the gap in PURGE-9), without a delete
   permission: see Stage 14.
 - **Bucket versioning stays off.** The wizard neither enables it nor leaves it
@@ -880,10 +882,13 @@ recording reach a second place soonest:
    this machine. The audit log per hosted account comes with hosting.
 4. Stage 9, the code and pairing, and Stage 5's device cards, which pairing
    writes. **Claim flow done 2026-09-13**: `account show-code`, `hide-code`
-   and `join` on the desktop; a paste field and Join on the phone. Still to
-   come: the QR image in the desktop GUI, the camera on the phone, the grant
-   flow (with hosting), the `voice://pair` link registration and the code's
-   countdown screen.
+   and `join` on the desktop; a paste field and Join on the phone. **Phone
+   done 2026-09-13** (UI-12): ZXing's code on the sync screen with the
+   sixty-second countdown, Copy and Share; CameraX with ZXing reading it,
+   every camera in turn behind `CameraChoice`, the paste field under the
+   camera; the `voice://pair` link; the first run's two choices; the
+   post-pairing card with one Exchange button. The desktop GUI's QR image and
+   the grant flow were done with Stages 3 and 8.
 5. Stage 4, files between instances, and Stage 6, the phone as listener.
    **Stage 4 done 2026-09-13**: fetch, send, deliver and exchange in the
    core, the command line and the phone's bindings; streamed both ways,
@@ -937,8 +942,9 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    lifecycle, the three hardening settings verified, the lifecycle rules,
    the round trip, "Replace key", "Test everything", `sync check --all`,
    the checklist at the top of the sync dialogue, upload asking first.
-   Not yet: the content hash, multipart resume (Stage 13), the Keystore on
-   the phone and the dependency audits (Stage 14). **Stage 13's folder and
+   **Stage 13's content hash and upload in parts done 2026-09-13** (FILE-18,
+   FILE-19). Not yet: the Keystore on the phone and the dependency audits
+   (Stage 14). **Stage 13's folder and
    file names done 2026-09-13** (FILE-15, FILE-16, TECHNICAL-DECISIONS
    3.1a): `audio_files.local_name`, the shared Recordings/Voice folder on
    the phone, `voice-phone-backup` copying it.

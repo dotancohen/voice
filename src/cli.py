@@ -484,6 +484,7 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
 
             # Copy file to audiofile_directory
             manager.import_file(audio_path, row["local_name"])
+            db.store_content_hash(audio_file_id, manager.audiofile_directory)
 
             # Create Note with audio reference
             # Use file_created_at for note's created_at for chronological sorting

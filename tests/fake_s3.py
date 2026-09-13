@@ -31,6 +31,8 @@ class FakeS3:
         self.requests: list = []
         self.taken_names: set = set()
         self.refuse_with: Optional[str] = None  # an error code every request answers with
+        self.uploads: Dict[str, Dict[int, bytes]] = {}  # upload id -> part number -> bytes (Stage 13)
+        self.fail_part: Optional[int] = None  # that part of the next upload answers 503 once
         self.lock = threading.Lock()
         fake = self
 
@@ -136,8 +138,54 @@ class FakeS3:
                         pairs = dict(re.findall(r"<Key>(.*?)</Key><Value>(.*?)</Value>", body.decode("utf-8", "replace")))
                         fake.tags.setdefault(bucket, {})[key] = pairs
                         return self._answer(200)
+                    if "partNumber" in query and "uploadId" in query:
+                        upload_id = query["uploadId"][0]
+                        number = int(query["partNumber"][0])
+                        if upload_id not in fake.uploads:
+                            return self._error(404, "NoSuchUpload")
+                        if fake.fail_part == number:
+                            fake.fail_part = None
+                            return self._error(503, "SlowDown")
+                        fake.uploads[upload_id][number] = body
+                        self.send_response(200)
+                        self.send_header("ETag", f'"{hashlib.md5(body).hexdigest()}"')
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return None
                     fake.buckets[bucket][key] = body
                     return self._answer(200)
+
+            def do_POST(self):  # noqa: N802 - an upload in parts (Stage 13): begin, and complete
+                bucket, key, query = self._parts()
+                body = self._body()
+                with fake.lock:
+                    fake.requests.append(("POST", bucket, key, sorted(query)))
+                    if not self._signed():
+                        return self._error(403, "SignatureDoesNotMatch")
+                    if fake.refuse_with:
+                        return self._error(403, fake.refuse_with)
+                    if bucket not in fake.buckets:
+                        return self._error(404, "NoSuchBucket")
+                    if "uploads" in query:
+                        upload_id = f"upload-{len(fake.uploads) + 1}"
+                        fake.uploads[upload_id] = {}
+                        return self._answer(200, f"<?xml version='1.0'?><InitiateMultipartUploadResult><Bucket>{bucket}</Bucket><Key>{key}</Key><UploadId>{upload_id}</UploadId></InitiateMultipartUploadResult>".encode())
+                    if "uploadId" in query:
+                        upload_id = query["uploadId"][0]
+                        parts = fake.uploads.get(upload_id)
+                        if parts is None:
+                            return self._error(404, "NoSuchUpload")
+                        listed = re.findall(r"<PartNumber>(\d+)</PartNumber><ETag>(.*?)</ETag>", body.decode("utf-8", "replace"))
+                        whole = b""
+                        for number, etag in listed:
+                            piece = parts.get(int(number))
+                            if piece is None or etag.replace("&quot;", '"') != f'"{hashlib.md5(piece).hexdigest()}"':
+                                return self._error(400, "InvalidPart")
+                            whole += piece
+                        fake.buckets[bucket][key] = whole
+                        del fake.uploads[upload_id]
+                        return self._answer(200, f"<?xml version='1.0'?><CompleteMultipartUploadResult><Key>{key}</Key></CompleteMultipartUploadResult>".encode())
+                    return self._error(400, "InvalidRequest")
 
             def do_GET(self):  # noqa: N802
                 bucket, key, query = self._parts()

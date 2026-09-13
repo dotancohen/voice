@@ -920,6 +920,14 @@ showing device as a peer with its certificate pinned. A device that already
 holds notes of another account refuses the code and says to show its own code
 to the other device instead.
 
+On the phone, Settings → Sync has **Show my code** (the code stays on screen
+for a minute, with Copy and Share beside it) and **Read a code**, which opens
+the camera with a paste field under it for a phone whose camera cannot read
+it. A setup text sent through any messaging app is a link: tapping it opens
+Voice at the sync screen and pairs. A phone with no notes yet offers "Pair
+with another device" and "Start on my own" on its first screen, and after
+pairing shows the new peer with one Exchange button.
+
 ### A server that hosts accounts
 
 A server on the internet holds no account of its own; it **hosts** the
@@ -1165,6 +1173,8 @@ python -m src.main cli storage disable
 - The storage configuration (including the credentials) syncs to all connected devices. Configure it once, on any installation.
 - Sync keeps working while cloud storage is unreachable, because it never touches it. An upload that fails is reported and tried again at the next upload, and after the first failure the remaining uploads are deferred instead of each waiting for a timeout.
 - Downloads are written to a temporary `.part` file, checked against the object size and only then renamed into place, so an interrupted download never leaves a broken file behind.
+- Every recording carries the hash of its bytes. The bucket object is named by it, so the same file imported on two devices is stored once; a download whose bytes do not match the hash is removed and reported instead of being kept as the recording.
+- A file larger than 8 MiB goes up in parts. If the connection drops, the parts already in the bucket stay there and the next `upload-pending` (or the phone's next Upload) sends only the rest; the object appears only when every part is there. Parts of an upload never finished are removed by the bucket's own rule after two days.
 
 ### Manual Upload and Download
 
