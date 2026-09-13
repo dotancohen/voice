@@ -186,10 +186,14 @@ python -m src.main cli db-maintenance rebuild-cache
 
 ## UI Frameworks
 
+### Desktop GUI
+The desktop GUI uses **Qt** through PySide6. Main files:
+- `src/ui/main_window.py` - the main window, its menus and its three panes
+- `src/ui/` - the panes, dialogs and widgets
+
 ### Desktop TUI
-The desktop GUI uses **Textual** (Python TUI framework). Main files:
-- `src/tui.py` - Main TUI application and screens
-- `src/ui/` - UI components and widgets
+The text interface uses **Textual**. Main file:
+- `src/tui.py` - the TUI application, its screens and widgets
 
 ### Android
 The Android app uses **Jetpack Compose** with the MVVM pattern:
@@ -199,7 +203,7 @@ The Android app uses **Jetpack Compose** with the MVVM pattern:
 
 **Times and timezones:** timestamps are Unix seconds; beside each user-visible one the core stores `<stamp>_offset` (seconds east of UTC where it happened) and `<stamp>_zone` (IANA name). A reader renders the instant at that offset, so a note written at 15:20 in Jerusalem still reads 15:20 in New York; rows with no offset fall back to the reader's zone. The platform reports its zone (`Database.__init__` in Python, `VoiceRepository.reportTimeZone` on Android), because the core cannot see Android's framework settings. Locale and the 12/24-hour preference are never stored: each interface formats with its own (`src/core/timestamp_utils.py`, `util/Stamps.kt`). Ordering and merging use the instant alone. See `SYNC_SPECIFICATION.md` 3.3 and the core README.
 
-**Recorder:** `audio/VoiceRecorder.kt` is the single recorder and lives outside any screen, because leaving the app, going home or locking the phone must not stop a recording; `audio/RecordingService.kt` is the foreground service (type `microphone`) that keeps the process alive and shows the elapsed time in a notification. `viewmodel/RecordingViewModel.kt` only exposes its flows, and `ui/screens/RecordingScreen.kt` only presses its buttons, so the screen can come and go. During a telephone call Android hands the microphone to the telephone, so Settings → Recorder chooses between keeping the silence and pausing until the call ends (`RecorderPreferences.duringCall`, watched through `AudioManager.mode` in the recorder's ticker). `RecorderPreferences.kt` also holds the selected microphone and its friendly names, the default action of the New button, the recording format, and whether the recording screen starts recording as it opens. `audio/MicLevelMeter.kt` is the level stream for the microphone test. Save is `importAudioFile` plus a copy into the audio directory, so a recording is a note with an attachment exactly like an imported file. Formats: Opus 128 kb/s 48 kHz in Ogg (`.ogg`, default) and AAC 96 kb/s (`.m4a`) through MediaRecorder; 16 kHz mono 16-bit WAV (`.wav`) through `audio/WavRecorder.kt` (AudioRecord, Whisper's native input). The notes list's `+` button taps the default action and long-presses for the menu.
+**Recorder:** `audio/VoiceRecorder.kt` is the single recorder and lives outside any screen, because leaving the app, going home or locking the phone must not stop a recording; `audio/RecordingService.kt` is the foreground service (type `microphone`) that keeps the process alive and shows the elapsed time in a notification. `ui/components/AudioRecorderWidget.kt`, shown in `ui/screens/NoteDetailScreen.kt`, only collects `VoiceRecorder`'s flows and presses its buttons, so the screen can come and go. During a telephone call Android hands the microphone to the telephone, so Settings → Recorder chooses between keeping the silence and pausing until the call ends (`RecorderPreferences.duringCall`, watched through `AudioManager.mode` in the recorder's ticker). `RecorderPreferences.kt` also holds the selected microphone and its friendly names, the default action of the New button, the recording format, and whether the recording screen starts recording as it opens. `audio/MicLevelMeter.kt` is the level stream for the microphone test. Save is `importAudioFile` plus a copy into the audio directory, so a recording is a note with an attachment exactly like an imported file. Formats: Opus 128 kb/s 48 kHz in Ogg (`.ogg`, default) and AAC 96 kb/s (`.m4a`) through MediaRecorder; 16 kHz mono 16-bit WAV (`.wav`) through `audio/WavRecorder.kt` (AudioRecord, Whisper's native input). The notes list's `+` button taps the default action and long-presses for the menu.
 
 **Playback speed:** `audio/PlaybackPreferences.kt` (one speed for every player, 0.5×–3×), `ui/components/PlaybackSpeedControl.kt` (a Canvas slider with ½/1/2 marks that snap, under the waveform in both `AudioPlayerWidget` and the list's `CompactAudioPlayer`). The notes list shows one line of the note and one line of the first transcription of any recording on it, and skips whichever is missing rather than leaving an empty row. The New button turns into a red record icon when a tap would start a recording. A selection of notes can be merged (`NotesViewModel.mergeSelected`, oldest survives, `merge_notes` in the core moves tags and attachments and deletes the emptied notes). In the notes list each recording is a small `🔊n` button at the left of the row (`AttachmentChip` in `NotesScreen.kt`) that unfolds the compact player; it carries a small transcribe icon when that recording already has a transcription. The chip's contents are wrapped in `CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr)`: in a right-to-left interface the bidirectional algorithm otherwise renders `🔊1` as `1🔊` (the symbol is a neutral, the digit a European number), which put the symbol on the wrong side. Video attachments get their own symbol next to `AUDIO_SYMBOL`.
 
@@ -282,7 +286,7 @@ If you only regenerate bindings without rebuilding the native library, the app w
 
 ## Common Commands
 
-`bin/voice` wraps `.venv/bin/python -m src.main`; `VOICE_CONFIG_DIR` replaces `-d`. Every run prints `Using CONFIG_DIR: ...` first (stderr for JSON/CSV output). Tests that count or compare stdout lines must skip that line.
+`bin/voice` wraps `.venv/bin/python -m src.main`; `VOICE_CONFIG_DIR` names the configuration root and `-a <id or label>` (or `VOICE_ACCOUNT_ID`) the account under it. Every run prints `Using CONFIG_DIR: ...` first (stderr for JSON/CSV output). Tests that count or compare stdout lines must skip that line.
 
 ```bash
 # Run CLI
@@ -486,7 +490,7 @@ Audio file *metadata* syncs like every other entity. The *binary* is handled by 
 - "Cloud storage not configured" is a silent no-op for the automatic paths and a clear error for the on-demand ones.
 - Downloads go to `<file>.part`, are size-verified against the object, then renamed. A crash never leaves a truncated file that looks present.
 - After the first remote failure in a batch the batch stops (`deferred` count); the rest is tried at the next upload instead of timing out one by one.
-- The on-disk and cloud object name is `{audio_id}.{ext}` where `ext` comes from `audio_file_extension()` (`models.rs`, mirrored by `audio_file_extension()` in `src/core/audiofile_manager.py`): lowercase, last dot wins, `bin` when there is no extension. Every platform must use these helpers; never derive the extension by hand.
+- A recording's file on disk is named by its row's `disk_name` (FILE-15): a recording made by Voice is `YYYY_MM_DD_HH_MM_SS-<last eight of the id>.<ext>`, an imported file keeps its own name, and a collision adds `-<last eight of the id>`; find a file with `audio_local_path()` (`models.rs`) or `AudioFileManager.get_record_path()`, never from the id. The bucket object is `<content hash>.<ext>` (FILE-18), with `.enc` added when encrypted and `<id>.<ext>` only while no hash is known (`storage_key_for()` in `file_storage.rs`); `ext` comes from `audio_file_extension()` (`models.rs`, mirrored in `src/core/audiofile_manager.py`): lowercase, last dot wins, `bin` when there is none. Never derive the extension by hand.
 - Every incoming `audio_file` row is applied through one upsert that merges per column: the newer row wins a metadata column, an older row only fills in NULLs, the cloud location is never erased by a row without one and only replaced by a newer row that has one, and the versioned columns (summary, deletion) are never written from a row. Do not reintroduce "skip older rows": it left a peer that edited the summary first without the `storage_key`.
 - rust-s3 must stay at 0.37 or newer: older versions load TLS roots from the OS certificate directory, which Android does not have.
 

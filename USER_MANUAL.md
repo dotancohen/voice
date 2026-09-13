@@ -1350,8 +1350,8 @@ Multiple terms are combined with AND logic:
 
 ## Configuration
 
-- Configuration is stored in `<config-dir>/config.json`. The default location is `~/.config/voice/config.json`, or can be set with the `-d` flag.
-- Tho configuration file can be edited manually. The application reads the config file on startup.
+- An account's configuration is `<root>/<account id>/config.json`, and the machine's (device id and name, listen port, backup, public address) is `<root>/config.json`. The root is `~/.config/voice` unless `VOICE_CONFIG_DIR` names another; `-a` (or `VOICE_ACCOUNT_ID`) chooses the account.
+- The configuration file can be edited manually. The application reads the config file on startup.
 - For detailed documentation, see [CONFIGURATION.md](CONFIGURATION.md).
 
 ### Config Schema
@@ -1458,5 +1458,8 @@ Theme-specific colors take precedence:
 
 ## Database Location
 
-- Default: `~/.config/voice/notes.db`
-- Custom: `<config-dir>/notes.db` when using `-d` flag
+- Each account's database is `<root>/<account id>/notes.db`; the root is
+  `~/.config/voice` unless `VOICE_CONFIG_DIR` names another, and `-a` (or
+  `VOICE_ACCOUNT_ID`) chooses the account.
+- A root that holds one database and no `accounts.db` is the account itself:
+  `<root>/notes.db`.

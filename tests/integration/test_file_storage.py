@@ -140,14 +140,29 @@ class TestTheWizardAgainstARealS3:
         rules = {r["ID"] for r in s3.get_bucket_lifecycle_configuration(Bucket=state.bucket)["Rules"]}
         assert rules == {"voice-infrequent-access", "voice-purged", "voice-abandoned-uploads"}
 
-    def test_after_hardening_a_write_without_tls_is_refused(self, local_s3) -> None:
+    def test_after_hardening_a_write_without_tls_is_refused_and_the_wizard_says_why(self, local_s3) -> None:
         """The TLS-only policy is in force: this server speaks plain HTTP, so
-        the round trip that worked before hardening is refused after it."""
+        the round trip that worked before hardening is refused after it, and
+        the wizard names the policy and the https:// address rather than
+        blaming the secret."""
         state = make_bucket(local_s3)
         assert create_bucket(state) is None
         assert round_trip(state) is None
         assert all(r["passed"] for r in harden(state))
-        assert round_trip(state) is not None
+        refused = round_trip(state)
+        assert refused is not None
+        assert "accepts only https://" in refused, refused
+        assert "secret may be wrong" not in refused
+
+    def test_a_bucket_in_us_east_1_behind_an_endpoint_is_made(self, local_s3) -> None:
+        """Amazon's first region takes no location constraint; behind an
+        endpoint the wizard used to send one and be refused."""
+        state = SetupState(region="us-east-1", bucket=local_s3.new_bucket_name(), endpoint=local_s3.endpoint)
+        assert take_key(state, local_s3.access_key_id, local_s3.secret_access_key) is None
+        assert create_bucket(state) is None
+        assert local_s3.client().head_bucket(Bucket=state.bucket)["ResponseMetadata"]["HTTPStatusCode"] == 200
+        assert round_trip(state) is None, "the new bucket takes a write, a read back and a tag"
+        assert create_bucket(state) is None, "a bucket that is there already is taken as made"
 
     def test_a_wrong_secret_is_refused_in_words(self, local_s3) -> None:
         state = make_bucket(local_s3, secret="wJalrXUtnFEMI/K7MDENG/bPxRfiCYWRONGSECRET")

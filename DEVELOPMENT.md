@@ -205,10 +205,13 @@ sudo systemctl status voicesync # Check status
 journalctl -u voicesync -f  # Follow logs
 ```
 
-Access Voice data with sudo:
+Access Voice data with sudo. The root holds the machine's `config.json`,
+`accounts.db` and `certs/`; each account is a directory named by its id,
+`<account id>/`, with its `notes.db`, `config.json`, `audio/` and `snapshots/`
+(`voice cli account list` shows the ids):
 ```bash
 sudo -u voicesync vim /var/www/voice/.config/voice/config.json
-sudo -u voicesync sqlite3 /var/www/voice/.config/voice/voice.db
+sudo -u voicesync sqlite3 /var/www/voice/.config/voice/<account id>/notes.db
 ```
 
 Access Voice data as the logged-in user without sudo:
@@ -216,7 +219,7 @@ Access Voice data as the logged-in user without sudo:
 sudo usermod -aG voicesync $USER
 sudo chmod -R g+rw /var/www/voice/.config/voice/
 vim /var/www/voice/.config/voice/config.json
-sqlite3 /var/www/voice/.config/voice/voice.db
+sqlite3 /var/www/voice/.config/voice/<account id>/notes.db
 ```
 
 ## Testing
