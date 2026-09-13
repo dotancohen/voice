@@ -245,7 +245,7 @@ voice-adb list-transcriptions <note>    # one TRANSCRIPTION {...} line per trans
 voice-adb help                          # the full list
 ```
 
-Release builds do not contain the receiver. See `test-plans/` for the manual test plans that use it.
+Release builds do not contain the receiver. See `../test-plans/` (in the VoiceFamily directory) for the manual test plans that use it.
 
 ### Run All Tests
 
