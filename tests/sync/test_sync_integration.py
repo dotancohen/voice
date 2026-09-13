@@ -656,7 +656,7 @@ class TestAudioFileSyncIntegration:
 
         # Store the actual binary file in A's audiofile_directory
         audiodir_a = Path(node_a.config.get_audiofile_directory())
-        audio_file_a = audiodir_a / node_a.db.get_audio_file(audio_id)["local_name"]
+        audio_file_a = audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]
         audio_file_a.write_bytes(test_audio_content)
 
         # Verify initial state
@@ -694,7 +694,7 @@ class TestAudioFileSyncIntegration:
 
         # Verify B has the actual binary file
         audiodir_b = Path(node_b.config.get_audiofile_directory())
-        audio_file_b = audiodir_b / node_b.db.get_audio_file(audio_id)["local_name"]
+        audio_file_b = audiodir_b / node_b.db.get_audio_file(audio_id)["disk_name"]
         assert audio_file_b.exists(), (
             f"Binary audio file should exist on server at {audio_file_b}"
         )
@@ -729,7 +729,7 @@ class TestAudioFileSyncIntegration:
 
         # Store the actual binary file in B's audiofile_directory
         audiodir_b = Path(node_b.config.get_audiofile_directory())
-        audio_file_b = audiodir_b / node_b.db.get_audio_file(audio_id)["local_name"]
+        audio_file_b = audiodir_b / node_b.db.get_audio_file(audio_id)["disk_name"]
         audio_file_b.write_bytes(test_audio_content)
 
         # Verify initial state on B
@@ -760,7 +760,7 @@ class TestAudioFileSyncIntegration:
         # Now download the binary file
         sync_client = SyncClient(str(node_a.config_dir))
         audiodir_a = Path(node_a.config.get_audiofile_directory())
-        audio_file_a = audiodir_a / node_a.db.get_audio_file(audio_id)["local_name"]
+        audio_file_a = audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]
 
         download_result = sync_client.fetch_audio_file(
             node_b.url, audio_id, str(audio_file_a)
@@ -793,7 +793,7 @@ class TestAudioFileSyncIntegration:
 
         # Create the actual binary file so sync can transfer it
         audiodir_a = Path(node_a.config.get_audiofile_directory())
-        (audiodir_a / node_a.db.get_audio_file(audio_id)["local_name"]).write_bytes(b"FAKE_WAV_DATA")
+        (audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]).write_bytes(b"FAKE_WAV_DATA")
 
         # Sync A -> B
         result = sync_nodes(node_a, node_b)
@@ -830,7 +830,7 @@ class TestAudioFileSyncIntegration:
             node_a.db.attach_to_note(note_id, audio_id, "audio_file")
             audio_ids.append(audio_id)
             # Create the actual binary file so sync can transfer it
-            (audiodir_a / node_a.db.get_audio_file(audio_id)["local_name"]).write_bytes(f"FAKE_MP3_DATA_{i}".encode())
+            (audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]).write_bytes(f"FAKE_MP3_DATA_{i}".encode())
 
         # Sync A -> B
         result = sync_nodes(node_a, node_b)
@@ -868,7 +868,7 @@ class TestAudioFileSyncIntegration:
 
         # Write binary file to A's directory
         audiodir_a = Path(node_a.config.get_audiofile_directory())
-        (audiodir_a / node_a.db.get_audio_file(audio_id)["local_name"]).write_bytes(test_content)
+        (audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]).write_bytes(test_content)
 
         # Sync A -> B (should automatically upload binary)
         result = sync_nodes(node_a, node_b)
@@ -876,7 +876,7 @@ class TestAudioFileSyncIntegration:
 
         # Verify binary file exists on B (without manual upload)
         audiodir_b = Path(node_b.config.get_audiofile_directory())
-        binary_b = audiodir_b / node_b.db.get_audio_file(audio_id)["local_name"]
+        binary_b = audiodir_b / node_b.db.get_audio_file(audio_id)["disk_name"]
         assert binary_b.exists(), (
             "Binary file should be automatically uploaded during sync"
         )
@@ -903,11 +903,11 @@ class TestAudioFileSyncIntegration:
 
         # Write binary file to B's directory
         audiodir_b = Path(node_b.config.get_audiofile_directory())
-        (audiodir_b / node_b.db.get_audio_file(audio_id)["local_name"]).write_bytes(test_content)
+        (audiodir_b / node_b.db.get_audio_file(audio_id)["disk_name"]).write_bytes(test_content)
 
         # A should not have the file yet
         audiodir_a = Path(node_a.config.get_audiofile_directory())
-        binary_a = audiodir_a / node_a.db.get_audio_file(audio_id)["local_name"]
+        binary_a = audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]
         assert not binary_a.exists()
 
         # Sync A -> B (A pulls from B, should automatically download binary)

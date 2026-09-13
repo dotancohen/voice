@@ -582,6 +582,12 @@ class Database:
         """
         return self._rust_db.create_audio_file(filename, file_created_at, str(audio_dir) if audio_dir else None)
 
+    def settle_file_names(self, audio_dir: "Path | str") -> int:
+        """Resolve names two recordings share and rename on disk the files of
+        recordings renamed by a sync or a collision (FILE-15). Returns how
+        many files were renamed."""
+        return self._rust_db.settle_file_names(str(audio_dir))
+
     def store_content_hash(self, audio_id: str, audio_dir: "Path | str") -> str:
         """Compute and store the recording's content hash from its file under
         ``audio_dir`` (Stage 13); call it after the file is copied there."""

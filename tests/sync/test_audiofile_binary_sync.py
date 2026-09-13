@@ -95,7 +95,7 @@ class TestClientUploadToServer:
 
         # Store the actual file in client's audiofile_directory
         client_audiofile_dir = Path(client.config.get_audiofile_directory())
-        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["local_name"]
+        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["disk_name"]
         client_file.write_bytes(test_audio_content)
 
         # Sync the audio file metadata to server first (so it knows the filename)
@@ -120,7 +120,7 @@ class TestClientUploadToServer:
 
         # Verify server received the file
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
 
         assert server_file.exists(), (
             f"Audio file should exist on server at {server_file} after upload"
@@ -152,7 +152,7 @@ class TestClientDownloadFromServer:
 
         # Store the actual file in server's audiofile_directory
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
         server_file.write_bytes(test_audio_content)
 
         # Sync the audio file metadata to client
@@ -172,7 +172,7 @@ class TestClientDownloadFromServer:
         sync_client = SyncClient(str(client.config_dir))
 
         client_audiofile_dir = Path(client.config.get_audiofile_directory())
-        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["local_name"]
+        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["disk_name"]
 
         result = sync_client.fetch_audio_file(server.url, audio_id, str(client_file))
 
@@ -204,7 +204,7 @@ class TestServerReceivesUpload:
         audio_id = server.db.create_audio_file("upload-test.ogg")
 
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        expected_path = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        expected_path = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
 
         # After upload, file should be at expected path
         assert expected_path.parent == server_audiofile_dir, (
@@ -247,7 +247,7 @@ class TestServerReceivesUpload:
 
         # Verify file was stored
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        expected_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        expected_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
 
         assert expected_file.exists(), (
             f"POST /sync/audio/{audio_id}/file should store file at {expected_file}"
@@ -271,7 +271,7 @@ class TestServerServesDownload:
 
         # Store file in correct location
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        stored_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        stored_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
         stored_file.write_bytes(test_audio_content)
 
         # Verify the file exists where server should read from
@@ -293,7 +293,7 @@ class TestServerServesDownload:
         audio_id = server.db.create_audio_file("binary-download.ogg")
 
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        stored_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        stored_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
         stored_file.write_bytes(test_audio_content)
 
         # Start sync server
@@ -336,7 +336,7 @@ class TestBinarySyncRoundTrip:
         audio_id = client.db.create_audio_file("roundtrip.ogg")
 
         client_audiofile_dir = Path(client.config.get_audiofile_directory())
-        original_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["local_name"]
+        original_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["disk_name"]
         original_file.write_bytes(test_audio_content)
 
         # Sync metadata to server
@@ -401,7 +401,7 @@ class TestMissingAudioFileDownload:
         # 1. Server has audio file with binary
         audio_id = server.db.create_audio_file("server-file.ogg")
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
         server_file.write_bytes(test_audio_content)
 
         # 2. Simulate first sync: metadata synced but binary not stored
@@ -415,7 +415,7 @@ class TestMissingAudioFileDownload:
 
         # Verify client has metadata but no binary file
         client_audiofile_dir = Path(client.config.get_audiofile_directory())
-        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["local_name"]
+        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["disk_name"]
         assert not client_file.exists(), (
             "Client should NOT have the binary file yet (simulating failed download)"
         )
@@ -463,7 +463,7 @@ class TestMissingAudioFileDownload:
         # Server has audio file
         audio_id = server.db.create_audio_file("existing-file.ogg")
         server_audiofile_dir = Path(server.config.get_audiofile_directory())
-        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["local_name"]
+        server_file = server_audiofile_dir / server.db.get_audio_file(audio_id)["disk_name"]
         server_file.write_bytes(test_audio_content)
 
         # Client has metadata AND binary file already
@@ -475,7 +475,7 @@ class TestMissingAudioFileDownload:
         )
 
         client_audiofile_dir = Path(client.config.get_audiofile_directory())
-        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["local_name"]
+        client_file = client_audiofile_dir / client.db.get_audio_file(audio_id)["disk_name"]
         client_file.write_bytes(test_audio_content)
 
         # Record file modification time

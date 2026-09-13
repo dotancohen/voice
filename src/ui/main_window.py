@@ -89,6 +89,12 @@ class MainWindow(QMainWindow):
         # Initialize transcription service if available
         self._transcription_service: Optional[TranscriptionService] = None
         audiofile_dir = self.config.get("audiofile_directory")
+        # Names two recordings share, and renames that came by sync, reach the disk (FILE-15)
+        if audiofile_dir:
+            try:
+                self.db.settle_file_names(audiofile_dir)
+            except Exception as e:  # noqa: BLE001 - a file that cannot be renamed stays where it is
+                logger.warning(f"Recording names were not all settled on disk: {e}")
         if audiofile_dir and TRANSCRIPTION_AVAILABLE:
             from pathlib import Path
             self._transcription_service = TranscriptionService(self.db, Path(audiofile_dir))

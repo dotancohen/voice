@@ -484,7 +484,7 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
             row = db.get_audio_file(audio_file_id)
 
             # Copy file to audiofile_directory
-            manager.import_file(audio_path, row["local_name"])
+            manager.import_file(audio_path, row["disk_name"])
             db.store_content_hash(audio_file_id, manager.audiofile_directory)
 
             # Create Note with audio reference

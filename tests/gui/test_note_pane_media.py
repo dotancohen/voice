@@ -49,7 +49,7 @@ class TestNotePaneMediaMissing:
         config, db, audio_dir, note_id, audio_id = media_env
         db.update_audio_file_storage(audio_id, "s3", f"audio/{audio_id}.mp3")
         # Written under the name the row carries (Stage 13)
-        (audio_dir / db.get_audio_file(audio_id)["local_name"]).write_bytes(b"x")
+        (audio_dir / db.get_audio_file(audio_id)["disk_name"]).write_bytes(b"x")
 
         pane = NotePane(db, audiofile_directory=audio_dir, config_dir=config.get_config_dir())
         pane.load_note(note_id)

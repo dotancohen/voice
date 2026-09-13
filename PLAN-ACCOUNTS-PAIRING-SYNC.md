@@ -751,9 +751,12 @@ a bug in any of them, or in this plan, must be undoable.
   A file arriving by fetch or download is named the same way from its row.
   **Changed by the owner, 2026-09-13:** only files Voice records are named
   this way. An imported file keeps its own name, any POSIX name, in the same
-  folder; a taken name gets ` (2)` and so on; the name on the row is always
-  the name on disk; a row from before the column keeps `<id>.<ext>`, because
-  a migration does not change names that refer to files (FILE-15).
+  folder; files keep their names on every device, so the name is synced
+  (`disk_name`); when two recordings have identical names both get a suffix
+  from their own id, and a name that collided once never returns without one;
+  the name on the row is always the name on disk; a row from before the
+  column keeps `<id>.<ext>`, because a migration does not change names that
+  refer to files (FILE-15).
 - **A speech bitrate for recordings.** `RecorderPreferences.kt` offers Opus at
   128 kb/s, AAC at 96 kb/s and 16 kHz WAV. A fourth option is **added**, not
   substituted: Opus at 32 kb/s, 48 kHz, in the same Ogg container, labelled
@@ -962,7 +965,7 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    dependency audits (Stage 14; `cargo audit` and `pip-audit` are not
    installed on this machine). **Stage 13's folder and
    file names done 2026-09-13** (FILE-15, FILE-16, TECHNICAL-DECISIONS
-   3.1a): `audio_files.local_name`, the shared Recordings/Voice folder on
+   3.1a): `audio_files.disk_name`, the shared Recordings/Voice folder on
    the phone, `voice-phone-backup` copying it.
 9. Stage 13's bitrate option can go in at any point; it touches only the
    recorder.
@@ -1050,13 +1053,9 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    marked to run on request (`-m audit`) rather than in every offline run.
    Install with `cargo install cargo-audit` and `.venv/bin/pip install
    pip-audit`.
-7. **The name of a recording on a device it arrives at** by sync, fetch or
-   download: named like a recording today, whether it was recorded or
-   imported. Not decided.
-8. **Importing a file without a known audio extension** (for example `memo`
-   or `memo.aac`): the desktop importer refuses it today. Not decided.
-9. **The form of the suffix** for a taken name: ` (2)` before the extension
-   was chosen, as Android and most file managers do. Not confirmed.
+7. Resolved 2026-09-13: files keep their names on every device (the name is synced).
+8. Resolved 2026-09-13: a file whose extension is not on the audio list is skipped; the list is to cover every common audio format, and every device plays every format.
+9. Resolved 2026-09-13: no parentheses and nothing that implies a sequence; a unique suffix from the recording's id.
 10. **Code that accommodates data from before this branch:** a content hash
     computed when a row has none; a clear key in an old `config.json`
     rewritten wrapped; columns added by migration instead of in the schema;

@@ -103,9 +103,9 @@ class AudioFileManager:
         """Create the audiofile directory if it does not exist."""
         self.audiofile_directory.mkdir(parents=True, exist_ok=True)
 
-    def import_file(self, source: Path | str, local_name: str) -> Path:
+    def import_file(self, source: Path | str, disk_name: str) -> Path:
         """Copy a file into the audio directory under the name its row carries
-        (``local_name``, decided by the core: an imported file's own name, with
+        (``disk_name``, decided by the core: an imported file's own name, with
         " (2)" and so on when the name was taken). A file already there is
         never overwritten.
 
@@ -119,20 +119,20 @@ class AudioFileManager:
         if not source.exists():
             raise FileNotFoundError(f"Source file not found: {source}")
 
-        extension = local_name.rsplit(".", 1)[-1].lower() if "." in local_name else ""
+        extension = disk_name.rsplit(".", 1)[-1].lower() if "." in disk_name else ""
         if extension not in AUDIO_FILE_FORMATS:
             raise ValueError(
-                f"Unsupported audio format: {extension or local_name}. "
+                f"Unsupported audio format: {extension or disk_name}. "
                 f"Supported formats: {', '.join(sorted(AUDIO_FILE_FORMATS))}"
             )
         # Any POSIX name: everything but empty, ".", "..", "/" and NUL
-        if local_name in ("", ".", "..") or "/" in local_name or "\0" in local_name:
-            raise ValueError(f"Not a file name: {local_name!r}")
+        if disk_name in ("", ".", "..") or "/" in disk_name or "\0" in disk_name:
+            raise ValueError(f"Not a file name: {disk_name!r}")
 
         self.ensure_directories()
-        dest = self.audiofile_directory / local_name
+        dest = self.audiofile_directory / disk_name
         if dest.exists():
-            raise FileExistsError(f"A file named {local_name} is already in the audio folder; nothing was overwritten")
+            raise FileExistsError(f"A file named {disk_name} is already in the audio folder; nothing was overwritten")
         shutil.copy2(source, dest)
         return dest
 
@@ -205,15 +205,15 @@ class AudioFileManager:
 
     def get_record_path(self, audio_file: dict) -> Path:
         """Where a recording's file is, or would be: the audio directory and
-        the row's ``local_name`` (Stage 13), the only way a file is found.
+        the row's ``disk_name`` (Stage 13), the only way a file is found.
 
         Args:
-            audio_file: Dict with a ``local_name`` key, as the database gives it.
+            audio_file: Dict with a ``disk_name`` key, as the database gives it.
         """
-        local_name = audio_file.get("local_name") or ""
-        if not local_name:
-            raise ValueError(f"The recording {audio_file.get('id', '?')} has no local name")
-        return self.audiofile_directory / local_name
+        disk_name = audio_file.get("disk_name") or ""
+        if not disk_name:
+            raise ValueError(f"The recording {audio_file.get('id', '?')} has no disk name")
+        return self.audiofile_directory / disk_name
 
     def record_file_exists(self, audio_file: dict) -> bool:
         """Whether the binary for an audio file record is on this device."""

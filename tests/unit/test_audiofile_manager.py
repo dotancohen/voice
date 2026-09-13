@@ -262,14 +262,14 @@ class TestAudioFileExtensionRule:
         assert audio_file_extension(".hidden") == "bin"
         assert audio_file_extension("") == "bin"
 
-    def test_record_path_is_the_row_s_local_name(self, tmp_path: Path) -> None:
+    def test_record_path_is_the_row_s_disk_name(self, tmp_path: Path) -> None:
         manager = AudioFileManager(tmp_path)
-        record = {"id": "0123abcd", "filename": "REC.MP3", "local_name": "2026_01_02_03_04_05-0123abcd.mp3"}
+        record = {"id": "0123abcd", "filename": "REC.MP3", "disk_name": "2026_01_02_03_04_05-0123abcd.mp3"}
         assert manager.get_record_path(record) == tmp_path / "2026_01_02_03_04_05-0123abcd.mp3"
         assert not manager.record_file_exists(record)
         (tmp_path / "2026_01_02_03_04_05-0123abcd.mp3").write_bytes(b"x")
         assert manager.record_file_exists(record)
-        with pytest.raises(ValueError, match="no local name"):
+        with pytest.raises(ValueError, match="no disk name"):
             manager.get_record_path({"id": "0123abcd", "filename": "REC.MP3"})
 
     def test_imported_file_is_found_by_record_path(self, tmp_path: Path) -> None:
@@ -278,7 +278,7 @@ class TestAudioFileExtensionRule:
         source.write_bytes(b"data")
         manager = AudioFileManager(tmp_path / "store")
         manager.import_file(source, "2026_01_02_03_04_05-00000abc.mp3")
-        assert manager.record_file_exists({"id": "abc", "filename": "SOURCE.MP3", "local_name": "2026_01_02_03_04_05-00000abc.mp3"})
+        assert manager.record_file_exists({"id": "abc", "filename": "SOURCE.MP3", "disk_name": "2026_01_02_03_04_05-00000abc.mp3"})
 
 
 class TestFilenameDates:

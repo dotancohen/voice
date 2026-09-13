@@ -110,7 +110,7 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     dict.set_item("modified_at_zone", &audio_file.modified_at_zone)?;
     dict.set_item("deleted_at_offset", &audio_file.deleted_at_offset)?;
     dict.set_item("deleted_at_zone", &audio_file.deleted_at_zone)?;
-    dict.set_item("local_name", &audio_file.local_name)?;
+    dict.set_item("disk_name", &audio_file.disk_name)?;
     dict.set_item("content_sha256", &audio_file.content_sha256)?;
     dict.set_item("storage_encrypted", audio_file.storage_encrypted)?;
     Ok(dict)
@@ -1069,7 +1069,7 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None, file_created_at_offset=None, content_sha256=None, storage_encrypted=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None, content_sha256=None, storage_encrypted=None, disk_name=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
@@ -1085,9 +1085,9 @@ impl PyDatabase {
         storage_key: Option<&str>,
         storage_uploaded_at: Option<i64>,
         primary_transcription_id: Option<&str>,
-        file_created_at_offset: Option<i32>,
         content_sha256: Option<&str>,
         storage_encrypted: Option<bool>,
+        disk_name: Option<&str>,
     ) -> PyResult<()> {
         self.inner_ref()?
             .apply_sync_audio_file(
@@ -1104,11 +1104,16 @@ impl PyDatabase {
                 storage_key,
                 storage_uploaded_at,
                 primary_transcription_id,
-                file_created_at_offset,
                 content_sha256,
                 storage_encrypted,
+                disk_name,
             )
             .map_err(voice_error_to_pyerr)
+    }
+
+    /// Names two recordings share resolved and pending renames made on disk (FILE-15). Returns files renamed.
+    fn settle_file_names(&self, audio_dir: &str) -> PyResult<usize> {
+        self.inner_ref()?.settle_file_names(std::path::Path::new(audio_dir)).map_err(voice_error_to_pyerr)
     }
 
     /// Compute and store a recording's content hash (Stage 13) from its file

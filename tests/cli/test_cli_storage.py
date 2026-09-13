@@ -36,7 +36,7 @@ def local_name_of(config_dir: Path, audio_id: str) -> str:
 
     db = Database(config_dir / "notes.db")
     try:
-        return db.get_audio_file(audio_id)["local_name"]
+        return db.get_audio_file(audio_id)["disk_name"]
     finally:
         db.close()
 

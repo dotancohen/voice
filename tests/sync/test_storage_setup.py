@@ -113,7 +113,7 @@ class TestTheWizardSteps:
         row = empty_db.get_audio_file(audio_id)
         one_mib = 1024 * 1024
         content = bytes(range(256)) * (9 * one_mib // 256)  # 9 MiB: a full part and a short one
-        (audio_dir / row["local_name"]).write_bytes(content)
+        (audio_dir / row["disk_name"]).write_bytes(content)
         content_hash = empty_db.store_content_hash(audio_id, audio_dir)
 
         s3.fail_part = 2
@@ -160,7 +160,7 @@ class TestTheWizardSteps:
 
             # A plain upload first, to be re-uploaded encrypted later
             plain_id = empty_db.create_audio_file("קודם.ogg", 1735689600)
-            (audio_dir / empty_db.get_audio_file(plain_id)["local_name"]).write_bytes(b"uploaded before encryption" * 100)
+            (audio_dir / empty_db.get_audio_file(plain_id)["disk_name"]).write_bytes(b"uploaded before encryption" * 100)
             plain_hash = empty_db.store_content_hash(plain_id, audio_dir)
             assert upload_pending_audio_files(config_dir).uploaded == 1
             assert f"{plain_hash}.ogg" in s3.buckets["voice-abc123"]
@@ -176,7 +176,7 @@ class TestTheWizardSteps:
 
             audio_id = empty_db.create_audio_file("סוד.ogg", 1735689700)
             content = bytes(range(256)) * 20
-            local = audio_dir / empty_db.get_audio_file(audio_id)["local_name"]
+            local = audio_dir / empty_db.get_audio_file(audio_id)["disk_name"]
             local.write_bytes(content)
             content_hash = empty_db.store_content_hash(audio_id, audio_dir)
             result = upload_pending_audio_files(config_dir)

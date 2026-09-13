@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import subprocess
@@ -23,22 +24,28 @@ def cli(node: SyncNode, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+_RECORDINGS_MADE = itertools.count()
+
+
 def give_recording(node: SyncNode, size: int) -> tuple[str, Path]:
-    """One recording of `size` bytes in the node's audio directory."""
+    """One recording of `size` bytes in the node's audio directory, under a
+    name no other recording has: these tests move files, and two recordings
+    with one name would collide (FILE-15), which the core's tests cover."""
     audio_dir = node.config_dir / "audio"
     audio_dir.mkdir(exist_ok=True)
     node.config.set_audiofile_directory(str(audio_dir))
-    source = node.config_dir / "clip.ogg"
+    name = f"clip {next(_RECORDINGS_MADE)}.ogg"
+    source = node.config_dir / name
     source.write_bytes(bytes(i % 251 for i in range(size)))
-    audio_id = node.db.create_audio_file("clip.ogg")
-    path = audio_dir / node.db.get_audio_file(audio_id)["local_name"]
+    audio_id = node.db.create_audio_file(name)
+    path = audio_dir / node.db.get_audio_file(audio_id)["disk_name"]
     source.rename(path)
     return audio_id, path
 
 
 def local_path(node: SyncNode, audio_id: str) -> Path:
     """Where a recording's file is on a node: what its row says (Stage 13)."""
-    return node.config_dir / "audio" / node.db.get_audio_file(audio_id)["local_name"]
+    return node.config_dir / "audio" / node.db.get_audio_file(audio_id)["disk_name"]
 
 
 def serve(node_b: SyncNode, node_a: SyncNode) -> None:
