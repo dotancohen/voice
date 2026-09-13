@@ -754,6 +754,8 @@ a bug in any of them, or in this plan, must be undoable.
   folder; files keep their names on every device, so the name is synced
   (`disk_name`); when two recordings have identical names both get a suffix
   from their own id, and a name that collided once never returns without one;
+  a deleted recording's name is set in stone, so only a new file that meets it
+  takes a suffix;
   the name on the row is always the name on disk; a row from before the
   column keeps `<id>.<ext>`, because a migration does not change names that
   refer to files (FILE-15).

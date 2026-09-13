@@ -71,7 +71,6 @@ __all__ = [
     "validate_search_query",
     "validate_parent_tag_id",
     "validate_tag_id_groups",
-    "validate_device_id",
 ]
 
 # Limits (keep for backward compatibility)
@@ -263,6 +262,3 @@ def validate_tag_id_groups(
     return result
 
 
-def validate_device_id(device_id: Union[bytes, str]) -> bytes:
-    """Validate a device ID."""
-    return validate_entity_id(device_id, "device_id")
