@@ -945,7 +945,12 @@ At this point the owner's phone delivers to the owner's desktop. Then:
 9. Stage 13's bitrate option can go in at any point; it touches only the
    recorder.
 10. Stage 15, encryption, last. Stage 16's version bump goes in with step 3,
-    and its handshake fields with step 4.
+    and its handshake fields with step 4. **Stage 16 done 2026-09-13**
+    (PROTO-12, PROTO-13): version 2.0, `PROTOCOL_TOO_OLD` both ways,
+    `application` and `entity_types` in the handshake, `?types=` on the
+    feed, apply refusing undeclared types. The opaque relay table waits for
+    the first other application, as planned. **Stage 13's speech bitrate
+    done 2026-09-13**: "Opus, speech, 32 kb/s" beside the three.
 
 ---
 

@@ -517,7 +517,7 @@ class TestServerSideSyncTimeUpdate:
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
-                    "protocol_version": "1.0",
+                    "protocol_version": "2.0",
                     "account_id": ACCOUNT_ID,
                 },
                 timeout=10,
@@ -560,7 +560,7 @@ class TestServerSideSyncTimeUpdate:
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
-                    "protocol_version": "1.0",
+                    "protocol_version": "2.0",
                     "account_id": ACCOUNT_ID,
                 },
                 timeout=10,
@@ -602,7 +602,7 @@ class TestServerSideSyncTimeUpdate:
                 json={
                     "device_id": peer_device_id,
                     "device_name": "TestClient",
-                    "protocol_version": "1.0",
+                    "protocol_version": "2.0",
                     "account_id": ACCOUNT_ID,
                 },
                 timeout=10,

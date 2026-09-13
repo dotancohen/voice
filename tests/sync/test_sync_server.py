@@ -40,7 +40,7 @@ class TestSyncStatus:
         assert data["status"] == "ok"
         assert data["device_id"] == running_server_a.device_id_hex
         assert data["device_name"] == running_server_a.name
-        assert data["protocol_version"] == "1.1"
+        assert data["protocol_version"] == "2.0"
 
     def test_status_json_content_type(self, running_server_a: SyncNode):
         """Status endpoint returns JSON content type."""
@@ -60,7 +60,7 @@ class TestSyncHandshake:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "TestClient",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
         )
@@ -69,7 +69,7 @@ class TestSyncHandshake:
         data = resp.json()
         assert data["device_id"] == running_server_a.device_id_hex
         assert data["device_name"] == running_server_a.name
-        assert data["protocol_version"] == "1.1"
+        assert data["protocol_version"] == "2.0"
 
     def test_handshake_missing_device_id(self, running_server_a: SyncNode):
         """Handshake fails without device_id."""
@@ -78,7 +78,7 @@ class TestSyncHandshake:
             headers=AUTH,
             json={
                 "device_name": "TestClient",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
         )
@@ -94,7 +94,7 @@ class TestSyncHandshake:
             json={
                 "device_id": "not-a-valid-uuid",
                 "device_name": "TestClient",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
         )
@@ -123,7 +123,7 @@ class TestSyncHandshake:
             json={
                 "device_id": peer_id,
                 "device_name": "TestClient",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
         )
@@ -136,7 +136,7 @@ class TestSyncHandshake:
             json={
                 "device_id": peer_id,
                 "device_name": "TestClient",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
         )

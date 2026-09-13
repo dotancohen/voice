@@ -31,6 +31,24 @@ from .conftest import (
 class TestProtocolVersionHandshake:
     """Tests for protocol version in handshake."""
 
+    def test_a_handshake_of_version_one_is_refused_in_words(self, running_server_a: SyncNode):
+        """Everything starts afresh (Stage 16): a 1.x peer is told to update."""
+        response = requests.post(
+            f"{running_server_a.url}/sync/handshake",
+            headers=AUTH,
+            json={
+                "device_id": "00000000000070008000000000000099",
+                "device_name": "Old phone",
+                "protocol_version": "1.1",
+                "account_id": ACCOUNT_ID,
+            },
+            timeout=5,
+        )
+        assert response.status_code == 426
+        body = response.json()
+        assert body["code"] == "PROTOCOL_TOO_OLD"
+        assert body["error"] == "Update Voice on Old phone (PROTOCOL_TOO_OLD)"
+
     def test_handshake_returns_protocol_version(self, running_server_a: SyncNode):
         """Handshake response includes protocol version."""
         response = requests.post(
@@ -39,7 +57,7 @@ class TestProtocolVersionHandshake:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "TestClient",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
             timeout=5,
@@ -48,7 +66,7 @@ class TestProtocolVersionHandshake:
         assert response.status_code == 200
         data = response.json()
         assert "protocol_version" in data
-        assert data["protocol_version"] == "1.1"
+        assert data["protocol_version"] == "2.0"
 
     def test_status_includes_protocol_version(self, running_server_a: SyncNode):
         """Status endpoint includes protocol version."""
@@ -69,7 +87,7 @@ class TestProtocolVersionHandshake:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "TestClient",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
             timeout=5,
@@ -113,7 +131,9 @@ class TestProtocolVersionMismatch:
 
         # Should either accept (backward compatible) or reject
         # Current implementation accepts any version
-        assert response.status_code in [200, 400, 409]
+        # Everything started afresh (Stage 16): an older peer is told to update
+        assert response.status_code == 426
+        assert response.json()["code"] == "PROTOCOL_TOO_OLD"
 
     def test_handshake_newer_client_version(self, running_server_a: SyncNode):
         """Server handles newer client protocol version."""
@@ -147,7 +167,9 @@ class TestProtocolVersionMismatch:
         )
 
         # Should handle gracefully
-        assert response.status_code in [200, 400]
+        # A version that cannot be read is not version 2
+        assert response.status_code == 426
+        assert response.json()["code"] == "PROTOCOL_TOO_OLD"
 
 
 class TestProtocolCompatibility:
@@ -177,7 +199,7 @@ class TestProtocolCompatibility:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
             timeout=5,
@@ -246,7 +268,7 @@ class TestProtocolVersionDiscovery:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
             timeout=5,
@@ -281,7 +303,7 @@ class TestProtocolVersionNegotiation:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
             timeout=5,
@@ -289,7 +311,7 @@ class TestProtocolVersionNegotiation:
 
         data = response.json()
         # Server responds with its version (should be 1.0)
-        assert data["protocol_version"] == "1.1"
+        assert data["protocol_version"] == "2.0"
 
 
 class TestFutureProtocolVersion:
@@ -303,7 +325,7 @@ class TestFutureProtocolVersion:
             json={
                 "device_id": "00000000000070008000000000000099",
                 "device_name": "Test",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
                 "unknown_field": "should be ignored",
                 "future_feature": {"nested": "data"},
@@ -375,7 +397,8 @@ class TestProtocolVersionEdgeCases:
         )
 
         # Should default or handle gracefully
-        assert response.status_code in [200, 400]
+        assert response.status_code == 426
+        assert response.json()["code"] == "PROTOCOL_TOO_OLD"
 
     def test_null_protocol_version(self, running_server_a: SyncNode):
         """Null protocol version is handled."""

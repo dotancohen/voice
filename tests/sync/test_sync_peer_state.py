@@ -301,7 +301,7 @@ class TestPeerHandshakeTimestamps:
             json={
                 "device_id": node_a.device_id_hex,
                 "device_name": "NodeA",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
             timeout=5,
@@ -323,7 +323,7 @@ class TestPeerHandshakeTimestamps:
             json={
                 "device_id": new_peer,
                 "device_name": "NewPeer",
-                "protocol_version": "1.0",
+                "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
             },
             timeout=5,
