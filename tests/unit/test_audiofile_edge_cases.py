@@ -347,7 +347,7 @@ class TestFileManagerEdgeCases:
         source.touch()  # Creates 0-byte file
 
         audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "mp3")
+        dest = manager.import_file(source, f"{audio_id}.mp3")
 
         assert dest.exists()
         assert dest.stat().st_size == 0
@@ -361,7 +361,7 @@ class TestFileManagerEdgeCases:
         source.write_bytes(b"x")
 
         audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "mp3")
+        dest = manager.import_file(source, f"{audio_id}.mp3")
 
         assert dest.exists()
         assert dest.stat().st_size == 1
@@ -375,7 +375,7 @@ class TestFileManagerEdgeCases:
         source.write_bytes(b"x" * (1024 * 1024))  # 1MB
 
         audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "mp3")
+        dest = manager.import_file(source, f"{audio_id}.mp3")
 
         assert dest.exists()
         assert dest.stat().st_size == 1024 * 1024
@@ -392,7 +392,7 @@ class TestFileManagerEdgeCases:
         source.write_bytes(b"audio content")
 
         audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "mp3")
+        dest = manager.import_file(source, f"{audio_id}.mp3")
 
         assert dest.exists()
 
@@ -408,7 +408,7 @@ class TestFileManagerEdgeCases:
         source.write_bytes(b"audio content")
 
         audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "mp3")
+        dest = manager.import_file(source, f"{audio_id}.mp3")
 
         assert dest.exists()
 
@@ -424,7 +424,7 @@ class TestFileManagerEdgeCases:
             source.write_bytes(b"audio content")
 
             audio_id = f"{'0' * 24}{fmt:0>8}"[:32]
-            dest = manager.import_file(source, audio_id, fmt)
+            dest = manager.import_file(source, f"{audio_id}.{fmt}")
             assert dest.exists(), f"Failed to import .{fmt} file"
 
 

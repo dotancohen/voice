@@ -30,6 +30,17 @@ def run_cli(config_dir: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def local_name_of(config_dir: Path, audio_id: str) -> str:
+    """The name a recording's file has in the audio directory: what its row says (Stage 13)."""
+    from core.database import Database
+
+    db = Database(config_dir / "notes.db")
+    try:
+        return db.get_audio_file(audio_id)["local_name"]
+    finally:
+        db.close()
+
+
 @pytest.fixture
 def storage_env(test_config_dir: Path, tmp_path: Path):
     """Config with an audio directory and a DB containing one note with one pending file."""
@@ -88,7 +99,7 @@ class TestOnDemandDownloadCommands:
 
     def test_audiofile_download_already_local(self, storage_env) -> None:
         config_dir, audio_dir, _, audio_id = storage_env
-        (audio_dir / f"{audio_id}.mp3").write_bytes(b"x")
+        (audio_dir / local_name_of(config_dir, audio_id)).write_bytes(b"x")
         result = run_cli(config_dir, "audiofile-download", audio_id)
         assert result.returncode == 0, result.stderr
         assert "already on this device" in result.stdout
@@ -124,11 +135,12 @@ class TestAudiofileShowMediaStatus:
         assert "Cloud storage: not uploaded yet" in result.stdout
         assert "not on this device" in result.stdout
 
-    def test_show_reports_local_path_with_lowercase_extension(self, storage_env) -> None:
+    def test_show_reports_the_local_path_the_row_names(self, storage_env) -> None:
         config_dir, audio_dir, _, audio_id = storage_env
-        (audio_dir / f"{audio_id}.mp3").write_bytes(b"x")
+        name = local_name_of(config_dir, audio_id)
+        (audio_dir / name).write_bytes(b"x")
         result = run_cli(config_dir, "audiofile-show", audio_id)
-        assert f"{audio_id}.mp3" in result.stdout
+        assert name in result.stdout and name.endswith(".mp3")
         assert "not on this device" not in result.stdout
 
     def test_list_reports_media_status(self, storage_env) -> None:

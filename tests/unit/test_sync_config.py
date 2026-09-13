@@ -52,10 +52,12 @@ class TestDeviceName:
 
     def test_default_device_name(self, sync_config: Config) -> None:
         """Default device name is generated."""
+        import socket
+
         name = sync_config.get_device_name()
-        assert name is not None
-        assert len(name) > 0
-        assert "Voice" in name
+        # The hostname alone (Stage 5): a card should read "desk", not "Voice on desk"
+        assert name in (socket.gethostname(), "Voice Device")
+        assert "Voice on" not in name
 
     def test_set_device_name(self, sync_config: Config) -> None:
         """Device name can be changed."""

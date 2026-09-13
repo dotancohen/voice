@@ -110,6 +110,7 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     dict.set_item("modified_at_zone", &audio_file.modified_at_zone)?;
     dict.set_item("deleted_at_offset", &audio_file.deleted_at_offset)?;
     dict.set_item("deleted_at_zone", &audio_file.deleted_at_zone)?;
+    dict.set_item("local_name", &audio_file.local_name)?;
     Ok(dict)
 }
 
@@ -1077,7 +1078,7 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None, file_created_at_offset=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
@@ -1093,6 +1094,7 @@ impl PyDatabase {
         storage_key: Option<&str>,
         storage_uploaded_at: Option<i64>,
         primary_transcription_id: Option<&str>,
+        file_created_at_offset: Option<i32>,
     ) -> PyResult<()> {
         self.inner_ref()?
             .apply_sync_audio_file(
@@ -1109,6 +1111,7 @@ impl PyDatabase {
                 storage_key,
                 storage_uploaded_at,
                 primary_transcription_id,
+                file_created_at_offset,
             )
             .map_err(voice_error_to_pyerr)
     }

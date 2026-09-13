@@ -103,49 +103,32 @@ class AudioFileManager:
         """Create the audiofile directory if it does not exist."""
         self.audiofile_directory.mkdir(parents=True, exist_ok=True)
 
-    def import_file(self, source: Path | str, audio_id: str, extension: str) -> Path:
-        """Import an audio file to the audiofile directory.
-
-        Args:
-            source: Path to the source audio file.
-            audio_id: UUID of the audio file (hex string).
-            extension: File extension (without dot).
-
-        Returns:
-            Path to the imported file.
+    def import_file(self, source: Path | str, local_name: str) -> Path:
+        """Copy a recording into the audio directory under the name its row
+        carries (``local_name``, decided by the core: the recording's start,
+        a hyphen, the tail of its id, and the extension).
 
         Raises:
             FileNotFoundError: If the source file doesn't exist.
-            ValueError: If the extension is not supported.
+            ValueError: If the name's extension is not a supported format.
         """
         source = Path(source)
         if not source.exists():
             raise FileNotFoundError(f"Source file not found: {source}")
 
-        ext_lower = extension.lower()
-        if ext_lower not in AUDIO_FILE_FORMATS:
+        extension = local_name.rsplit(".", 1)[-1].lower() if "." in local_name else ""
+        if extension not in AUDIO_FILE_FORMATS:
             raise ValueError(
-                f"Unsupported audio format: {extension}. "
+                f"Unsupported audio format: {extension or local_name}. "
                 f"Supported formats: {', '.join(sorted(AUDIO_FILE_FORMATS))}"
             )
+        if "/" in local_name or local_name.startswith("."):
+            raise ValueError(f"Not a file name: {local_name}")
 
         self.ensure_directories()
-        dest = self.audiofile_directory / f"{audio_id}.{ext_lower}"
+        dest = self.audiofile_directory / local_name
         shutil.copy2(source, dest)
         return dest
-
-    def get_file_path(self, audio_id: str, extension: str) -> Optional[Path]:
-        """Get the path to an audio file if it exists.
-
-        Args:
-            audio_id: UUID of the audio file (hex string).
-            extension: File extension (without dot).
-
-        Returns:
-            Path to the file if it exists, None otherwise.
-        """
-        path = self.audiofile_directory / f"{audio_id}.{extension.lower()}"
-        return path if path.exists() else None
 
     def get_file_created_at(
         self, path: Path | str, original_name: Optional[str] = None
@@ -215,12 +198,16 @@ class AudioFileManager:
         return ext if ext and ext in AUDIO_FILE_FORMATS else None
 
     def get_record_path(self, audio_file: dict) -> Path:
-        """Expected on-disk path for an audio file record (may not exist yet).
+        """Where a recording's file is, or would be: the audio directory and
+        the row's ``local_name`` (Stage 13), the only way a file is found.
 
         Args:
-            audio_file: Dict with ``id`` and ``filename`` keys.
+            audio_file: Dict with a ``local_name`` key, as the database gives it.
         """
-        return self.audiofile_directory / f"{audio_file['id']}.{audio_file_extension(audio_file.get('filename', ''))}"
+        local_name = audio_file.get("local_name") or ""
+        if not local_name:
+            raise ValueError(f"The recording {audio_file.get('id', '?')} has no local name")
+        return self.audiofile_directory / local_name
 
     def record_file_exists(self, audio_file: dict) -> bool:
         """Whether the binary for an audio file record is on this device."""

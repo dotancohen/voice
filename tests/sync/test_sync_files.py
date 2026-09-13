@@ -31,9 +31,14 @@ def give_recording(node: SyncNode, size: int) -> tuple[str, Path]:
     source = node.config_dir / "clip.ogg"
     source.write_bytes(bytes(i % 251 for i in range(size)))
     audio_id = node.db.create_audio_file("clip.ogg")
-    path = audio_dir / f"{audio_id}.ogg"
+    path = audio_dir / node.db.get_audio_file(audio_id)["local_name"]
     source.rename(path)
     return audio_id, path
+
+
+def local_path(node: SyncNode, audio_id: str) -> Path:
+    """Where a recording's file is on a node: what its row says (Stage 13)."""
+    return node.config_dir / "audio" / node.db.get_audio_file(audio_id)["local_name"]
 
 
 def serve(node_b: SyncNode, node_a: SyncNode) -> None:
@@ -57,11 +62,11 @@ class TestFilesBetweenInstances:
         assert (report["sent"], report["fetched"]) == (1, 1)
         assert report["bytes_moved"] == 200_000
 
-        on_b = node_b.config_dir / "audio" / f"{id_a}.ogg"
-        on_a = node_a.config_dir / "audio" / f"{id_b}.ogg"
+        on_b = local_path(node_b, id_a)
+        on_a = local_path(node_a, id_b)
         assert on_b.read_bytes() == path_a.read_bytes()
         assert on_a.read_bytes() == path_b.read_bytes()
-        assert not (on_a.parent / f"{id_b}.ogg.part").exists()
+        assert not Path(str(on_a) + ".part").exists()
 
         again = json.loads(cli(node_a, "sync", "exchange", node_b.device_id_hex).stdout)
         assert (again["sent"], again["fetched"], again["bytes_moved"]) == (0, 0, 0)
@@ -74,8 +79,8 @@ class TestFilesBetweenInstances:
 
         synced = SyncClient(str(node_a.config_dir)).sync_with_peer(node_b.device_id_hex)
         assert synced.success, synced.errors
-        assert not (node_b.config_dir / "audio" / f"{id_a}.ogg").exists(), "a sync never moves a file"
+        assert not local_path(node_b, id_a).exists(), "a sync never moves a file"
 
         delivered = json.loads(cli(node_a, "sync", "deliver", node_b.device_id_hex).stdout)
         assert delivered["success"] and delivered["sent"] == 1
-        assert (node_b.config_dir / "audio" / f"{id_a}.ogg").exists()
+        assert local_path(node_b, id_a).exists()

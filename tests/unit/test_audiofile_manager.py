@@ -63,7 +63,7 @@ class TestImportFile:
         source.write_bytes(b"fake mp3 content")
 
         audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "mp3")
+        dest = manager.import_file(source, f"{audio_id}.mp3")
 
         assert dest == audio_dir / f"{audio_id}.mp3"
         assert dest.exists()
@@ -78,7 +78,7 @@ class TestImportFile:
         source.write_bytes(b"fake wav")
 
         audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "wav")
+        dest = manager.import_file(source, f"{audio_id}.wav")
 
         assert audio_dir.exists()
         assert dest.exists()
@@ -92,7 +92,7 @@ class TestImportFile:
         audio_id = "0123456789abcdef0123456789abcdef"
 
         with pytest.raises(FileNotFoundError):
-            manager.import_file(source, audio_id, "mp3")
+            manager.import_file(source, f"{audio_id}.mp3")
 
     def test_raises_for_unsupported_format(self, tmp_path: Path) -> None:
         """Test that ValueError is raised for unsupported format."""
@@ -105,46 +105,20 @@ class TestImportFile:
         audio_id = "0123456789abcdef0123456789abcdef"
 
         with pytest.raises(ValueError, match="Unsupported audio format"):
-            manager.import_file(source, audio_id, "txt")
+            manager.import_file(source, f"{audio_id}.txt")
 
-    def test_normalizes_extension_to_lowercase(self, tmp_path: Path) -> None:
-        """Test that extension is normalized to lowercase."""
+    def test_the_name_is_used_as_the_row_gives_it(self, tmp_path: Path) -> None:
+        """The core decides the name (the start, the id's tail, a lowercase extension); the manager copies to it."""
         audio_dir = tmp_path / "audiofiles"
         manager = AudioFileManager(audio_dir)
 
         source = tmp_path / "test.MP3"
         source.write_bytes(b"fake mp3")
 
-        audio_id = "0123456789abcdef0123456789abcdef"
-        dest = manager.import_file(source, audio_id, "MP3")
-
-        assert dest.name == f"{audio_id}.mp3"
-
-
-class TestGetFilePath:
-    """Test get_file_path method."""
-
-    def test_returns_path_if_exists(self, tmp_path: Path) -> None:
-        """Test returning path for existing file."""
-        audio_dir = tmp_path / "audiofiles"
-        audio_dir.mkdir(parents=True)
-        manager = AudioFileManager(audio_dir)
-
-        audio_id = "0123456789abcdef0123456789abcdef"
-        audio_file = audio_dir / f"{audio_id}.mp3"
-        audio_file.write_bytes(b"audio")
-
-        path = manager.get_file_path(audio_id, "mp3")
-
-        assert path == audio_file
-
-    def test_returns_none_if_not_exists(self, tmp_path: Path) -> None:
-        """Test None returned for non-existent file."""
-        audio_dir = tmp_path / "audiofiles"
-        manager = AudioFileManager(audio_dir)
-
-        path = manager.get_file_path("nonexistent", "mp3")
-        assert path is None
+        dest = manager.import_file(source, "2026_09_21_14_30_59-abcdefgh.mp3")
+        assert dest.name == "2026_09_21_14_30_59-abcdefgh.mp3"
+        with pytest.raises(ValueError, match="Not a file name"):
+            manager.import_file(source, "../escape.mp3")
 
 
 class TestGetFileCreatedAt:
@@ -270,21 +244,23 @@ class TestAudioFileExtensionRule:
         assert audio_file_extension(".hidden") == "bin"
         assert audio_file_extension("") == "bin"
 
-    def test_record_path_uses_the_rule(self, tmp_path: Path) -> None:
+    def test_record_path_is_the_row_s_local_name(self, tmp_path: Path) -> None:
         manager = AudioFileManager(tmp_path)
-        record = {"id": "0123abcd", "filename": "REC.MP3"}
-        assert manager.get_record_path(record) == tmp_path / "0123abcd.mp3"
+        record = {"id": "0123abcd", "filename": "REC.MP3", "local_name": "2026_01_02_03_04_05-0123abcd.mp3"}
+        assert manager.get_record_path(record) == tmp_path / "2026_01_02_03_04_05-0123abcd.mp3"
         assert not manager.record_file_exists(record)
-        (tmp_path / "0123abcd.mp3").write_bytes(b"x")
+        (tmp_path / "2026_01_02_03_04_05-0123abcd.mp3").write_bytes(b"x")
         assert manager.record_file_exists(record)
+        with pytest.raises(ValueError, match="no local name"):
+            manager.get_record_path({"id": "0123abcd", "filename": "REC.MP3"})
 
     def test_imported_file_is_found_by_record_path(self, tmp_path: Path) -> None:
-        """Importing writes lowercase; lookup by record must agree."""
+        """Import and lookup use the same name: the row's."""
         source = tmp_path / "SOURCE.MP3"
         source.write_bytes(b"data")
         manager = AudioFileManager(tmp_path / "store")
-        manager.import_file(source, "abc", "MP3")
-        assert manager.record_file_exists({"id": "abc", "filename": "SOURCE.MP3"})
+        manager.import_file(source, "2026_01_02_03_04_05-00000abc.mp3")
+        assert manager.record_file_exists({"id": "abc", "filename": "SOURCE.MP3", "local_name": "2026_01_02_03_04_05-00000abc.mp3"})
 
 
 class TestFilenameDates:

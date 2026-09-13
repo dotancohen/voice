@@ -48,8 +48,8 @@ class TestNotePaneMediaMissing:
     def test_local_file_hides_notice(self, qapp, media_env) -> None:
         config, db, audio_dir, note_id, audio_id = media_env
         db.update_audio_file_storage(audio_id, "s3", f"audio/{audio_id}.mp3")
-        # Written with the shared lowercase-extension rule
-        (audio_dir / f"{audio_id}.mp3").write_bytes(b"x")
+        # Written under the name the row carries (Stage 13)
+        (audio_dir / db.get_audio_file(audio_id)["local_name"]).write_bytes(b"x")
 
         pane = NotePane(db, audiofile_directory=audio_dir, config_dir=config.get_config_dir())
         pane.load_note(note_id)

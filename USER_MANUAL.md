@@ -845,6 +845,14 @@ of, and a transfer that stops continues from where it stopped the next time.
 The receiver checks the file's hash before it accepts it, and refuses a file
 that would fill its disk.
 
+### Where recordings are, and what they are called
+
+A recording's file is named after its start and the end of its id:
+`2026_09_21_14_30_59-abcdefgh.ogg`. On the phone the files are in the
+shared `Recordings/Voice` folder (reachable from any file manager and over a
+cable, and left alone when the application is replaced); on the desktop in
+the account's `audio` folder. The folder holds recordings and nothing else.
+
 ### The bucket, set up by the wizard
 
 File → Set up the bucket… (or `storage setup`) takes a person who has never

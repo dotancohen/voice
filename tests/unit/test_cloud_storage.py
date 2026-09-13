@@ -55,14 +55,14 @@ class TestAudioFileStatus:
         _, db, audio_dir = cloud_env
         af = _record(db, "הקלטה.MP3", in_cloud=True)
         # File written with the shared lowercase-extension rule
-        (audio_dir / f"{af['id']}.mp3").write_bytes(b"x")
+        (audio_dir / af['local_name']).write_bytes(b"x")
         assert audio_file_status(af, audio_dir) == STATUS_LOCAL
 
     def test_uppercase_extension_record_is_found(self, cloud_env) -> None:
         """Regression: REC.MP3 must resolve to <id>.mp3 on disk."""
         _, db, audio_dir = cloud_env
         af = _record(db, "REC.MP3", in_cloud=False)
-        (audio_dir / f"{af['id']}.mp3").write_bytes(b"x")
+        (audio_dir / af['local_name']).write_bytes(b"x")
         assert AudioFileManager(audio_dir).record_file_exists(af)
         assert audio_file_status(af, audio_dir) == STATUS_LOCAL
 
@@ -81,7 +81,7 @@ class TestMissingAudioFiles:
     def test_split_by_fetchability(self, cloud_env) -> None:
         _, db, audio_dir = cloud_env
         local = _record(db, "a.mp3", in_cloud=True)
-        (audio_dir / f"{local['id']}.mp3").write_bytes(b"x")
+        (audio_dir / local['local_name']).write_bytes(b"x")
         cloud = _record(db, "b.mp3", in_cloud=True)
         pending = _record(db, "c.mp3", in_cloud=False)
 
@@ -106,7 +106,7 @@ class TestDownloadWithoutNetwork:
     def test_download_local_record_is_noop(self, cloud_env) -> None:
         config, db, audio_dir = cloud_env
         af = _record(db, "local.mp3", in_cloud=True)
-        (audio_dir / f"{af['id']}.mp3").write_bytes(b"x")
+        (audio_dir / af['local_name']).write_bytes(b"x")
         result = download_audio_file(af["id"], config.get_config_dir())
         assert result["status"] == "already_local"
 
@@ -139,7 +139,7 @@ class TestDownloadWithoutNetwork:
         config, db, audio_dir = cloud_env
         note_id = db.create_note("note")
         af = _record(db, "local.mp3", in_cloud=True)
-        (audio_dir / f"{af['id']}.mp3").write_bytes(b"x")
+        (audio_dir / af['local_name']).write_bytes(b"x")
         db.attach_to_note(note_id, af["id"], "audio_file")
 
         result = download_audio_files_for_note(note_id, config.get_config_dir())

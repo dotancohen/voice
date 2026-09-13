@@ -478,11 +478,12 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
             file_created_at = manager.get_file_created_at(audio_path)
             file_created_at_ts = datetime_to_timestamp(file_created_at)
 
-            # Create AudioFile record in database
+            # Create AudioFile record in database; its row names the file
             audio_file_id = db.create_audio_file(audio_path.name, file_created_at_ts)
+            row = db.get_audio_file(audio_file_id)
 
             # Copy file to audiofile_directory
-            manager.import_file(audio_path, audio_file_id, ext)
+            manager.import_file(audio_path, row["local_name"])
 
             # Create Note with audio reference
             # Use file_created_at for note's created_at for chronological sorting
@@ -753,8 +754,8 @@ def _transcribe_audio_file(
         print(f"Error: Cannot determine extension for {audio_file['filename']}", file=sys.stderr)
         return None
 
-    file_path = manager.get_file_path(audio_file['id'], ext)
-    if not file_path:
+    file_path = manager.get_record_path(audio_file)
+    if not file_path.is_file():
         # Transcribing is an explicit request for the media, so fetch it on demand.
         status = audio_file_status(audio_file, audiofile_dir)
         if status == STATUS_IN_CLOUD:
@@ -764,7 +765,9 @@ def _transcribe_audio_file(
             except RuntimeError as e:
                 print(f"Error: Download failed: {e}", file=sys.stderr)
                 return None
-            file_path = manager.get_file_path(audio_file['id'], ext)
+            file_path = manager.get_record_path(audio_file)
+            if not file_path.is_file():
+                file_path = None
         elif status == STATUS_PENDING:
             print(
                 f"Error: Audio file {audio_file['id'][:UUID_SHORT_LEN]}... is not on this device "

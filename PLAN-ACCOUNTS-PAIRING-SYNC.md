@@ -938,7 +938,10 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    the round trip, "Replace key", "Test everything", `sync check --all`,
    the checklist at the top of the sync dialogue, upload asking first.
    Not yet: the content hash, multipart resume (Stage 13), the Keystore on
-   the phone and the dependency audits (Stage 14).
+   the phone and the dependency audits (Stage 14). **Stage 13's folder and
+   file names done 2026-09-13** (FILE-15, FILE-16, TECHNICAL-DECISIONS
+   3.1a): `audio_files.local_name`, the shared Recordings/Voice folder on
+   the phone, `voice-phone-backup` copying it.
 9. Stage 13's bitrate option can go in at any point; it touches only the
    recorder.
 10. Stage 15, encryption, last. Stage 16's version bump goes in with step 3,

@@ -408,9 +408,9 @@ class NotePane(QWidget, NoteEditorMixin):
 
             self._current_audio_files = audio_files
 
-            # Build a lookup for audio file paths from cached filenames
-            self._cached_audio_filenames = {
-                af.get("id", ""): af.get("filename", "") for af in audio_files
+            # A lookup for audio file paths from the rows' local names (Stage 13)
+            self._cached_audio_names = {
+                af.get("id", ""): af.get("local_name", "") for af in audio_files
             }
 
             # Show transcriptions for first audio file
@@ -710,7 +710,7 @@ class NotePane(QWidget, NoteEditorMixin):
     def _get_audio_file_path_cached(self, audio_id: str) -> Optional[str]:
         """Get the file path for an audio file using cached filename.
 
-        This avoids a database query by using the filename from the display cache.
+        This avoids a database query by using the local name from the display cache.
 
         Args:
             audio_id: UUID of the audio file.
@@ -721,14 +721,14 @@ class NotePane(QWidget, NoteEditorMixin):
         if not self.audiofile_directory:
             return None
 
-        # Use cached filename if available
-        filename = getattr(self, '_cached_audio_filenames', {}).get(audio_id, "")
-        if not filename:
+        # The row's local name, cached when the note was loaded
+        local_name = getattr(self, '_cached_audio_names', {}).get(audio_id, "")
+        if not local_name:
             # Fallback to database query
             return self._get_audio_file_path(audio_id)
 
         path = AudioFileManager(self.audiofile_directory).get_record_path(
-            {"id": audio_id, "filename": filename}
+            {"id": audio_id, "local_name": local_name}
         )
         return str(path) if path.is_file() else None
 
