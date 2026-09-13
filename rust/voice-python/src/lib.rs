@@ -1809,6 +1809,15 @@ pub struct PySyncClient {
     runtime: tokio::runtime::Runtime,
 }
 
+impl PySyncClient {
+    /// Run a future of the client without holding the interpreter lock: the
+    /// interface stays alive while a sync runs, and a server in the same
+    /// process (a test's) can answer.
+    fn run<T: Send, F: std::future::Future<Output = T> + Send>(&self, py: Python<'_>, future: F) -> T {
+        py.allow_threads(|| self.runtime.block_on(future))
+    }
+}
+
 #[pymethods]
 impl PySyncClient {
     /// Create a new sync client.
@@ -1844,7 +1853,7 @@ impl PySyncClient {
     /// Join an account from a setup text (PAIR-4). Returns a dict with
     /// account_id, peer_id, peer_name and peer_url.
     fn join<'py>(&self, py: Python<'py>, setup_text: &str) -> PyResult<PyObject> {
-        let joined = self.runtime.block_on(self.inner.join(setup_text)).map_err(voice_error_to_pyerr)?;
+        let joined = self.run(py, self.inner.join(setup_text)).map_err(voice_error_to_pyerr)?;
         let dict = PyDict::new(py);
         dict.set_item("account_id", joined.account_id)?;
         dict.set_item("peer_id", joined.peer_id)?;
@@ -1855,7 +1864,7 @@ impl PySyncClient {
 
     /// Give a server this device's account by its grant text (PAIR-5).
     fn grant_host<'py>(&self, py: Python<'py>, setup_text: &str, label: &str) -> PyResult<PyObject> {
-        let joined = self.runtime.block_on(self.inner.grant_host(setup_text, label)).map_err(voice_error_to_pyerr)?;
+        let joined = self.run(py, self.inner.grant_host(setup_text, label)).map_err(voice_error_to_pyerr)?;
         let dict = PyDict::new(py);
         dict.set_item("account_id", joined.account_id)?;
         dict.set_item("peer_id", joined.peer_id)?;
@@ -1867,7 +1876,7 @@ impl PySyncClient {
     /// Check the connection to a peer (Stage 12): one row per thing that
     /// can be wrong, as dicts with name, passed, detail and code.
     fn check<'py>(&self, py: Python<'py>, peer_id: &str) -> PyResult<PyObject> {
-        let rows = self.runtime.block_on(self.inner.check(peer_id));
+        let rows = self.run(py, self.inner.check(peer_id));
         let list = pyo3::types::PyList::empty(py);
         for row in rows {
             let d = PyDict::new(py);
@@ -1881,46 +1890,46 @@ impl PySyncClient {
     }
 
     /// Perform full bidirectional sync with a peer
-    fn sync_with_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.runtime.block_on(self.inner.sync_with_peer(peer_id));
+    fn sync_with_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.sync_with_peer(peer_id));
         Ok(PySyncResult::from(result))
     }
 
     /// Deliver: sync, then send the recordings the peer lacks.
-    fn deliver(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.runtime.block_on(self.inner.deliver(peer_id))))
+    fn deliver(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.deliver(peer_id))))
     }
 
     /// Exchange: sync, then send and fetch.
-    fn exchange(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.runtime.block_on(self.inner.exchange(peer_id))))
+    fn exchange(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.exchange(peer_id))))
     }
 
     /// Send the recordings the peer lacks, without a sync.
-    fn send_to_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.runtime.block_on(self.inner.send_to_peer(peer_id))))
+    fn send_to_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.send_to_peer(peer_id))))
     }
 
     /// Fetch the recordings this device lacks from the peer, without a sync.
-    fn fetch_from_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.runtime.block_on(self.inner.fetch_from_peer(peer_id))))
+    fn fetch_from_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.fetch_from_peer(peer_id))))
     }
 
     /// Pull changes from a peer (one-way)
-    fn pull_from_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.runtime.block_on(self.inner.pull_from_peer(peer_id));
+    fn pull_from_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.pull_from_peer(peer_id));
         Ok(PySyncResult::from(result))
     }
 
     /// Push changes to a peer (one-way)
-    fn push_to_peer(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.runtime.block_on(self.inner.push_to_peer(peer_id));
+    fn push_to_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.push_to_peer(peer_id));
         Ok(PySyncResult::from(result))
     }
 
     /// Perform initial sync (full dataset transfer) with a peer
-    fn initial_sync(&self, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.runtime.block_on(self.inner.initial_sync(peer_id));
+    fn initial_sync(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.initial_sync(peer_id));
         Ok(PySyncResult::from(result))
     }
 
@@ -2161,7 +2170,7 @@ fn sync_all_peers<'py>(
     let config_arc = Arc::new(Mutex::new(cfg));
 
     // Run sync
-    let results = runtime.block_on(sync_client::sync_all_peers(db_arc, config_arc));
+    let results = py.allow_threads(|| runtime.block_on(sync_client::sync_all_peers(db_arc, config_arc)));
 
     // Convert to Python dict
     let dict = PyDict::new(py);
@@ -2254,8 +2263,10 @@ fn download_audio_file_from_cloud<'py>(
     config_dir: Option<&str>,
 ) -> PyResult<PyObject> {
     let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
-    let outcome = runtime
-        .block_on(file_storage::download_audio_file(&db, &audiofile_dir, audio_file_id))
+    // The database moves into the closure: it is Send, not Sync, and the
+    // interpreter lock is released while the download runs
+    let outcome = py
+        .allow_threads(move || runtime.block_on(file_storage::download_audio_file(&db, &audiofile_dir, audio_file_id)))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let dict = PyDict::new(py);
     match outcome {
@@ -2279,10 +2290,9 @@ fn download_audio_file_from_cloud<'py>(
 /// not on this device.
 #[pyfunction]
 #[pyo3(signature = (note_id, config_dir=None))]
-fn download_audio_files_for_note(note_id: &str, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
+fn download_audio_files_for_note(py: Python<'_>, note_id: &str, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
     let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
-    runtime
-        .block_on(file_storage::download_audio_files_for_note(&db, &audiofile_dir, note_id))
+    py.allow_threads(move || runtime.block_on(file_storage::download_audio_files_for_note(&db, &audiofile_dir, note_id)))
         .map(PyDownloadResult::from)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
@@ -2291,10 +2301,9 @@ fn download_audio_files_for_note(note_id: &str, config_dir: Option<&str>) -> PyR
 /// this device (the "mirror everything" action).
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
-fn download_missing_audio_files(config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
+fn download_missing_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
     let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
-    runtime
-        .block_on(file_storage::download_missing_audio_files(&db, &audiofile_dir))
+    py.allow_threads(move || runtime.block_on(file_storage::download_missing_audio_files(&db, &audiofile_dir)))
         .map(PyDownloadResult::from)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
@@ -2314,7 +2323,7 @@ fn download_missing_audio_files(config_dir: Option<&str>) -> PyResult<PyDownload
 ///     RuntimeError: If cloud storage is not configured or upload fails
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
-fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPendingResult> {
+fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyResult<PyUploadPendingResult> {
     // Create Tokio runtime
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
@@ -2330,11 +2339,11 @@ fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPend
             "Audiofile directory not configured. Set it with 'cli config set audiofile_directory <path>'",
         )
     })?;
-    let audiofile_path = std::path::Path::new(audiofile_dir);
+    let audiofile_path = std::path::PathBuf::from(audiofile_dir);
 
-    // Run the upload
+    // Run the upload without the interpreter lock; the database moves in
     let result: Result<file_storage::UploadPendingResult, file_storage::FileStorageError> =
-        runtime.block_on(file_storage::upload_pending_audio_files(&db, audiofile_path));
+        py.allow_threads(move || runtime.block_on(file_storage::upload_pending_audio_files(&db, &audiofile_path)));
 
     match result {
         Ok(r) => Ok(PyUploadPendingResult {
@@ -2366,6 +2375,7 @@ fn upload_pending_audio_files(config_dir: Option<&str>) -> PyResult<PyUploadPend
 #[pyfunction]
 #[pyo3(signature = (config_dir=None, host="0.0.0.0", port=None, plain_http=false, verbose=false, ansi_colors=true, root=None))]
 fn start_sync_server(
+    py: Python<'_>,
     config_dir: Option<&str>,
     host: &str,
     port: Option<u16>,
@@ -2410,8 +2420,8 @@ fn start_sync_server(
         }
         println!("  Press Ctrl-C to stop");
         println!();
-        runtime
-            .block_on(async {
+        py.allow_threads(|| {
+            runtime.block_on(async {
                 tokio::spawn(async {
                     if let Ok(()) = tokio::signal::ctrl_c().await {
                         println!("\nReceived Ctrl-C, shutting down...");
@@ -2420,7 +2430,8 @@ fn start_sync_server(
                 });
                 sync_server::start_hosting_server(&root_path, host, server_port, plain_http).await
             })
-            .map_err(voice_error_to_pyerr)?;
+        })
+        .map_err(voice_error_to_pyerr)?;
         return Ok(());
     }
 
@@ -2449,19 +2460,23 @@ fn start_sync_server(
     let db_arc = Arc::new(Mutex::new(db));
     let config_arc = Arc::new(Mutex::new(cfg));
 
-    // Run server with Ctrl-C handler
-    runtime.block_on(async {
-        // Spawn task to handle Ctrl-C
-        tokio::spawn(async {
-            if let Ok(()) = tokio::signal::ctrl_c().await {
-                println!("\nReceived Ctrl-C, shutting down...");
-                sync_server::stop_server();
-            }
-        });
+    // Run server with Ctrl-C handler, without holding the interpreter lock:
+    // the interface that started the listener on a thread stays alive
+    py.allow_threads(|| {
+        runtime.block_on(async {
+            // Spawn task to handle Ctrl-C
+            tokio::spawn(async {
+                if let Ok(()) = tokio::signal::ctrl_c().await {
+                    println!("\nReceived Ctrl-C, shutting down...");
+                    sync_server::stop_server();
+                }
+            });
 
-        // Run the server
-        sync_server::start_server(db_arc, config_arc, host, server_port, plain_http).await
-    }).map_err(voice_error_to_pyerr)?;
+            // Run the server
+            sync_server::start_server(db_arc, config_arc, host, server_port, plain_http).await
+        })
+    })
+    .map_err(voice_error_to_pyerr)?;
 
     Ok(())
 }
@@ -2470,6 +2485,166 @@ fn start_sync_server(
 #[pyfunction]
 fn sync_server_running() -> bool {
     sync_server::server_running()
+}
+
+// ---------------------------------------------------------------------------
+// The bucket, made and hardened (Stage 8, Stage 14)
+// ---------------------------------------------------------------------------
+
+fn bucket_key(access_key_id: &str, secret_access_key: &str, region: &str, endpoint: Option<&str>) -> voicecore_lib::bucket_setup::BucketKey {
+    voicecore_lib::bucket_setup::BucketKey {
+        access_key_id: access_key_id.to_string(),
+        secret_access_key: secret_access_key.to_string(),
+        region: region.to_string(),
+        endpoint: endpoint.map(|e| e.trim_end_matches('/').to_string()).filter(|e| !e.is_empty()),
+    }
+}
+
+fn check_rows_to_py<'py>(py: Python<'py>, rows: Vec<voicecore_lib::sync_protocol::CheckRow>) -> PyResult<PyObject> {
+    let list = PyList::empty(py);
+    for row in rows {
+        let d = PyDict::new(py);
+        d.set_item("name", row.name)?;
+        d.set_item("passed", row.passed)?;
+        d.set_item("detail", row.detail)?;
+        d.set_item("code", row.code)?;
+        list.append(d)?;
+    }
+    Ok(list.into_any().unbind())
+}
+
+fn bucket_runtime() -> PyResult<tokio::runtime::Runtime> {
+    tokio::runtime::Runtime::new().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+}
+
+/// The policy text the wizard shows for the console.
+#[pyfunction]
+fn bucket_policy_text() -> String {
+    voicecore_lib::bucket_setup::policy_text()
+}
+
+/// A pasted key id or secret without its label and whitespace.
+#[pyfunction]
+fn bucket_clean_key_id(text: &str) -> String {
+    voicecore_lib::bucket_setup::clean_key_id(text)
+}
+
+#[pyfunction]
+fn bucket_clean_secret(text: &str) -> String {
+    voicecore_lib::bucket_setup::clean_secret(text)
+}
+
+/// A bucket name nobody has yet, most likely.
+#[pyfunction]
+fn bucket_suggest_name() -> String {
+    voicecore_lib::bucket_setup::suggest_bucket_name()
+}
+
+/// Whether a name may be a bucket's: None, or the sentence that says why not.
+#[pyfunction]
+fn bucket_name_problem(name: &str) -> Option<String> {
+    voicecore_lib::bucket_setup::bucket_name_allowed(name).err()
+}
+
+/// What a failure means, in words.
+#[pyfunction]
+fn bucket_explain_error(text: &str) -> String {
+    voicecore_lib::bucket_setup::explain_error(text)
+}
+
+/// The regions the wizard offers.
+#[pyfunction]
+fn bucket_regions() -> Vec<String> {
+    voicecore_lib::bucket_setup::REGIONS.iter().map(|r| r.to_string()).collect()
+}
+
+/// The region whose endpoint answers fastest, or None when none answers.
+#[pyfunction]
+#[pyo3(signature = (regions=None))]
+fn bucket_nearest_region(py: Python<'_>, regions: Option<Vec<String>>) -> PyResult<Option<String>> {
+    let regions: Vec<String> = regions.unwrap_or_else(|| voicecore_lib::bucket_setup::REGIONS.iter().map(|r| r.to_string()).collect());
+    let refs: Vec<&str> = regions.iter().map(String::as_str).collect();
+    Ok(bucket_runtime()?.block_on(voicecore_lib::bucket_setup::nearest_region(&refs)))
+}
+
+/// Whether a bucket of this name answers this key; raises with the reason when the answer is neither.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None))]
+fn bucket_exists(py: Python<'_>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>) -> PyResult<bool> {
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::bucket_exists(&key, name))))?.map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
+/// Make the bucket, private.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None))]
+fn bucket_create(py: Python<'_>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>) -> PyResult<()> {
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::create_bucket(&key, name))))?.map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
+/// Block public access, default encryption, TLS only: one row each, verified.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None))]
+fn bucket_harden<'py>(py: Python<'py>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>) -> PyResult<PyObject> {
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    let rows = py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::harden_bucket(&key, name))))?;
+    check_rows_to_py(py, rows)
+}
+
+/// The three lifecycle rules.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None))]
+fn bucket_set_lifecycle(py: Python<'_>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>) -> PyResult<()> {
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::set_lifecycle(&key, name))))?.map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
+/// Write a small object, read it back, compare, tag it purged. Returns its key.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None, prefix=None))]
+fn bucket_round_trip(py: Python<'_>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>, prefix: Option<&str>) -> PyResult<String> {
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::round_trip(&key, name, prefix))))?.map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
+/// The bucket as it is, with a given key.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None, prefix=None))]
+fn bucket_check_with<'py>(py: Python<'py>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>, prefix: Option<&str>) -> PyResult<PyObject> {
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    let rows = py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::check_bucket(&key, name, prefix))))?;
+    check_rows_to_py(py, rows)
+}
+
+/// The bucket as it is, with the saved configuration of an account directory.
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn bucket_check<'py>(py: Python<'py>, config_dir: Option<&str>) -> PyResult<PyObject> {
+    let config_path = config_dir.map(std::path::PathBuf::from);
+    let cfg = config::Config::new(config_path).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    let saved = db.get_file_storage_config_struct().map_err(voice_error_to_pyerr)?;
+    if !saved.is_enabled() {
+        let list = PyList::empty(py);
+        let d = PyDict::new(py);
+        d.set_item("name", "Bucket")?;
+        d.set_item("passed", false)?;
+        d.set_item("detail", "No bucket is configured; run the storage wizard")?;
+        d.set_item("code", "")?;
+        list.append(d)?;
+        return Ok(list.into_any().unbind());
+    }
+    let key = bucket_key(
+        saved.s3_access_key_id().unwrap_or_default(),
+        saved.s3_secret_access_key().unwrap_or_default(),
+        saved.s3_region().unwrap_or_default(),
+        saved.s3_endpoint(),
+    );
+    let name = saved.s3_bucket().unwrap_or_default().to_string();
+    let prefix = saved.s3_prefix().map(String::from);
+    let rows = py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::check_bucket(&key, &name, prefix.as_deref()))))?;
+    check_rows_to_py(py, rows)
 }
 
 /// Stop the sync server.
@@ -2973,6 +3148,25 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(listen_urls, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
     m.add_function(wrap_pyfunction!(sync_server_running, m)?)?;
+    for f in [
+        wrap_pyfunction!(bucket_policy_text, m)?,
+        wrap_pyfunction!(bucket_clean_key_id, m)?,
+        wrap_pyfunction!(bucket_clean_secret, m)?,
+        wrap_pyfunction!(bucket_suggest_name, m)?,
+        wrap_pyfunction!(bucket_name_problem, m)?,
+        wrap_pyfunction!(bucket_explain_error, m)?,
+        wrap_pyfunction!(bucket_regions, m)?,
+        wrap_pyfunction!(bucket_nearest_region, m)?,
+        wrap_pyfunction!(bucket_exists, m)?,
+        wrap_pyfunction!(bucket_create, m)?,
+        wrap_pyfunction!(bucket_harden, m)?,
+        wrap_pyfunction!(bucket_set_lifecycle, m)?,
+        wrap_pyfunction!(bucket_round_trip, m)?,
+        wrap_pyfunction!(bucket_check_with, m)?,
+        wrap_pyfunction!(bucket_check, m)?,
+    ] {
+        m.add_function(f)?;
+    }
     m.add_function(wrap_pyfunction!(apply_sync_changes, m)?)?;
 
     // Register file storage functions

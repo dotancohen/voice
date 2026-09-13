@@ -845,6 +845,22 @@ of, and a transfer that stops continues from where it stopped the next time.
 The receiver checks the file's hash before it accepts it, and refuses a file
 that would fill its disk.
 
+### The bucket, set up by the wizard
+
+File → Set up the bucket… (or `storage setup`) takes a person who has never
+seen the Amazon console from nothing to a tested bucket: where to click, the
+policy text to paste (it lets the key make and use buckets named `voice-…`
+and nothing else; it cannot delete a recording), the pasted key cleaned of
+spaces, the nearest region proposed, a generated bucket name, the bucket
+made private and hardened (public access blocked, encrypted, TLS only), its
+lifecycle rules set (cheaper storage after thirty days), a small object
+written and read back, and the whole saved as part of the account so every
+device receives it at its next sync. A purged recording's object is tagged
+and removed by the bucket a day later. "Replace the bucket's key…" tests a
+new key the same way and saves it for every device. "Test everything" in
+the sync dialogue, or `sync check --all`, checks every peer and the bucket
+as one table; `storage check` the bucket alone.
+
 ### Is everything somewhere else too?
 
 `sync status` says, in one line, what exists on this device only: "3 notes

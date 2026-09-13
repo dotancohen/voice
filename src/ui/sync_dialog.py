@@ -120,6 +120,11 @@ class SyncDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # Stage 8: the checklist, each row its state and the one button that completes it
+        self.checklist_box = QVBoxLayout()
+        self.checklist_rows: List[Any] = []
+        layout.addLayout(self.checklist_box)
+
         # Stage 10: the line, here and nowhere else
         self.proof_label = QLabel()
         self.proof_label.setObjectName("proof_label")
@@ -156,6 +161,14 @@ class SyncDialog(QDialog):
         self.show_code_button.setAccessibleDescription("A code another device reads to join this account")
         self.show_code_button.clicked.connect(self._show_code)
         actions.addWidget(self.show_code_button)
+        self.test_all_button = QPushButton("Test everything")
+        self.test_all_button.setAccessibleDescription("The connection check against every peer and the bucket, as one table")
+        self.test_all_button.clicked.connect(self._test_everything)
+        actions.addWidget(self.test_all_button)
+        self.wizard_button = QPushButton("Set up the bucket…")
+        self.wizard_button.setAccessibleDescription("The bucket wizard: make the key, make and harden the bucket, test it")
+        self.wizard_button.clicked.connect(self._open_wizard)
+        actions.addWidget(self.wizard_button)
         actions.addStretch()
         layout.addLayout(actions)
 
@@ -217,7 +230,8 @@ class SyncDialog(QDialog):
     # ----- state
 
     def refresh(self) -> None:
-        """Read everything again: the line, the peers, the button, this device."""
+        """Read everything again: the checklist, the line, the peers, the button, this device."""
+        self._refresh_checklist()
         try:
             counts = self.db.not_duplicated(self.config.get_audiofile_directory())
             self.proof_label.setText(not_duplicated_sentence(counts))
@@ -238,6 +252,65 @@ class SyncDialog(QDialog):
 
         self._build_operation_menu()
         self.device_label.setText(self._this_device_text())
+
+    def _refresh_checklist(self) -> None:
+        from src.core.storage_setup import checklist
+
+        for widget in self.checklist_rows:
+            widget.setParent(None)
+            widget.deleteLater()
+        self.checklist_rows = []
+        listening = self.listen_action.isChecked() if self.listen_action is not None else False
+        try:
+            rows = checklist(self.config, self.db, listening)
+        except Exception as e:  # noqa: BLE001
+            rows = [{"name": "Checklist", "done": False, "detail": str(e), "action": "", "action_label": ""}]
+        self.checklist = rows
+        for entry in rows:
+            line = QHBoxLayout()
+            holder = QLabel(f"{'✓' if entry['done'] else '✗'} {entry['name']}: {entry['detail']}")
+            holder.setAccessibleName(f"{entry['name']}, {'done' if entry['done'] else 'not done'}: {entry['detail']}")
+            line.addWidget(holder)
+            if entry["action"]:
+                button = QPushButton(entry["action_label"])
+                button.clicked.connect(lambda _checked=False, a=entry["action"]: self._checklist_action(a))
+                line.addWidget(button)
+            line.addStretch()
+            from PySide6.QtWidgets import QWidget
+
+            row_widget = QWidget()
+            row_widget.setLayout(line)
+            self.checklist_box.addWidget(row_widget)
+            self.checklist_rows.append(row_widget)
+
+    def _checklist_action(self, action: str) -> None:
+        if action == "show_code":
+            self._show_code()
+        elif action == "storage_wizard":
+            self._open_wizard()
+        elif action == "listen" and self.listen_action is not None:
+            self.listen_action.setChecked(True)
+            self.refresh()
+        elif action == "exchange":
+            self._run_default()
+
+    def _open_wizard(self) -> None:
+        from src.ui.storage_wizard import StorageWizard
+
+        StorageWizard(self.db, self.config, listen_action=self.listen_action, parent=self).exec()
+        self.refresh()
+
+    def _test_everything(self) -> None:
+        """Every peer and the bucket, as one table (Stage 8 step 11)."""
+        from src.core.storage_setup import check_everything
+
+        self.result_label.setText("Checking every peer and the bucket…")
+        try:
+            rows = check_everything(str(self.config.get_config_dir()), self.config, self.db)
+        except Exception as e:  # noqa: BLE001
+            self.result_label.setText(f"The checks could not run: {e}")
+            return
+        self.result_label.setText("\n".join(f"{'✓' if r['passed'] else '✗'} {r['name']}: {r['detail']}{' (' + r['code'] + ')' if r.get('code') else ''}" for r in rows) or "Nothing to check yet.")
 
     def _last_peer(self) -> Optional[Dict[str, Any]]:
         """The peer the visible button names: the last used, else the only one."""

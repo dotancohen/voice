@@ -1,5 +1,10 @@
 # Setting up cloud storage for your recordings
 
+**There is a wizard now.** On the desktop, File → Set up the bucket… (or
+`python -m src.main cli storage setup`) does every Amazon step below for you,
+one screen at a time, and tests the result. This guide stays for
+DigitalOcean and Backblaze, and for reading what the wizard does.
+
 This guide is for someone who has never done this before. It assumes only that
 you can use a web browser, and that you have an account with a credit card on it.
 

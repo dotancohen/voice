@@ -932,7 +932,13 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    silent, `sync discover` and "Find on this network"; and Stage 6's
    LAN-only listener (LISTEN-3).
 8. Stage 8, the wizard, with Stage 14's bucket hardening and Stage 13's
-   bucket items.
+   bucket items. **Done 2026-09-13** (BUCKET-1..5): the wizard in the GUI
+   and as `storage setup`, the key that cannot delete, purge by tag and
+   lifecycle, the three hardening settings verified, the lifecycle rules,
+   the round trip, "Replace key", "Test everything", `sync check --all`,
+   the checklist at the top of the sync dialogue, upload asking first.
+   Not yet: the content hash, multipart resume (Stage 13), the Keystore on
+   the phone and the dependency audits (Stage 14).
 9. Stage 13's bitrate option can go in at any point; it touches only the
    recorder.
 10. Stage 15, encryption, last. Stage 16's version bump goes in with step 3,

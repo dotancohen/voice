@@ -156,6 +156,15 @@ class MainWindow(QMainWindow):
         self.sync_action.triggered.connect(self.open_sync_dialog)
         file_menu.addAction(self.sync_action)
 
+        # The bucket: the wizard, and a new key for it
+        wizard_action = QAction("Set up the &bucket…", self)
+        wizard_action.setStatusTip("Make the key, make and harden the bucket, test it, save it for every device")
+        wizard_action.triggered.connect(self.open_storage_wizard)
+        file_menu.addAction(wizard_action)
+        replace_key_action = QAction("Replace the bucket's &key…", self)
+        replace_key_action.triggered.connect(self.open_replace_key)
+        file_menu.addAction(replace_key_action)
+
         # Listen for peers: the listener runs only while this is checked
         self.listen_action = QAction("&Listen for peers", self)
         self.listen_action.setCheckable(True)
@@ -378,6 +387,16 @@ class MainWindow(QMainWindow):
 
 
         logger.info("Tags modified - refreshed UI")
+
+    def open_storage_wizard(self) -> None:
+        from src.ui.storage_wizard import StorageWizard
+
+        StorageWizard(self.db, self.config, listen_action=self.listen_action, parent=self).exec()
+
+    def open_replace_key(self) -> None:
+        from src.ui.storage_wizard import ReplaceKeyWizard
+
+        ReplaceKeyWizard(self.db, parent=self).exec()
 
     def open_sync_dialog(self) -> None:
         """The sync dialogue: the peers, the one button, the code, the check."""

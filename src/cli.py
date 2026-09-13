@@ -1685,8 +1685,21 @@ def _peer_by_prefix(config: Config, prefix: str) -> Optional[Dict[str, Any]]:
     return matches[0] if len(matches) == 1 else None
 
 
-def cmd_sync_check(config: Config, args: argparse.Namespace) -> int:
-    """Check the connection to a peer: one row per thing that can be wrong (Stage 12)."""
+def cmd_sync_check(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Check the connection to a peer, or with --all every peer and the bucket as one table (Stage 12, Stage 8)."""
+    if getattr(args, "all", False):
+        from src.core.storage_setup import check_everything
+        rows = check_everything(str(config.get_config_dir()), config, db)
+        passed = all(r["passed"] for r in rows)
+        if args.format == "json":
+            print(json.dumps({"passed": passed, "rows": rows}, indent=2))
+        else:
+            for r in rows:
+                print(f"{'ok  ' if r['passed'] else 'FAIL'}  {r['name']}: {r['detail']}{'  (' + r['code'] + ')' if r['code'] else ''}")
+        return 0 if passed else 1
+    if not args.peer_id:
+        print("Error: give a peer id, or --all.", file=sys.stderr)
+        return 1
     peer = _peer_by_prefix(config, args.peer_id)
     if peer is None:
         print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
@@ -2900,6 +2913,104 @@ def cmd_storage_configure_s3(db: Database, args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_storage_setup(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """The bucket wizard from the command line (Stage 8): the same steps as the
+    GUI's, asked one at a time, or taken from the flags with --yes."""
+    from src.core import storage_setup
+
+    state = storage_setup.SetupState()
+    quiet = args.format == "json" or getattr(args, "yes", False)
+
+    def ask(prompt: str, default: str = "", secret: bool = False) -> str:
+        if secret:
+            import getpass
+            return getpass.getpass(prompt)
+        answer = input(f"{prompt}{' [' + default + ']' if default else ''}: ").strip()
+        return answer or default
+
+    if not quiet:
+        print("Make the key in the Amazon console, one step at a time:")
+        for n, step in enumerate(storage_setup.CONSOLE_STEPS, 1):
+            print(f"  {n}. {step}")
+        print("\nThe policy text to paste in step 3:\n")
+        print(storage_setup.policy_text())
+        print()
+    key_id = getattr(args, "access_key_id", None) or ask("Access key ID")
+    secret = getattr(args, "secret_access_key", None) or ask("Secret access key: ", secret=True)
+    state.endpoint = (getattr(args, "endpoint", None) or ("" if quiet else ask("Endpoint (empty for Amazon)"))).strip()
+    problem = storage_setup.take_key(state, key_id, secret)
+    if problem:
+        print(f"Error: {problem}", file=sys.stderr)
+        return 1
+    region = getattr(args, "region", None)
+    if not region:
+        nearest = storage_setup.nearest_region() or "us-east-1"
+        region = nearest if quiet else ask("Region", nearest)
+    state.region = region
+    state.bucket = getattr(args, "bucket", None) or (storage_setup.suggest_bucket_name() if quiet else ask("Bucket name", storage_setup.suggest_bucket_name()))
+    state.prefix = (getattr(args, "prefix", None) or "").strip()
+
+    report: Dict[str, Any] = {"bucket": state.bucket, "region": state.region, "saved": False}
+    problem = storage_setup.create_bucket(state)
+    if problem:
+        report["error"] = f"Not made: {problem}"
+        print(json.dumps(report) if args.format == "json" else f"Error: {report['error']}", file=sys.stdout if args.format == "json" else sys.stderr)
+        return 1
+    report["hardened"] = storage_setup.harden(state)
+    lifecycle_problem = storage_setup.set_lifecycle(state)
+    report["lifecycle"] = lifecycle_problem or "set"
+    trip_problem = storage_setup.round_trip(state)
+    report["round_trip"] = trip_problem or "passed"
+    if trip_problem:
+        print(json.dumps(report) if args.format == "json" else f"Error: the round trip failed: {trip_problem}", file=sys.stdout if args.format == "json" else sys.stderr)
+        return 1
+    storage_setup.save(state, db)
+    report["saved"] = True
+    if args.format == "json":
+        print(json.dumps(report, indent=2))
+        return 0
+    print(f"Bucket {state.bucket} in {state.region}: made, private.")
+    for row in report["hardened"]:
+        print(f"  {'ok  ' if row['passed'] else 'FAIL'} {row['name']}: {row['detail']}")
+    print(f"  {'ok  ' if not lifecycle_problem else 'FAIL'} Lifecycle rules: {report['lifecycle']}")
+    print("  ok   Round trip: a small object was written, read back and compared.")
+    print("Saved. Every device of the account receives the bucket at its next sync; the phone can upload after that.")
+    print(storage_setup.WHAT_THE_BUCKET_HOLDS)
+    return 0
+
+
+def cmd_storage_replace_key(db: Database, args: argparse.Namespace) -> int:
+    """A new key for the existing bucket (Stage 14), tested exactly as the first."""
+    from src.core import storage_setup
+
+    secret = getattr(args, "secret_access_key", None)
+    if not secret:
+        import getpass
+        secret = getpass.getpass("New secret access key: ")
+    problem = storage_setup.replace_key(db, args.access_key_id, secret)
+    if problem:
+        print(f"Error: {problem}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps({"replaced": True}))
+    else:
+        print("Saved. Every device gets the new key at its next sync; deactivate the old key in the console (Users → voice → Security credentials).")
+    return 0
+
+
+def cmd_storage_check(config: Config, args: argparse.Namespace) -> int:
+    """The bucket as it is: one row per thing that can be wrong."""
+    from voicecore import bucket_check
+
+    rows = bucket_check(str(config.get_config_dir()))
+    if args.format == "json":
+        print(json.dumps(rows, indent=2))
+    else:
+        for r in rows:
+            print(f"{'ok  ' if r['passed'] else 'FAIL'}  {r['name']}: {r['detail']}")
+    return 0 if all(r["passed"] for r in rows) else 1
+
+
 def cmd_storage_disable(db: Database, args: argparse.Namespace) -> int:
     """Disable cloud storage.
 
@@ -3697,7 +3808,8 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
 
     # sync check
     check_parser = sync_subparsers.add_parser("check", help="Check the connection to a peer: reachability, certificate, account, key, clock, free space, listener, each with its code")
-    check_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
+    check_parser.add_argument("peer_id", type=str, nargs="?", help="Peer device ID, or a unique prefix of it")
+    check_parser.add_argument("--all", action="store_true", help="Every peer and the bucket, as one table")
 
     # sync list-peers
     sync_subparsers.add_parser("list-peers", help="List configured sync peers")
@@ -4027,6 +4139,24 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # storage status - show current configuration
     storage_subparsers.add_parser("status", help="Show current cloud storage configuration")
 
+    # storage setup: the wizard
+    setup_parser = storage_subparsers.add_parser("setup", help="The bucket wizard: make the key, make and harden the bucket, test it, save it for every device")
+    setup_parser.add_argument("--access-key-id", help="Skip the question")
+    setup_parser.add_argument("--secret-access-key", help="Skip the question (the secret is also read without echo when omitted)")
+    setup_parser.add_argument("--region", help="Skip the question (default: the nearest by round-trip time)")
+    setup_parser.add_argument("--bucket", help="Skip the question (default: a generated voice-… name)")
+    setup_parser.add_argument("--prefix", help="A folder inside the bucket, optional")
+    setup_parser.add_argument("--endpoint", help="An https address for a service other than Amazon")
+    setup_parser.add_argument("--yes", action="store_true", help="Ask nothing: take the flags and the defaults")
+
+    # storage replace-key
+    replace_parser = storage_subparsers.add_parser("replace-key", help="A new key for the existing bucket, tested first, then saved for every device")
+    replace_parser.add_argument("access_key_id", help="The new access key ID")
+    replace_parser.add_argument("--secret-access-key", help="The new secret (read without echo when omitted)")
+
+    # storage check
+    storage_subparsers.add_parser("check", help="The bucket as it is: answers the key, round trip, public access blocked, encrypted, TLS only, lifecycle rules")
+
     # storage configure-s3 - configure S3 storage
     storage_s3_parser = storage_subparsers.add_parser(
         "configure-s3",
@@ -4259,7 +4389,7 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             elif sync_cmd == "now":
                 return cmd_sync_now(db, config, args)
             elif sync_cmd == "check":
-                return cmd_sync_check(config, args)
+                return cmd_sync_check(db, config, args)
             elif sync_cmd == "discover":
                 return cmd_sync_discover(db, config, args)
             elif sync_cmd in ("deliver", "exchange", "send", "fetch"):
@@ -4306,6 +4436,12 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return 1
             if storage_cmd == "status":
                 return cmd_storage_status(db, config, args)
+            elif storage_cmd == "setup":
+                return cmd_storage_setup(db, config, args)
+            elif storage_cmd == "replace-key":
+                return cmd_storage_replace_key(db, args)
+            elif storage_cmd == "check":
+                return cmd_storage_check(config, args)
             elif storage_cmd == "configure-s3":
                 return cmd_storage_configure_s3(db, args)
             elif storage_cmd == "disable":
