@@ -410,6 +410,18 @@ class Database:
         """Every device of the account, as its card says."""
         return self._rust_db.list_devices()
 
+    def not_duplicated(self, audio_dir: Optional[str]) -> Dict[str, int]:
+        """What is on this device only: {"notes": n, "recordings": m} (Stage 10)."""
+        return self._rust_db.not_duplicated(audio_dir)
+
+    def copies_of(self, audio_id: str) -> List[Dict[str, Any]]:
+        """The peers known to hold a copy of a recording, with when that was learnt."""
+        return self._rust_db.copies_of(audio_id)
+
+    def peer_summaries(self) -> List[Dict[str, Any]]:
+        """Every peer dealt with: when it was last reached and by which operation."""
+        return self._rust_db.peer_summaries()
+
     def admit_device(self, device_id: str, name: str, key_hash: str, certificate_fingerprint: str = "") -> None:
         """Let a device into the account: its card, with the hash of its key."""
         self._rust_db.admit_device(device_id, name, key_hash, certificate_fingerprint)

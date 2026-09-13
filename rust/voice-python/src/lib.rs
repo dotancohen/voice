@@ -520,6 +520,44 @@ impl PyDatabase {
         self.inner_ref()?.move_to_account(account_id).map_err(voice_error_to_pyerr)
     }
 
+    /// What is on this device only (Stage 10): notes and recordings, as a dict.
+    #[pyo3(signature = (audio_dir=None))]
+    fn not_duplicated<'py>(&self, py: Python<'py>, audio_dir: Option<&str>) -> PyResult<PyObject> {
+        let counts = self.inner_ref()?.not_duplicated(audio_dir.map(std::path::Path::new)).map_err(voice_error_to_pyerr)?;
+        let d = PyDict::new(py);
+        d.set_item("notes", counts.notes)?;
+        d.set_item("recordings", counts.recordings)?;
+        Ok(d.into_any().unbind())
+    }
+
+    /// The peers known to hold a copy of a recording, as dicts with peer_id and at.
+    fn copies_of<'py>(&self, py: Python<'py>, audio_id: &str) -> PyResult<PyObject> {
+        let copies = self.inner_ref()?.copies_of(audio_id).map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for c in copies {
+            let d = PyDict::new(py);
+            d.set_item("peer_id", c.peer_id)?;
+            d.set_item("at", c.at)?;
+            list.append(d)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    /// Every peer dealt with: peer_id, peer_name, last_reached_at, last_operation.
+    fn peer_summaries<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let peers = self.inner_ref()?.peer_summaries().map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for p in peers {
+            let d = PyDict::new(py);
+            d.set_item("peer_id", p.peer_id)?;
+            d.set_item("peer_name", p.peer_name)?;
+            d.set_item("last_reached_at", p.last_reached_at)?;
+            d.set_item("last_operation", p.last_operation)?;
+            list.append(d)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
     /// Every device of the account, as its card says (CARD-1).
     fn list_devices<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let cards = self.inner_ref()?.list_device_cards().map_err(voice_error_to_pyerr)?;

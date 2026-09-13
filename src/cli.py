@@ -521,6 +521,23 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
     return 0 if errors == 0 else 1
 
 
+def _describe_copies(db: Database, config: Config, af: Dict[str, Any], audiofile_dir: Optional[Path]) -> str:
+    """Where the copies of a recording are (Stage 10): this device, the bucket, and each peer."""
+    places = []
+    if audiofile_dir is not None and af.get("filename"):
+        from src.core.cloud_storage import audio_file_status, STATUS_LOCAL
+        if audio_file_status(af, audiofile_dir) == STATUS_LOCAL:
+            places.append("this device")
+    if af.get("storage_key"):
+        places.append("the bucket")
+    names = {p["peer_id"]: p["peer_name"] for p in config.get_peers()}
+    for card in db.list_devices():
+        names.setdefault(card["device_id"], card["name"] or card["device_id"][:UUID_SHORT_LEN])
+    for copy in db.copies_of(af["id"]):
+        places.append(names.get(copy["peer_id"], copy["peer_id"][:UUID_SHORT_LEN]))
+    return ", ".join(places) if places else "nowhere known"
+
+
 def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) -> int:
     """List audio files.
 
@@ -558,6 +575,7 @@ def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) 
             print(f"  Summary: {af['summary']}")
         if audiofile_dir:
             print(f"  Media: {_describe_media_status(af, audiofile_dir)}")
+        print(f"  Copies: {_describe_copies(db, config, af, audiofile_dir)}")
         print()
 
     return 0
@@ -1727,6 +1745,16 @@ def cmd_sync_operation(config: Config, operation: str, args: argparse.Namespace)
     return 0 if result.success else 1
 
 
+def not_duplicated_sentence(counts: Dict[str, int]) -> str:
+    """The one line of Stage 10: what exists on this device only."""
+    notes, recordings = counts["notes"], counts["recordings"]
+    if notes == 0 and recordings == 0:
+        return "Everything is duplicated off this device."
+    note_part = f"{notes} note{'s' if notes != 1 else ''}"
+    recording_part = f"{recordings} recording{'s' if recordings != 1 else ''}"
+    return f"{note_part} and {recording_part} are not duplicated off this device."
+
+
 def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Show sync status and device information.
 
@@ -1754,6 +1782,8 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
         # Get conflict counts
         conflict_mgr = ConflictManager(db)
         status["conflicts"] = conflict_mgr.get_unresolved_count()
+        status["not_duplicated"] = db.not_duplicated(config.get_audiofile_directory())
+        status["peers"] = db.peer_summaries()
         print(json.dumps(status, indent=2))
     else:
         print(f"Account: {db.account_id()}")
@@ -1762,6 +1792,12 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
         print(f"Sync Enabled: {sync_config.get('enabled', False)}")
         print(f"Server Port: {sync_config.get('server_port', 8384)}")
         print(f"Configured Peers: {len(sync_config.get('peers', []))}")
+        print()
+        print(not_duplicated_sentence(db.not_duplicated(config.get_audiofile_directory())))
+        for peer in db.peer_summaries():
+            reached = format_timestamp(peer["last_reached_at"]) if peer.get("last_reached_at") else "never"
+            operation = f", last operation: {peer['last_operation']}" if peer.get("last_operation") else ""
+            print(f"  {peer['peer_name'] or peer['peer_id']}: last reached {reached}{operation}")
 
         # Show conflict counts
         conflict_mgr = ConflictManager(db)

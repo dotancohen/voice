@@ -823,6 +823,18 @@ of, and a transfer that stops continues from where it stopped the next time.
 The receiver checks the file's hash before it accepts it, and refuses a file
 that would fill its disk.
 
+### Is everything somewhere else too?
+
+`sync status` says, in one line, what exists on this device only: "3 notes
+and 2 recordings are not duplicated off this device", or "Everything is
+duplicated off this device." A note counts as duplicated once a sync has
+sent it to any peer; a recording once it is in the bucket or a peer is
+known to hold it. Below the line, every peer with when it was last reached
+and what the last operation was. The phone shows the same line at the top
+of its sync screen, and nowhere else: no notification, no badge. A
+recording's details (`note-audiofiles-list`) name where its copies are:
+this device, the bucket, and each peer.
+
 ### Pairing a new device
 
 The device that holds the account shows a **code**; the new device reads it.

@@ -914,7 +914,12 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    Stage 12, diagnostics. **Stage 12 done 2026-09-13**: the page-commit
    proof, the request id on every request and result, the clock skew
    warning, `sync check` and "Check connection" (DIAG-1..5), the gzipped
-   feed.
+   feed. **Stage 10 done 2026-09-13** (PROOF-1..3): the line on the phone's
+   sync screen and in `sync status`, `audio_file_copies`, the copies in a
+   recording's details on the command line, the peers' last operation; the
+   phone's "changes pending" button colour and the desktop's are gone, the
+   line is the only place. The desktop's line waits for its sync dialogue
+   (Stage 5).
 8. Stage 8, the wizard, with Stage 14's bucket hardening and Stage 13's
    bucket items.
 9. Stage 13's bitrate option can go in at any point; it touches only the
