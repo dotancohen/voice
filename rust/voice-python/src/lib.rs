@@ -526,16 +526,78 @@ impl PyDatabase {
     /// What is on this device only (Stage 10): notes and recordings, as a dict.
     #[pyo3(signature = (audio_dir=None))]
     fn not_duplicated<'py>(&self, py: Python<'py>, audio_dir: Option<&str>) -> PyResult<PyObject> {
-        let counts = self.inner_ref()?.not_duplicated(audio_dir.map(std::path::Path::new)).map_err(voice_error_to_pyerr)?;
+        let counts = self.inner_ref()?.not_duplicated(audio_dir.map(std::path::Path::new), &database::get_local_device_id().simple().to_string()).map_err(voice_error_to_pyerr)?;
         let d = PyDict::new(py);
         d.set_item("notes", counts.notes)?;
         d.set_item("recordings", counts.recordings)?;
         Ok(d.into_any().unbind())
     }
 
+    /// Every statement about where a recording's copies are (FILE-22), as
+    /// dicts with place ("cloud" or a device id), present, changed_at
+    /// (milliseconds) and changed_by.
+    fn file_locations<'py>(&self, py: Python<'py>, audio_id: &str) -> PyResult<PyObject> {
+        let locations = self.inner_ref()?.file_locations(audio_id).map_err(voice_error_to_pyerr)?;
+        let list = PyList::empty(py);
+        for l in locations {
+            let d = PyDict::new(py);
+            d.set_item("place", l.place)?;
+            d.set_item("present", l.present)?;
+            d.set_item("changed_at", l.changed_at)?;
+            d.set_item("changed_by", l.changed_by)?;
+            list.append(d)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    /// Compare this device's folder with what it has stated about its copies
+    /// (FILE-22). Returns (now here, now gone). `here` is this device's id;
+    /// the device this process runs as when not given.
+    #[pyo3(signature = (audio_dir, here=None))]
+    fn check_files_here(&self, audio_dir: &str, here: Option<&str>) -> PyResult<(usize, usize)> {
+        let here = here.map(str::to_string).unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        self.inner_ref()?.check_files_here(std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
+    }
+
+    /// Remove this device's copy of a recording to save space; refused when
+    /// no other place holds the file (FILE-22).
+    #[pyo3(signature = (audio_id, audio_dir, here=None))]
+    fn remove_local_copy(&self, audio_id: &str, audio_dir: &str, here: Option<&str>) -> PyResult<()> {
+        let here = here.map(str::to_string).unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        self.inner_ref()?.remove_local_copy(audio_id, std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
+    }
+
+    /// The account's upload limit in bytes (FILE-23).
+    fn max_upload_bytes(&self) -> PyResult<u64> {
+        self.inner_ref()?.max_upload_bytes().map_err(voice_error_to_pyerr)
+    }
+
+    /// Set the account's upload limit in megabytes (FILE-23).
+    fn set_max_upload_mb(&self, mb: u64) -> PyResult<()> {
+        self.inner_ref()?.set_max_upload_mb(mb).map_err(voice_error_to_pyerr)
+    }
+
+    /// Everything the user should know about (ISSUE-1), as a dict of lists of
+    /// dicts, with `count` and `max_upload_bytes`; each recording not in the
+    /// bucket has `reason`: no_bucket, too_large, waiting_for_upload or
+    /// no_copy_known.
+    #[pyo3(signature = (audio_dir=None, here=None))]
+    fn issues<'py>(&self, py: Python<'py>, audio_dir: Option<&str>, here: Option<&str>) -> PyResult<PyObject> {
+        let here = here.map(str::to_string).unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        let found = voicecore_lib::issues::issues(self.inner_ref()?, audio_dir.map(std::path::Path::new), &here).map_err(voice_error_to_pyerr)?;
+        let mut value = serde_json::to_value(&found).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        if let Some(list) = value.get_mut("recordings_not_in_cloud").and_then(|v| v.as_array_mut()) {
+            for (item, recording) in list.iter_mut().zip(&found.recordings_not_in_cloud) {
+                item["reason"] = serde_json::Value::String(recording.reason.as_str().to_string());
+            }
+        }
+        value["count"] = serde_json::Value::Number(found.count().into());
+        json_value_to_pyobject(py, &value)
+    }
+
     /// The peers known to hold a copy of a recording, as dicts with peer_id and at.
     fn copies_of<'py>(&self, py: Python<'py>, audio_id: &str) -> PyResult<PyObject> {
-        let copies = self.inner_ref()?.copies_of(audio_id).map_err(voice_error_to_pyerr)?;
+        let copies = self.inner_ref()?.copies_of(audio_id, &database::get_local_device_id().simple().to_string()).map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
         for c in copies {
             let d = PyDict::new(py);
@@ -2272,6 +2334,9 @@ pub struct PyUploadPendingResult {
     /// Files not attempted because an earlier remote failure stopped the batch
     #[pyo3(get)]
     deferred: usize,
+    /// Files larger than the account's upload limit, left where they are (FILE-23)
+    #[pyo3(get)]
+    too_large: usize,
     #[pyo3(get)]
     errors: Vec<String>,
 }
@@ -2309,7 +2374,7 @@ impl From<file_storage::DownloadMissingResult> for PyDownloadResult {
 /// Open config, database and audio directory for a cloud storage operation.
 fn cloud_context(
     config_dir: Option<&str>,
-) -> PyResult<(tokio::runtime::Runtime, database::Database, std::path::PathBuf, Option<voicecore_lib::crypto::RecordingKey>)> {
+) -> PyResult<(tokio::runtime::Runtime, database::Database, std::path::PathBuf, Option<voicecore_lib::crypto::RecordingKey>, String)> {
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let config_path = config_dir.map(std::path::PathBuf::from);
@@ -2321,7 +2386,8 @@ fn cloud_context(
         )
     })?;
     let key = cfg.recording_key();
-    Ok((runtime, db, std::path::PathBuf::from(audiofile_dir), key))
+    let here = cfg.device_id_hex().to_string();
+    Ok((runtime, db, std::path::PathBuf::from(audiofile_dir), key, here))
 }
 
 /// Download one audio file from cloud storage on demand.
@@ -2337,11 +2403,11 @@ fn download_audio_file_from_cloud<'py>(
     audio_file_id: &str,
     config_dir: Option<&str>,
 ) -> PyResult<PyObject> {
-    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
+    let (runtime, db, audiofile_dir, key, here) = cloud_context(config_dir)?;
     // The database moves into the closure: it is Send, not Sync, and the
     // interpreter lock is released while the download runs
     let outcome = py
-        .allow_threads(move || runtime.block_on(file_storage::download_audio_file(&db, &audiofile_dir, audio_file_id, key.as_ref())))
+        .allow_threads(move || runtime.block_on(file_storage::download_audio_file(&db, &audiofile_dir, audio_file_id, key.as_ref(), &here)))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let dict = PyDict::new(py);
     match outcome {
@@ -2366,8 +2432,8 @@ fn download_audio_file_from_cloud<'py>(
 #[pyfunction]
 #[pyo3(signature = (note_id, config_dir=None))]
 fn download_audio_files_for_note(py: Python<'_>, note_id: &str, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
-    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
-    py.allow_threads(move || runtime.block_on(file_storage::download_audio_files_for_note(&db, &audiofile_dir, note_id, key.as_ref())))
+    let (runtime, db, audiofile_dir, key, here) = cloud_context(config_dir)?;
+    py.allow_threads(move || runtime.block_on(file_storage::download_audio_files_for_note(&db, &audiofile_dir, note_id, key.as_ref(), &here)))
         .map(PyDownloadResult::from)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
@@ -2377,8 +2443,8 @@ fn download_audio_files_for_note(py: Python<'_>, note_id: &str, config_dir: Opti
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
 fn download_missing_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
-    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
-    py.allow_threads(move || runtime.block_on(file_storage::download_missing_audio_files(&db, &audiofile_dir, key.as_ref())))
+    let (runtime, db, audiofile_dir, key, here) = cloud_context(config_dir)?;
+    py.allow_threads(move || runtime.block_on(file_storage::download_missing_audio_files(&db, &audiofile_dir, key.as_ref(), &here)))
         .map(PyDownloadResult::from)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
@@ -2427,6 +2493,7 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
             skipped: r.skipped,
             failed: r.failed,
             deferred: r.deferred,
+            too_large: r.too_large,
             errors: r.errors,
         }),
         Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
@@ -2490,10 +2557,10 @@ fn audio_file_formats() -> Vec<String> {
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
 fn reupload_encrypted(py: Python<'_>, config_dir: Option<&str>) -> PyResult<PyUploadPendingResult> {
-    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
+    let (runtime, db, audiofile_dir, key, _here) = cloud_context(config_dir)?;
     let result = py.allow_threads(move || runtime.block_on(file_storage::reupload_encrypted(&db, &audiofile_dir, None, None, key.as_ref())));
     match result {
-        Ok(r) => Ok(PyUploadPendingResult { uploaded: r.uploaded, skipped: r.skipped, failed: r.failed, deferred: r.deferred, errors: r.errors }),
+        Ok(r) => Ok(PyUploadPendingResult { uploaded: r.uploaded, skipped: r.skipped, failed: r.failed, deferred: r.deferred, too_large: r.too_large, errors: r.errors }),
         Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
     }
 }

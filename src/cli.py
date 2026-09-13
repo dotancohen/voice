@@ -525,20 +525,59 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
 
 
 def _describe_copies(db: Database, config: Config, af: Dict[str, Any], audiofile_dir: Optional[Path]) -> str:
-    """Where the copies of a recording are (Stage 10): this device, the bucket, and each peer."""
-    places = []
-    if audiofile_dir is not None and af.get("filename"):
-        from src.core.cloud_storage import audio_file_status, STATUS_LOCAL
-        if audio_file_status(af, audiofile_dir) == STATUS_LOCAL:
-            places.append("this device")
-    if af.get("storage_key"):
-        places.append("the bucket")
-    names = {p["peer_id"]: p["peer_name"] for p in config.get_peers()}
-    for card in db.list_devices():
-        names.setdefault(card["device_id"], card["name"] or card["device_id"][:UUID_SHORT_LEN])
-    for copy in db.copies_of(af["id"]):
-        places.append(names.get(copy["peer_id"], copy["peer_id"][:UUID_SHORT_LEN]))
+    """Where the copies of a recording are (FILE-22): every place that holds it, as last stated."""
+    from src.core.issues_text import place_label, place_names
+
+    names = place_names(db, config)
+    places = [place_label(loc["place"], names) for loc in db.file_locations(af["id"]) if loc["present"]]
     return ", ".join(places) if places else "nowhere known"
+
+
+def cmd_issues(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """What needs the user's attention (ISSUE-1).
+
+    Returns:
+        Exit code 0
+    """
+    from src.core.issues_text import issue_sections, place_names
+
+    audiofile_dir = config.get_audiofile_directory()
+    issues = db.issues(audiofile_dir)
+    if args.format == "json":
+        print(json.dumps(issues, indent=2, ensure_ascii=False))
+        return 0
+    sections = issue_sections(issues, place_names(db, config))
+    if not sections:
+        print("Nothing needs your attention.")
+        return 0
+    for title, lines in sections:
+        print(title)
+        for line in lines:
+            print(f"  {line}")
+    return 0
+
+
+def cmd_remove_local_audiofile(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Remove this device's copy of a recording to save space (FILE-22).
+
+    Returns:
+        Exit code (0 when removed, 1 when refused or not found)
+    """
+    audio_file = db.get_audio_file(args.audio_id)
+    if not audio_file:
+        print(f"Audio file not found: {args.audio_id}", file=sys.stderr)
+        return 1
+    audiofile_dir = config.get_audiofile_directory()
+    if not audiofile_dir:
+        print("Error: audiofile_directory not configured.", file=sys.stderr)
+        return 1
+    try:
+        db.remove_local_copy(audio_file["id"], audiofile_dir)
+    except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
+        print(f"Not removed: {e}", file=sys.stderr)
+        return 1
+    print(f"Removed {audio_file['filename']} from this device; it is still in {_describe_copies(db, config, audio_file, None)}")
+    return 0
 
 
 def cmd_list_audiofiles(db: Database, config: Config, args: argparse.Namespace) -> int:
@@ -622,6 +661,12 @@ def cmd_show_audiofile(db: Database, config: Config, args: argparse.Namespace) -
     if audio_file.get('deleted_at'):
         print(f"Deleted: {format_timestamp(audio_file['deleted_at'], audio_file.get('deleted_at_offset'))}")
 
+    # Where the copies are (FILE-22)
+    from src.core.issues_text import location_lines
+    print("Copies:")
+    for line in location_lines(db, audio_file["id"], config):
+        print(f"  {line}")
+
     # Cloud storage location
     if audio_file.get('storage_key'):
         print(f"Cloud storage: {audio_file.get('storage_provider')} {audio_file['storage_key']}")
@@ -673,6 +718,26 @@ def cmd_download_audiofile(db: Database, config: Config, args: argparse.Namespac
         print(f"{audio_file['filename']} is already on this device")
     else:
         print(f"{audio_file['filename']} has not been uploaded to cloud storage by its device yet")
+    return 0
+
+
+def cmd_storage_upload_limit(db: Database, args: argparse.Namespace) -> int:
+    """Show or set the account's upload limit (FILE-23).
+
+    Returns:
+        Exit code (0 on success, 1 when it cannot be set)
+    """
+    if args.megabytes is not None:
+        try:
+            db.set_max_upload_mb(args.megabytes)
+        except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+    megabytes = db.max_upload_bytes() // (1024 * 1024)
+    if args.format == "json":
+        print(json.dumps({"max_upload_mb": megabytes}))
+    else:
+        print(f"Upload limit: {megabytes} MB for every device of the account")
     return 0
 
 
@@ -3727,6 +3792,20 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
              "levels, so every device draws its waveform without decoding it"
     )
 
+    # audiofile-remove-local command
+    remove_local_parser = cli_subparsers.add_parser(
+        "audiofile-remove-local",
+        help="Remove this device's copy of a recording to save space; refused when no other place holds it"
+    )
+    remove_local_parser.add_argument("audio_id", type=str, help="Audio file ID (or prefix)")
+
+    # issues command
+    cli_subparsers.add_parser(
+        "issues",
+        help="What needs your attention: recordings not in cloud storage and why, orphaned transcriptions, "
+             "attachments and recordings, tags whose names contain spaces"
+    )
+
     # note-audiofiles-download command
     download_note_parser = cli_subparsers.add_parser(
         "note-audiofiles-download",
@@ -4365,6 +4444,12 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     )
 
     # storage mirror enable|disable - keep a complete local copy on every sync
+    upload_limit_parser = storage_subparsers.add_parser(
+        "upload-limit",
+        help="The account's upload limit: files larger than this stay on their devices (the same on every device)"
+    )
+    upload_limit_parser.add_argument("megabytes", type=int, nargs="?", help="Set the limit to this many megabytes")
+
     storage_mirror_parser = storage_subparsers.add_parser(
         "mirror",
         help="Enable or disable downloading ALL cloud audio files on every sync (local backup of the bucket)"
@@ -4460,6 +4545,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_download_audiofile(db, config, args)
         elif args.cli_command == "audiofiles-waveforms":
             return cmd_audiofiles_waveforms(db, config, args)
+        elif args.cli_command == "audiofile-remove-local":
+            return cmd_remove_local_audiofile(db, config, args)
+        elif args.cli_command == "issues":
+            return cmd_issues(db, config, args)
         elif args.cli_command == "note-audiofiles-download":
             return cmd_download_note_audiofiles(db, config, args)
         elif args.cli_command == "transcribe-backlog":
@@ -4620,6 +4709,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_storage_download_missing(config, args)
             elif storage_cmd == "mirror":
                 return cmd_storage_mirror(config, args)
+            elif storage_cmd == "upload-limit":
+                return cmd_storage_upload_limit(db, args)
             else:
                 print(f"Error: Unknown storage command '{storage_cmd}'", file=sys.stderr)
                 return 1

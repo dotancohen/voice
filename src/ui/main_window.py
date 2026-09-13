@@ -204,6 +204,15 @@ class MainWindow(QMainWindow):
         trash_action.triggered.connect(self._open_trash)
         file_menu.addAction(trash_action)
 
+        # Issues: what needs attention, listed when asked for, never pushed (ISSUE-1)
+        issues_action = QAction("&Issues...", self)
+        issues_action.setStatusTip(
+            "Recordings not in cloud storage and why, orphaned transcriptions, attachments "
+            "and recordings, tags whose names contain spaces"
+        )
+        issues_action.triggered.connect(self._open_issues)
+        file_menu.addAction(issues_action)
+
         # Calculate what was never calculated: lengths, dates, display caches
         fill_action = QAction("Calculate &missing data...", self)
         fill_action.setStatusTip(
@@ -563,6 +572,12 @@ class MainWindow(QMainWindow):
             self.notes_list_pane.load_notes()
             if self._current_note_id:
                 self.note_pane.load_note(self._current_note_id)
+
+    def _open_issues(self) -> None:
+        """Open the Issues window (ISSUE-1)."""
+        from src.ui.issues_dialog import IssuesDialog
+
+        IssuesDialog(self.db, self.config, self).exec()
 
     def _open_trash(self) -> None:
         """Open the trash bin, and reload the list if anything came back."""

@@ -118,7 +118,12 @@ def create_bucket(state: SetupState) -> Optional[str]:
             state.created = True
             return None
     except Exception as e:  # noqa: BLE001 - taken by someone else, or refused
-        return f"{e} Try {suggest_bucket_name()}."
+        text = str(e)
+        # Another name helps only when this one is taken; a wrong secret
+        # or key id is the same with every name
+        if "taken" in text:
+            return f"{text} Try {suggest_bucket_name()}."
+        return text
     try:
         bucket_create(name=state.bucket, **state.key_args())
     except Exception as e:  # noqa: BLE001

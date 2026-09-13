@@ -481,25 +481,6 @@ def simulate_network_partition(node: SyncNode):
         node.wait_for_server()
 
 
-class MockNetworkError:
-    """Helper for mocking network errors."""
-
-    @staticmethod
-    def connection_refused():
-        """Raise connection refused error."""
-        raise requests.exceptions.ConnectionError("Connection refused")
-
-    @staticmethod
-    def timeout():
-        """Raise timeout error."""
-        raise requests.exceptions.Timeout("Connection timed out")
-
-    @staticmethod
-    def connection_reset():
-        """Raise connection reset error."""
-        raise requests.exceptions.ConnectionError("Connection reset by peer")
-
-
 # ============================================================================
 # Subprocess-based helpers for concurrent tests
 # ============================================================================

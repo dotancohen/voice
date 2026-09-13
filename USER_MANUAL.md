@@ -136,7 +136,9 @@ Audio binaries are not copied by sync; they are uploaded to cloud storage by the
 ```bash
 python -m src.main cli audiofile-download <audiofile-uuid>         # One file
 python -m src.main cli note-audiofiles-download <note-uuid>        # All files of a note
-python -m src.main cli audiofile-show <audiofile-uuid>             # Shows whether the media is on this device / in the cloud
+python -m src.main cli audiofile-show <audiofile-uuid>             # Shows where the copies are: the bucket and each device
+python -m src.main cli audiofile-remove-local <audiofile-uuid>     # Remove this device's copy (refused when it is the only one)
+python -m src.main cli issues                                      # What needs attention (add --format json for a machine)
 python -m src.main cli note-audiofiles-list --note-id <note-uuid>  # Same, per note
 ```
 
@@ -302,6 +304,11 @@ python -m src.main web --debug                    # Debug mode
 | DELETE | `/api/notes/<id>` | Delete a note (soft delete) |
 | GET | `/api/notes/<id>/attachments` | List attachments for a note |
 | GET | `/api/audiofiles/<id>` | Get audio file details |
+| GET | `/api/audiofiles/<id>/locations` | Where the recording's copies are: the bucket and each device, as last stated |
+| POST | `/api/audiofiles/<id>/remove-local` | Remove this device's copy to save space; 409 when no other place holds it |
+| GET | `/api/issues` | What needs your attention: recordings not in cloud storage and why, orphaned transcriptions, attachments and recordings, tags whose names contain spaces |
+| GET | `/api/storage/upload-limit` | The account's upload limit in MB |
+| PUT | `/api/storage/upload-limit` | Set the account's upload limit: `{"megabytes": 250}` |
 | GET | `/api/tags` | List all tags |
 | GET | `/api/search` | Search notes |
 
@@ -874,6 +881,21 @@ shared `Recordings/Voice` folder (reachable from any file manager and over a
 cable, and left alone when the application is replaced); on the desktop in
 the account's `audio` folder. The folder holds recordings and nothing else.
 
+Every device knows where each recording's copies are: the bucket, and each
+device that holds the file, as that device last said. Right-click a recording
+in a note → "Where are the copies?" (the ⋮ menu of a recording on the phone,
+`w` in the text interface, `audiofile-show` on the command line,
+`GET /api/audiofiles/<id>/locations`). "Remove from this device" (`x` twice
+in the text interface, `audiofile-remove-local`, "Remove from this phone")
+deletes this device's file to save space; the recording, its transcriptions
+and every other copy stay, and it can be fetched or downloaded again. It is
+refused while this device holds the only known copy. A file deleted from the
+folder by hand is noticed at the next sync, and every device learns it.
+
+The account has one upload limit (`storage upload-limit 250`, Sync settings →
+Upload limit on the phone): a recording larger than that is not uploaded to
+the bucket and stays on the devices that hold it.
+
 ### The bucket, set up by the wizard
 
 File → Set up the bucket… (or `storage setup`) takes a person who has never
@@ -901,6 +923,21 @@ and what the last operation was. The phone shows the same line at the top
 of its sync screen, and nowhere else: no notification, no badge. A
 recording's details (`note-audiofiles-list`) name where its copies are:
 this device, the bucket, and each peer.
+
+### Issues
+
+File → Issues… (F8 in the text interface, `cli issues`, Settings → Issues on
+the phone) lists what needs attention, read afresh each time and never pushed:
+
+- recordings that are not in the bucket, and why: no bucket is set up, the
+  file is over the account's upload limit, it is waiting for the named devices
+  that hold it to upload it, or no device and no bucket is known to hold it;
+- transcriptions whose recording is not there, and attachments whose note or
+  recording is not there (rows written by older versions, which did not check);
+- recordings that no note holds (a note in the trash still holds its own);
+- tags whose names contain spaces.
+
+A dealt-with issue is gone the next time the list is read.
 
 ### Pairing a new device
 
@@ -1220,6 +1257,7 @@ python -m src.main cli storage download-missing
 A desktop or server installation can opt in to holding every audio file, as a local backup of the bucket. Every sync then also downloads all missing files. This is a local setting (`sync.mirror_audio_files` in `config.json`); it is never synced and other installations are not aware of it. Do not enable it on Android.
 
 ```bash
+python -m src.main cli storage upload-limit       # The account's upload limit; "storage upload-limit 250" sets it for every device
 python -m src.main cli storage mirror enable    # Also run "storage download-missing" to fetch everything now
 python -m src.main cli storage mirror disable
 python -m src.main cli storage status           # Shows the current mirror setting

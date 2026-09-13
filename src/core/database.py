@@ -418,6 +418,34 @@ class Database:
         """The peers known to hold a copy of a recording, with when that was learnt."""
         return self._rust_db.copies_of(audio_id)
 
+    def file_locations(self, audio_id: str) -> List[Dict[str, Any]]:
+        """Every statement about where a recording's copies are (FILE-22): place
+        ("cloud" or a device id), present, changed_at (milliseconds), changed_by."""
+        return self._rust_db.file_locations(audio_id)
+
+    def check_files_here(self, audio_dir: "Path | str", here: Optional[str] = None) -> tuple:
+        """Compare this device's audio folder with what it has stated about its
+        copies (FILE-22). Returns (now here, now gone). `here` is this device's
+        id; the device this process runs as when not given."""
+        return self._rust_db.check_files_here(str(audio_dir), here)
+
+    def remove_local_copy(self, audio_id: str, audio_dir: "Path | str", here: Optional[str] = None) -> None:
+        """Remove this device's copy of a recording to save space; the recording
+        stays. Refused when no other place holds the file (FILE-22)."""
+        self._rust_db.remove_local_copy(audio_id, str(audio_dir), here)
+
+    def max_upload_bytes(self) -> int:
+        """The account's upload limit in bytes (FILE-23)."""
+        return self._rust_db.max_upload_bytes()
+
+    def set_max_upload_mb(self, mb: int) -> None:
+        """Set the account's upload limit, for every device of the account (FILE-23)."""
+        self._rust_db.set_max_upload_mb(int(mb))
+
+    def issues(self, audio_dir: "Optional[Path | str]" = None, here: Optional[str] = None) -> Dict[str, Any]:
+        """Everything the user should know about (ISSUE-1)."""
+        return self._rust_db.issues(str(audio_dir) if audio_dir else None, here)
+
     def peer_summaries(self) -> List[Dict[str, Any]]:
         """Every peer dealt with: when it was last reached and by which operation."""
         return self._rust_db.peer_summaries()

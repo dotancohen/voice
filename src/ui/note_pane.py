@@ -211,6 +211,8 @@ class NotePane(QWidget, NoteEditorMixin):
 
         # Audio player widget (replaces simple list when audio files present)
         self.audio_player = AudioPlayerWidget()
+        self.audio_player.locations_requested.connect(self._show_recording_locations)
+        self.audio_player.remove_local_requested.connect(self._remove_local_copy)
         self.audio_player.hide()  # Hidden until audio files are loaded
         layout.addWidget(self.audio_player)
 
@@ -724,6 +726,40 @@ class NotePane(QWidget, NoteEditorMixin):
 
         path = AudioFileManager(self.audiofile_directory).get_record_path(audio_file)
         return str(path) if path.is_file() else None
+
+    def _show_recording_locations(self, audio_id: str) -> None:
+        """Where a recording's copies are, as every device last stated (FILE-22)."""
+        from PySide6.QtWidgets import QMessageBox
+
+        from src.core.issues_text import location_lines
+
+        if self.audiofile_directory:
+            self.db.check_files_here(self.audiofile_directory)
+        QMessageBox.information(self, "Where the copies are", "\n".join(location_lines(self.db, audio_id)))
+
+    def _remove_local_copy(self, audio_id: str) -> None:
+        """Remove this computer's copy of a recording, after asking (FILE-22)."""
+        from PySide6.QtWidgets import QMessageBox
+
+        audio_file = self.db.get_audio_file(audio_id)
+        if not audio_file or not self.audiofile_directory:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Remove from this device",
+            f"Remove {audio_file['filename']} from this computer? The recording stays, "
+            "and it can be fetched again from wherever else it is kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.db.remove_local_copy(audio_id, self.audiofile_directory)
+        except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
+            QMessageBox.warning(self, "Not removed", str(e))
+            return
+        if self.current_note_id:
+            self.load_note(self.current_note_id)
 
     def _get_audio_file_path_cached(self, audio_id: str) -> Optional[str]:
         """Get the file path for an audio file using cached filename.

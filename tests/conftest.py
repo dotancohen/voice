@@ -279,3 +279,14 @@ def get_note_uuid_hex(num: int) -> str:
     if hex_id:
         return hex_id
     raise KeyError(f"Note number {num} not found. Make sure populated_db fixture is used.")
+
+
+@pytest.fixture(scope="session")
+def local_s3():
+    """An S3 server on this machine (moto) with authentication on, for the
+    whole session; see tests/local_s3.py."""
+    from tests.local_s3 import LocalS3
+
+    server = LocalS3()
+    yield server
+    server.stop()

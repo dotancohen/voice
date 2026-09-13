@@ -1,11 +1,13 @@
 """Tests for sync behavior under network failures.
 
 Tests network failure scenarios:
-- Server unavailable
-- Connection timeout
+- Server unavailable, and an address that does not resolve
 - Server crash during sync
 - Recovery after network restored
 - Partial data transfer
+
+A link that refuses, resets, stalls, freezes, throttles or answers errors in
+the middle of a sync or a transfer is in test_sync_over_a_failing_network.py.
 """
 
 from __future__ import annotations
@@ -14,10 +16,12 @@ import sys
 import time
 from pathlib import Path
 from typing import Tuple
+
 from unittest.mock import patch, MagicMock
 
-import pytest
 import requests
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -32,7 +36,6 @@ from .conftest import (
     sync_nodes,
     start_sync_server,
     simulate_network_partition,
-    MockNetworkError,
 )
 
 
@@ -106,67 +109,23 @@ class TestServerUnavailable:
         for note_id in note_ids:
             assert sync_node_a.db.get_note(note_id) is not None
 
-
-class TestConnectionTimeout:
-    """Tests for connection timeout scenarios."""
-
-    @pytest.mark.skip(reason="Mocks urllib but Rust SyncClient uses reqwest; can't mock from Python")
-    def test_timeout_handled_gracefully(
-        self, sync_node_a: SyncNode, running_server_b: SyncNode
+    def test_dns_resolution_failure(
+        self, sync_node_a: SyncNode
     ):
-        """Connection timeout is handled gracefully."""
-        import urllib.request
-        import socket
-
+        """Handle DNS resolution failure."""
+        # Add peer with invalid hostname
         sync_node_a.config.add_peer(
-            peer_id=running_server_b.device_id_hex,
-            peer_name=running_server_b.name,
-            peer_url=running_server_b.url,
+            peer_id="00000000000070008000000000000099",
+            peer_name="InvalidHost",
+            peer_url="http://nonexistent.invalid.host:8384",
         )
 
         set_local_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
 
-        # Mock timeout using urllib timeout exception
-        def mock_urlopen(*args, **kwargs):
-            raise socket.timeout("Connection timed out")
-
-        with patch.object(urllib.request, "urlopen", side_effect=mock_urlopen):
-            result = client.sync_with_peer(running_server_b.device_id_hex)
+        result = client.sync_with_peer("00000000000070008000000000000099")
 
         assert result.success is False
-        assert len(result.errors) > 0
-
-    def test_timeout_doesnt_corrupt_data(
-        self, sync_node_a: SyncNode, running_server_b: SyncNode
-    ):
-        """Timeout during sync doesn't corrupt local data."""
-        import urllib.request
-        import socket
-
-        sync_node_a.config.add_peer(
-            peer_id=running_server_b.device_id_hex,
-            peer_name=running_server_b.name,
-            peer_url=running_server_b.url,
-        )
-
-        # Create local note
-        note_id = create_note_on_node(sync_node_a, "Important data")
-
-        set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(str(sync_node_a.config_dir))
-
-        # Timeout during sync
-        def mock_urlopen(*args, **kwargs):
-            raise socket.timeout()
-
-        with patch.object(urllib.request, "urlopen", side_effect=mock_urlopen):
-            client.sync_with_peer(running_server_b.device_id_hex)
-
-        # Local data should be intact
-        note = sync_node_a.db.get_note(note_id)
-        assert note is not None
-        assert note["content"] == "Important data"
 
 
 class TestServerCrashDuringSync:
@@ -335,100 +294,6 @@ class TestPartialDataTransfer:
         # Should handle partial data without crashing
         # May need multiple sync rounds for complete data
         assert result is not None
-
-
-class TestMockedNetworkErrors:
-    """Tests using mocked network errors."""
-
-    def test_connection_refused(
-        self, sync_node_a: SyncNode, sync_node_b: SyncNode
-    ):
-        """Handle connection refused error."""
-        # Use non-running server to test connection refused
-        sync_node_a.config.add_peer(
-            peer_id=sync_node_b.device_id_hex,
-            peer_name=sync_node_b.name,
-            peer_url=sync_node_b.url,  # Server not running
-        )
-
-        set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(str(sync_node_a.config_dir))
-
-        # Server not running, so connection will be refused
-        result = client.sync_with_peer(sync_node_b.device_id_hex)
-
-        assert result.success is False
-        assert len(result.errors) > 0
-
-    def test_connection_reset(
-        self, sync_node_a: SyncNode, sync_node_b: SyncNode
-    ):
-        """Handle connection refused - simulates reset scenario."""
-        # Use non-running server
-        sync_node_a.config.add_peer(
-            peer_id=sync_node_b.device_id_hex,
-            peer_name=sync_node_b.name,
-            peer_url=sync_node_b.url,  # Server not running
-        )
-
-        set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(str(sync_node_a.config_dir))
-
-        result = client.sync_with_peer(sync_node_b.device_id_hex)
-
-        assert result.success is False
-        assert len(result.errors) > 0
-
-    def test_dns_resolution_failure(
-        self, sync_node_a: SyncNode
-    ):
-        """Handle DNS resolution failure."""
-        # Add peer with invalid hostname
-        sync_node_a.config.add_peer(
-            peer_id="00000000000070008000000000000099",
-            peer_name="InvalidHost",
-            peer_url="http://nonexistent.invalid.host:8384",
-        )
-
-        set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(str(sync_node_a.config_dir))
-
-        result = client.sync_with_peer("00000000000070008000000000000099")
-
-        assert result.success is False
-
-    @pytest.mark.skip(reason="Mocks urllib but Rust SyncClient uses reqwest; can't mock from Python")
-    def test_http_500_error(
-        self, sync_node_a: SyncNode, running_server_b: SyncNode
-    ):
-        """Handle HTTP 500 error from server."""
-        import urllib.request
-        import urllib.error
-
-        sync_node_a.config.add_peer(
-            peer_id=running_server_b.device_id_hex,
-            peer_name=running_server_b.name,
-            peer_url=running_server_b.url,
-        )
-
-        set_local_device_id(sync_node_a.device_id)
-        client = SyncClient(str(sync_node_a.config_dir))
-
-        # Mock urllib to return HTTP 500 error
-        def mock_urlopen(*args, **kwargs):
-            raise urllib.error.HTTPError(
-                url="http://test",
-                code=500,
-                msg="Internal Server Error",
-                hdrs={},
-                fp=None
-            )
-
-        with patch.object(urllib.request, "urlopen", side_effect=mock_urlopen):
-            result = client.sync_with_peer(running_server_b.device_id_hex)
-
-        assert result.success is False
-        assert len(result.errors) > 0
 
 
 class TestRecoveryRobustness:

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -184,6 +185,9 @@ class AudioPlayerWidget(QFrame):
 
     # Emitted when user requests transcription of an audio file
     transcribe_requested = Signal(str)  # audio_file_id
+    # Where a recording's copies are, and removing this device's copy (FILE-22)
+    locations_requested = Signal(str)  # audio_file_id
+    remove_local_requested = Signal(str)  # audio_file_id
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -273,6 +277,8 @@ class AudioPlayerWidget(QFrame):
         self._file_list = QListWidget()
         self._file_list.setMaximumHeight(150)
         self._file_list.itemClicked.connect(self._on_file_selected)
+        self._file_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._file_list.customContextMenuRequested.connect(self._show_file_menu)
         layout.addWidget(self._file_list)
 
     def _connect_signals(self) -> None:
@@ -383,6 +389,21 @@ class AudioPlayerWidget(QFrame):
                         item.setText(f"{filename} | T: {count}")
                         break
                 break
+
+    def _show_file_menu(self, position) -> None:
+        """The recording's own menu: where its copies are, and removing this device's copy."""
+        item = self._file_list.itemAt(position)
+        if item is None:
+            return
+        audio_id = item.data(Qt.UserRole)
+        menu = QMenu(self)
+        where = menu.addAction("Where are the copies?")
+        remove = menu.addAction("Remove from this device")
+        chosen = menu.exec(self._file_list.viewport().mapToGlobal(position))
+        if chosen is where:
+            self.locations_requested.emit(audio_id)
+        elif chosen is remove:
+            self.remove_local_requested.emit(audio_id)
 
     def _on_play_pause(self) -> None:
         """Handle play/pause button click."""

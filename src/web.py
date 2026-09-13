@@ -12,6 +12,11 @@ Endpoints:
     DELETE /api/notes/<id>               Delete a note (soft delete)
     GET  /api/notes/<id>/attachments     List attachments for a note
     GET  /api/audiofiles/<id>            Get audio file details
+    GET  /api/audiofiles/<id>/locations  Where the recording's copies are
+    POST /api/audiofiles/<id>/remove-local  Remove this device's copy (refused when it is the only one)
+    GET  /api/issues                     What needs the user's attention
+    GET  /api/storage/upload-limit       The account's upload limit
+    PUT  /api/storage/upload-limit       Set it: {"megabytes": 250}
     GET  /api/tags                       List all tags
     GET  /api/search                     Search notes
 
@@ -427,6 +432,56 @@ def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -
         if audio_file:
             return jsonify(audio_file), 200
         return jsonify({"error": f"Audio file {audio_id} not found"}), 404
+
+    @app.route("/api/audiofiles/<audio_id>/locations", methods=["GET"])
+    @api_endpoint
+    def get_audiofile_locations(audio_id: str) -> tuple[Response, int]:
+        """Where a recording's copies are (FILE-22)."""
+        validate_uuid_hex(audio_id, "audio_id")
+        if not db.get_audio_file(audio_id):
+            return jsonify({"error": f"Audio file {audio_id} not found"}), 404
+        return jsonify({"locations": db.file_locations(audio_id)}), 200
+
+    @app.route("/api/audiofiles/<audio_id>/remove-local", methods=["POST"])
+    @api_endpoint
+    def remove_local_audiofile(audio_id: str) -> tuple[Response, int]:
+        """Remove this device's copy of a recording (FILE-22); 409 when no other place holds it."""
+        validate_uuid_hex(audio_id, "audio_id")
+        if not db.get_audio_file(audio_id):
+            return jsonify({"error": f"Audio file {audio_id} not found"}), 404
+        if not audiofile_directory:
+            return jsonify({"error": "audiofile_directory is not configured"}), 400
+        try:
+            db.remove_local_copy(audio_id, audiofile_directory)
+        except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
+            return jsonify({"error": str(e)}), 409
+        return jsonify({"removed": True, "locations": db.file_locations(audio_id)}), 200
+
+    @app.route("/api/issues", methods=["GET"])
+    @api_endpoint
+    def get_issues() -> tuple[Response, int]:
+        """What needs the user's attention (ISSUE-1)."""
+        return jsonify(db.issues(audiofile_directory)), 200
+
+    @app.route("/api/storage/upload-limit", methods=["GET"])
+    @api_endpoint
+    def get_upload_limit() -> tuple[Response, int]:
+        """The account's upload limit (FILE-23)."""
+        return jsonify({"max_upload_mb": db.max_upload_bytes() // (1024 * 1024)}), 200
+
+    @app.route("/api/storage/upload-limit", methods=["PUT"])
+    @api_endpoint
+    def set_upload_limit() -> tuple[Response, int]:
+        """Set the account's upload limit (FILE-23): {"megabytes": n}."""
+        body = request.get_json(silent=True) or {}
+        megabytes = body.get("megabytes")
+        if not isinstance(megabytes, int) or isinstance(megabytes, bool):
+            return jsonify({"error": "megabytes must be a whole number"}), 400
+        try:
+            db.set_max_upload_mb(megabytes)
+        except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"max_upload_mb": db.max_upload_bytes() // (1024 * 1024)}), 200
 
     @app.route("/api/tags", methods=["GET"])
     @api_endpoint

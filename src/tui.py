@@ -633,6 +633,69 @@ class HistoryScreen(ModalScreen[bool]):
         self.dismiss(self.restored)
 
 
+class IssuesScreen(ModalScreen[None]):
+    """What needs the user's attention (ISSUE-1), read when the screen opens."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("f5", "reload", "Reload"),
+    ]
+
+    CSS = """
+    IssuesScreen {
+        align: center middle;
+    }
+
+    #issues-dialog {
+        width: 90%;
+        height: 85%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #issues-text {
+        height: 1fr;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, db: Database, config: Any) -> None:
+        super().__init__()
+        self.db = db
+        self.config = config
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="issues-dialog"):
+            yield Label("Issues", id="issues-title")
+            with VerticalScroll(id="issues-text"):
+                yield Static("", id="issues-body")
+            with Horizontal(id="issues-buttons"):
+                yield Button("Close", id="issues-close-btn")
+
+    def on_mount(self) -> None:
+        self.action_reload()
+
+    def action_reload(self) -> None:
+        from src.core.issues_text import issue_sections, place_names
+
+        issues = self.db.issues(self.config.get("audiofile_directory"))
+        sections = issue_sections(issues, place_names(self.db, self.config))
+        if not sections:
+            text = "Nothing needs your attention."
+        else:
+            text = "\n\n".join(title + "\n" + "\n".join(f"  {line}" for line in lines) for title, lines in sections)
+        self.query_one("#issues-body", Static).update(RichText(text))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "issues-close-btn":
+            self.action_close()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class TrashScreen(ModalScreen[bool]):
     """The trash bin: the notes that were deleted and are still recoverable.
 
@@ -1174,6 +1237,15 @@ class TUIAudioPlayer(Container):
         self.query_one("#download-btn", Button).display = False
         self.query_one("#audio-missing-label", Static).display = False
 
+    def current_audio_file(self) -> Optional[Dict[str, Any]]:
+        """The recording the player is on: the one playing or last played, else the first."""
+        if not self._audio_files:
+            return None
+        index = self._player.state.current_file_index
+        if index < 0 or index >= len(self._audio_files):
+            index = 0
+        return self._audio_files[index]
+
     def has_downloadable_media(self) -> bool:
         """Whether some audio files of the current note can be fetched from the cloud."""
         return bool(self._missing_in_cloud)
@@ -1685,6 +1757,39 @@ class NoteDetail(Container, NoteEditorMixin):
         self._transcriptions_container: Optional[TUITranscriptionsContainer] = None
         self._downloading: bool = False
 
+    def action_show_locations(self) -> None:
+        """Where the copies of the recording the player is on are (FILE-22)."""
+        from src.core.issues_text import location_lines
+
+        audio_file = self._audio_player.current_audio_file() if self._audio_player is not None else None
+        if audio_file is None:
+            self.app.notify("Select a note with a recording first", severity="warning")
+            return
+        if self.audiofile_directory:
+            self.db.check_files_here(self.audiofile_directory)
+        self.app.notify("\n".join(location_lines(self.db, audio_file["id"])), title=f"Where the copies of {audio_file['filename']} are", timeout=15)
+
+    def action_remove_local_copy(self) -> None:
+        """Remove this computer's copy of the recording the player is on, on the
+        second press (FILE-22); refused when no other place holds the file."""
+        audio_file = self._audio_player.current_audio_file() if self._audio_player is not None else None
+        if audio_file is None or not self.audiofile_directory:
+            self.app.notify("Select a note with a recording first", severity="warning")
+            return
+        if getattr(self, "_removal_asked_for", None) != audio_file["id"]:
+            self._removal_asked_for = audio_file["id"]
+            self.app.notify(f"Press x again to remove {audio_file['filename']} from this computer; the recording stays")
+            return
+        self._removal_asked_for = None
+        try:
+            self.db.remove_local_copy(audio_file["id"], self.audiofile_directory)
+        except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
+            self.app.notify(f"Not removed: {e}", severity="error")
+            return
+        self.app.notify(f"Removed {audio_file['filename']} from this computer")
+        if self.current_note_id:
+            self.load_note(self.current_note_id)
+
     def action_download_media(self) -> None:
         """Download the current note's missing audio files from cloud storage.
 
@@ -2165,6 +2270,9 @@ class VoiceTUI(App):
         Binding("ctrl+t", "show_trash", "Trash"),
         Binding("ctrl+f", "calculate_missing_data", "Calculate missing data"),
         Binding("ctrl+k", "show_transcription_queue", "Transcription queue"),
+        Binding("f8", "show_issues", "Issues"),
+        Binding("w", "show_locations", "Where are the copies"),
+        Binding("x", "remove_local_copy", "Remove from this computer"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -2250,6 +2358,14 @@ class VoiceTUI(App):
         detail = self.query_one("#note-detail", NoteDetail)
         detail.action_download_media()
 
+    def action_show_locations(self) -> None:
+        """Where the copies of the selected note's recording are (FILE-22)."""
+        self.query_one("#note-detail", NoteDetail).action_show_locations()
+
+    def action_remove_local_copy(self) -> None:
+        """Remove this computer's copy of the selected note's recording (FILE-22)."""
+        self.query_one("#note-detail", NoteDetail).action_remove_local_copy()
+
     def action_calculate_missing_data(self) -> None:
         """Calculate what was never calculated: lengths, dates, display caches.
 
@@ -2288,6 +2404,10 @@ class VoiceTUI(App):
     def action_show_transcription_queue(self) -> None:
         """Open the transcription queue: what is waiting here and what it cost."""
         self.push_screen(TranscriptionQueueScreen(self.db, self.config))
+
+    def action_show_issues(self) -> None:
+        """What needs the user's attention (ISSUE-1)."""
+        self.push_screen(IssuesScreen(self.db, self.config))
 
     def action_show_trash(self) -> None:
         """Open the trash bin: recover a deleted note, or remove it for good."""
