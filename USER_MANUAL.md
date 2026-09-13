@@ -916,7 +916,9 @@ python -m src.main cli account join "voice://pair?..."   # on the new device: pa
 ```
 
 The new device takes the account, receives a key of its own, and adds the
-showing device as a peer with its certificate pinned. A device that already
+showing device as a peer with its certificate pinned. On the phone that key
+is kept wrapped by the Android Keystore, so a copy of the app's files does not
+carry it; on the desktop `config.json` is readable by its owner only. A device that already
 holds notes of another account refuses the code and says to show its own code
 to the other device instead.
 

@@ -131,6 +131,7 @@ class TestTheWizardSteps:
         assert len(part_puts) == 3, "part 1 once, part 2 twice (the dropped one and its retry); never part 1 again"
         assert [m for m, _, _, q in s3.requests if m == "POST" and "uploads" in q].count("POST") == 1, "one upload begun, continued at the second run"
         assert not s3.deleted_anything()
+        empty_db.close()
 
 
 @pytest.mark.cli

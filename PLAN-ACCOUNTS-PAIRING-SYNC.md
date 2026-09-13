@@ -795,7 +795,10 @@ a bug in any of them, or in this plan, must be undoable.
 - **The phone wraps its secrets with the Android Keystore.** The device key,
   the bucket secret and the recording key (Stage 15) are stored encrypted
   under a Keystore key that never leaves the hardware where the phone has it.
-  The desktop keeps `config.json` at mode 0600 as before.
+  The desktop keeps `config.json` at mode 0600 as before. **Device key done
+  2026-09-13** (AUTH-9). The bucket secret is not: it is a synced setting
+  inside the database, so wrapping it on the phone needs a local shadow the
+  feed excludes; open question 4.
 - **Dependency audits are tests.** `cargo audit` for the three Rust crates,
   `pip-audit` for the desktop, and the Gradle dependency check for the phone,
   run in each suite and fail it on a known vulnerability.
@@ -943,8 +946,10 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    the round trip, "Replace key", "Test everything", `sync check --all`,
    the checklist at the top of the sync dialogue, upload asking first.
    **Stage 13's content hash and upload in parts done 2026-09-13** (FILE-18,
-   FILE-19). Not yet: the Keystore on the phone and the dependency audits
-   (Stage 14). **Stage 13's folder and
+   FILE-19). **The Keystore for the device key done 2026-09-13** (AUTH-9).
+   Not yet: the bucket secret under the Keystore (open question 4) and the
+   dependency audits (Stage 14; `cargo audit` and `pip-audit` are not
+   installed on this machine). **Stage 13's folder and
    file names done 2026-09-13** (FILE-15, FILE-16, TECHNICAL-DECISIONS
    3.1a): `audio_files.local_name`, the shared Recordings/Voice folder on
    the phone, `voice-phone-backup` copying it.
@@ -1012,6 +1017,17 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    per stage on a branch `accounts-pairing-sync` in each repository, never
    pushed; the Android library and JVM tests may be built and run, the phone
    never touched.
+4. **The bucket secret on the phone** (Stage 14): it is a synced setting
+   inside the database, so every peer must read it in clear; wrapping it
+   under the Keystore needs a local shadow row that the feed excludes and
+   the phone reads first. Whether that is worth doing is not decided; the
+   device key is wrapped (AUTH-9), the bucket secret is not.
+5. **Two recorder formats share `.ogg`** (Stage 13): the Android test "each
+   format's extension is its own" holds that no two formats write the same
+   extension, and the speech option is Opus in Ogg like the 128 kb/s one.
+   Nothing in the app reads a format back from an extension. Whether the
+   premise stands, or the test is rewritten to say what the extension is
+   for, is not decided; the test is left failing until it is.
 
 Resolved on 2026-09-12: `$VOICE_CONFIG_DIR` is the only root override; any
 device can show its code; the tests of removed modules go with them, with the
