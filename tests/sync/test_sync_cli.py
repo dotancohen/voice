@@ -283,7 +283,7 @@ class TestSyncRemovePeerCLI:
         )
 
         assert code == 0
-        assert "Removed peer:" in stdout
+        assert "Forgot peer:" in stdout
 
     def test_remove_peer_json_output(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]

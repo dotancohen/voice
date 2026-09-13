@@ -1628,6 +1628,29 @@ impl PyConfig {
         .map_err(voice_error_to_pyerr)
     }
 
+    /// Forget a peer (Stage 5): it leaves the list and its card does not bring it back.
+    fn forget_peer(&self, peer_id: &str) -> PyResult<bool> {
+        self.inner.lock().unwrap().forget_peer(peer_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// A local name for a peer, shown in place of its card's.
+    fn rename_peer(&self, peer_id: &str, name: &str) -> PyResult<bool> {
+        self.inner.lock().unwrap().rename_peer(peer_id, name).map_err(voice_error_to_pyerr)
+    }
+
+    /// The peer of the last operation, or an empty string.
+    fn last_peer_id(&self) -> String {
+        self.inner.lock().unwrap().last_peer().map(|p| p.peer_id.clone()).unwrap_or_default()
+    }
+
+    fn set_last_peer(&self, peer_id: &str) -> PyResult<()> {
+        self.inner.lock().unwrap().set_last_peer(peer_id).map_err(voice_error_to_pyerr)
+    }
+
+    fn is_forgotten(&self, peer_id: &str) -> bool {
+        self.inner.lock().unwrap().is_forgotten(peer_id)
+    }
+
     fn remove_peer(&self, peer_id: &str) -> PyResult<bool> {
         let mut cfg = self.inner.lock().unwrap();
         cfg.remove_peer(peer_id).map_err(voice_error_to_pyerr)
@@ -2443,6 +2466,12 @@ fn start_sync_server(
     Ok(())
 }
 
+/// Whether a listener runs in this process.
+#[pyfunction]
+fn sync_server_running() -> bool {
+    sync_server::server_running()
+}
+
 /// Stop the sync server.
 ///
 /// Call this from another thread or signal handler to gracefully stop the server.
@@ -2943,6 +2972,7 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pairing_withdraw, m)?)?;
     m.add_function(wrap_pyfunction!(listen_urls, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
+    m.add_function(wrap_pyfunction!(sync_server_running, m)?)?;
     m.add_function(wrap_pyfunction!(apply_sync_changes, m)?)?;
 
     // Register file storage functions

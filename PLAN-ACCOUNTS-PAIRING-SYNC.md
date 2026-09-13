@@ -918,8 +918,15 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    sync screen and in `sync status`, `audio_file_copies`, the copies in a
    recording's details on the command line, the peers' last operation; the
    phone's "changes pending" button colour and the desktop's are gone, the
-   line is the only place. The desktop's line waits for its sync dialogue
-   (Stage 5).
+   line is the only place. **Stage 5's interface work done 2026-09-13**:
+   the cards are the peer list (CARD-3), the one button naming the last
+   peer with the chooser beside it, one-sentence results with the fixing
+   button, rename and forget, a peer typed by hand, the desktop's sync
+   dialogue (File → Sync…, with the proof line, the code, the check and
+   the listener switch), the phone's peers card, the hostname and the
+   model name as default device names (UI-9..11). Content descriptions
+   are on the new controls; the screen-reader and large-font pass waits
+   for the interface swap.
 8. Stage 8, the wizard, with Stage 14's bucket hardening and Stage 13's
    bucket items.
 9. Stage 13's bitrate option can go in at any point; it touches only the

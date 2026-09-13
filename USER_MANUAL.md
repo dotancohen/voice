@@ -683,8 +683,23 @@ VoiceAndroid's user manual.
 
 ## Syncing between installations
 
-- Sync peers are defined in the Config file.
-- All sync peers can function equally as both servers and clients. Choose one instance to listen as a server, and another instance to contact it as a client. The sync result is the same no matter which instance is the client and which instance is the server.
+- The other devices of the account are the **peers**. After a device is
+  paired (its code read, or its grant text used) every device of the account
+  appears in the peer list by itself, with its name and where it listens;
+  nothing is typed twice. A peer can also be added by hand from its id and
+  address (`sync add-peer`, "Add by address…").
+- Every device can listen and every device can call. Choose one instance to
+  listen (the desktop's "Listen for peers", the phone's switch, or
+  `sync serve`), and press the button on another. The result is the same
+  whichever side listened.
+- **One button**: the desktop's File → Sync… dialogue and the phone's sync
+  screen show "Exchange with Desk", where Desk is the peer used last. The
+  arrow beside it chooses another peer or another operation (sync, deliver,
+  exchange, send, fetch). Every result is one sentence and ends with the
+  request id, which is in both devices' logs.
+- A peer can be **renamed** on this device (`sync rename-peer`, "Rename…") and
+  **forgotten** (`sync remove-peer`, "Forget"): a forgotten peer's card does
+  not bring it back until it is added again or paired again.
 - Instances can be run as a systemd service to run in the background.
 
 On the instance designated as the server:

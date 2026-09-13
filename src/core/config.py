@@ -155,6 +155,24 @@ class Config:
         """Remove a sync peer."""
         return self._rust_config.remove_peer(peer_id)
 
+    def forget_peer(self, peer_id: str) -> bool:
+        """Forget a peer: it leaves the list and its card does not bring it back (Stage 5)."""
+        return self._rust_config.forget_peer(peer_id)
+
+    def rename_peer(self, peer_id: str, name: str) -> bool:
+        """A local name for a peer, shown in place of its card's."""
+        return self._rust_config.rename_peer(peer_id, name)
+
+    def last_peer_id(self) -> str:
+        """The peer of the last operation, or an empty string."""
+        return self._rust_config.last_peer_id()
+
+    def set_last_peer(self, peer_id: str) -> None:
+        self._rust_config.set_last_peer(peer_id)
+
+    def is_forgotten(self, peer_id: str) -> bool:
+        return self._rust_config.is_forgotten(peer_id)
+
     def get_peer(self, peer_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific peer by ID."""
         return self._rust_config.get_peer(peer_id)

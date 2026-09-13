@@ -43,11 +43,6 @@ try:
 except ImportError:
     TRANSCRIPTION_AVAILABLE = False
 
-try:
-    from voicecore import sync_all_peers
-    SYNC_AVAILABLE = True
-except ImportError:
-    SYNC_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -154,11 +149,12 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        # Sync Now action
-        self.sync_now_action = QAction("Sync Now", self)
-        self.sync_now_action.setShortcut("Ctrl+Shift+S")
-        self.sync_now_action.triggered.connect(self.sync_now)
-        file_menu.addAction(self.sync_now_action)
+        # Sync: the dialogue with the one button, the peers and the line
+        self.sync_action = QAction("&Sync…", self)
+        self.sync_action.setShortcut("Ctrl+Shift+S")
+        self.sync_action.setStatusTip("Exchange with the other devices of the account, show a code, check a connection")
+        self.sync_action.triggered.connect(self.open_sync_dialog)
+        file_menu.addAction(self.sync_action)
 
         # Listen for peers: the listener runs only while this is checked
         self.listen_action = QAction("&Listen for peers", self)
@@ -167,9 +163,6 @@ class MainWindow(QMainWindow):
         self.listen_action.toggled.connect(self._toggle_listener)
         file_menu.addAction(self.listen_action)
         self._listener_thread = None
-
-        # Track unsynced state
-        self._has_unsynced_changes = False
 
         file_menu.addSeparator()
 
@@ -201,14 +194,6 @@ class MainWindow(QMainWindow):
         )
         queue_action.triggered.connect(self._show_transcription_queue)
         file_menu.addAction(queue_action)
-
-        # Set up timer to check for unsynced changes periodically
-        self._sync_check_timer = QTimer(self)
-        self._sync_check_timer.timeout.connect(self._check_unsynced_changes)
-        self._sync_check_timer.start(5000)  # Check every 5 seconds
-
-        # Initial check
-        self._check_unsynced_changes()
 
         file_menu.addSeparator()
 
@@ -297,9 +282,6 @@ class MainWindow(QMainWindow):
             logger.info(f"Added tag {tag_id} to note {self._current_note_id}")
             # Refresh the note pane to show updated tags
             self.note_pane.load_note(self._current_note_id)
-            # Mark as having unsynced changes
-            self._has_unsynced_changes = True
-            self._update_sync_action_text()
         else:
             logger.warning(f"Failed to add tag {tag_id} to note {self._current_note_id}")
 
@@ -312,10 +294,6 @@ class MainWindow(QMainWindow):
         self.notes_list_pane.load_notes()
         self.notes_list_pane.select_note_by_id(note_id)
 
-        # Immediately mark as having unsynced changes
-        if not self._has_unsynced_changes:
-            self._has_unsynced_changes = True
-            self._update_sync_action_style()
 
         logger.info(f"Refreshed notes list after saving note {note_id}")
 
@@ -332,10 +310,6 @@ class MainWindow(QMainWindow):
         self.note_pane.load_note(note_id)
         self.note_pane.start_editing()
 
-        # Mark as having unsynced changes
-        if not self._has_unsynced_changes:
-            self._has_unsynced_changes = True
-            self._update_sync_action_style()
 
     def delete_current_note(self) -> None:
         """Delete the currently selected note after confirmation."""
@@ -381,51 +355,11 @@ class MainWindow(QMainWindow):
                 # Refresh notes list
                 self.notes_list_pane.load_notes()
 
-                # Mark as having unsynced changes
-                if not self._has_unsynced_changes:
-                    self._has_unsynced_changes = True
-                    self._update_sync_action_style()
             else:
                 self._show_error("Delete Failed", "Failed to delete the note.")
         except Exception as e:
             logger.error(f"Failed to delete note: {e}")
             self._show_error("Delete Failed", f"An error occurred:\n\n{e}")
-
-    def _check_unsynced_changes(self) -> None:
-        """Check if there are unsynced changes and update menu styling."""
-        try:
-            # Get peers to check if sync is configured
-            peers = self.config.get_peers()
-            if not peers:
-                self._has_unsynced_changes = False
-                self._update_sync_action_style()
-                return
-
-            # Check each peer for unsynced changes
-            has_changes = False
-            for peer in peers:
-                peer_id = peer.get("peer_id")
-                if peer_id:
-                    last_sync = self.db.get_peer_last_sync(peer_id)
-                    changes = self.db.get_changes_since(last_sync, limit=1)
-                    if changes.get("changes"):
-                        has_changes = True
-                        break
-
-            if has_changes != self._has_unsynced_changes:
-                self._has_unsynced_changes = has_changes
-                self._update_sync_action_style()
-                logger.debug(f"Unsynced changes: {has_changes}")
-
-        except Exception as e:
-            logger.warning(f"Error checking unsynced changes: {e}")
-
-    def _update_sync_action_style(self) -> None:
-        """Update the Sync Now menu item text based on unsynced state."""
-        if self._has_unsynced_changes:
-            self.sync_now_action.setText("Sync Now *")
-        else:
-            self.sync_now_action.setText("Sync Now")
 
     def _open_manage_tags(self) -> None:
         """Open the tag hierarchy management dialog."""
@@ -442,72 +376,21 @@ class MainWindow(QMainWindow):
         if self._current_note_id:
             self.note_pane.load_note(self._current_note_id)
 
-        # Mark as having unsynced changes
-        if not self._has_unsynced_changes:
-            self._has_unsynced_changes = True
-            self._update_sync_action_style()
 
         logger.info("Tags modified - refreshed UI")
 
-    def sync_now(self) -> None:
-        """Perform sync with all configured peers."""
-        if not SYNC_AVAILABLE:
-            self._show_warning("Sync Unavailable", "Sync functionality is not available.")
-            return
+    def open_sync_dialog(self) -> None:
+        """The sync dialogue: the peers, the one button, the code, the check."""
+        from src.ui.sync_dialog import SyncDialog
 
-        peers = self.config.get_peers()
-        if not peers:
-            self._show_info(
-                "No Peers",
-                "No sync peers are configured.\n\n"
-                "Use the CLI to add peers:\n"
-                "  voice sync add-peer <peer_id> <name> <url>",
-            )
-            return
-
-        try:
-            config_dir = str(self.config.get_config_dir())
-            results: Dict[str, object] = sync_all_peers(config_dir)
-
-            if not results:
-                self._show_info("Sync Complete", "No peers to sync with.")
-                return
-
-            # Build result summary
-            all_success = True
-            summary_lines = []
-            for peer_id, result in results.items():
-                peer = self.config.get_peer(peer_id)
-                peer_name = peer.get("peer_name", peer_id) if peer else peer_id
-
-                if result.success:
-                    summary_lines.append(
-                        f"{peer_name}: OK (pulled {result.pulled}, pushed {result.pushed})"
-                    )
-                else:
-                    all_success = False
-                    errors = ", ".join(result.errors) if result.errors else "Unknown error"
-                    summary_lines.append(f"{peer_name}: FAILED - {errors}")
-
-            # Refresh notes list after sync
+        def after_operation() -> None:
             self.notes_list_pane.load_notes()
             self.tags_pane.load_tags()
+            if self._current_note_id:
+                self.note_pane.load_note(self._current_note_id)
 
-            # Re-check unsynced changes
-            self._check_unsynced_changes()
-
-            # Show result
-            summary = "\n".join(summary_lines)
-            if all_success:
-                self._show_info("Sync Complete", summary)
-            else:
-                self._show_warning("Sync Completed with Errors", summary)
-
-            logger.info(f"Sync completed: {summary_lines}")
-
-        except Exception as e:
-            logger.error(f"Sync failed: {e}")
-            self._show_error("Sync Failed", f"An error occurred during sync:\n\n{e}")
+        dialog = SyncDialog(self.db, self.config, listen_action=self.listen_action, after_operation=after_operation, parent=self)
+        dialog.exec()
 
     # ===== User-facing message methods =====
 

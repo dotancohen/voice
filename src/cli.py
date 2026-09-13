@@ -1819,7 +1819,7 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
     return 0
 
 
-def cmd_sync_list_peers(config: Config, args: argparse.Namespace) -> int:
+def cmd_sync_list_peers(db: Database, config: Config, args: argparse.Namespace) -> int:
     """List configured sync peers.
 
     Args:
@@ -1830,6 +1830,13 @@ def cmd_sync_list_peers(config: Config, args: argparse.Namespace) -> int:
         Exit code (0 for success)
     """
     peers = config.get_peers()
+    last = config.last_peer_id()
+    summaries = {p["peer_id"]: p for p in db.peer_summaries()}
+    for peer in peers:
+        summary = summaries.get(peer["peer_id"], {})
+        peer["last_reached_at"] = summary.get("last_reached_at")
+        peer["last_operation"] = summary.get("last_operation") or ""
+        peer["is_last"] = peer["peer_id"] == last
 
     if args.format == "json":
         print(json.dumps(peers, indent=2))
@@ -1845,8 +1852,10 @@ def cmd_sync_list_peers(config: Config, args: argparse.Namespace) -> int:
 
         print(f"Configured Peers ({len(peers)}):\n")
         for peer in peers:
-            print(f"  ID: {peer['peer_id']}")
+            print(f"  ID: {peer['peer_id']}{'  (last used)' if peer['is_last'] else ''}")
             print(f"  Name: {peer['peer_name']}")
+            if peer["last_reached_at"]:
+                print(f"  Last reached: {format_timestamp(peer['last_reached_at'])}, last operation: {peer['last_operation']}")
             if peer.get("peer_url"):
                 print(f"  URL: {peer['peer_url']}")
             if peer.get("certificate_fingerprint"):
@@ -1912,13 +1921,31 @@ def cmd_sync_remove_peer(config: Config, args: argparse.Namespace) -> int:
         return 1
 
     peer_name = existing.get("peer_name", "Unknown")
-    config.remove_peer(peer_id)
+    config.forget_peer(peer_id)
 
     if args.format == "json":
         print(json.dumps({"removed": True, "peer_id": peer_id}))
     else:
-        print(f"Removed peer: {peer_name} ({peer_id})")
+        print(f"Forgot peer: {peer_name} ({peer_id}). Its card will not bring it back; add it again to undo.")
 
+    return 0
+
+
+def cmd_sync_rename_peer(config: Config, args: argparse.Namespace) -> int:
+    """A local name for a peer, shown in place of its card's (Stage 5)."""
+    peer = _peer_by_prefix(config, args.peer_id)
+    if peer is None:
+        print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
+        return 1
+    try:
+        config.rename_peer(peer["peer_id"], args.name)
+    except Exception as e:  # noqa: BLE001
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    if args.format == "json":
+        print(json.dumps({"renamed": True, "peer_id": peer["peer_id"], "name": args.name}))
+    else:
+        print(f"{peer['peer_id']} is called {args.name} on this device.")
     return 0
 
 
@@ -3632,8 +3659,13 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         op_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
 
     # sync remove-peer
-    remove_peer_parser = sync_subparsers.add_parser("remove-peer", help="Remove a sync peer")
-    remove_peer_parser.add_argument("peer_id", type=str, help="Peer device ID to remove")
+    remove_peer_parser = sync_subparsers.add_parser("remove-peer", help="Forget a peer on this device: it leaves the list and its card does not bring it back")
+    remove_peer_parser.add_argument("peer_id", type=str, help="Peer device ID to forget")
+
+    # sync rename-peer
+    rename_peer_parser = sync_subparsers.add_parser("rename-peer", help="A local name for a peer, shown in place of its card's")
+    rename_peer_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
+    rename_peer_parser.add_argument("name", type=str, help="The name")
 
     # sync now
     sync_now_parser = sync_subparsers.add_parser("now", help="Perform sync with peers")
@@ -4147,11 +4179,13 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             if sync_cmd == "status":
                 return cmd_sync_status(db, config, args)
             elif sync_cmd == "list-peers":
-                return cmd_sync_list_peers(config, args)
+                return cmd_sync_list_peers(db, config, args)
             elif sync_cmd == "add-peer":
                 return cmd_sync_add_peer(config, args)
             elif sync_cmd == "remove-peer":
                 return cmd_sync_remove_peer(config, args)
+            elif sync_cmd == "rename-peer":
+                return cmd_sync_rename_peer(config, args)
             elif sync_cmd == "now":
                 return cmd_sync_now(db, config, args)
             elif sync_cmd == "check":
