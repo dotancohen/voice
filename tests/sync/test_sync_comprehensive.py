@@ -171,129 +171,6 @@ class TestNoteTagAssociationSync:
 # TAG HIERARCHY CHANGES TESTS
 # =============================================================================
 
-@pytest.mark.skip(reason="move_tag() not implemented yet - tag parent changes require this API")
-class TestTagHierarchySync:
-    """Tests for syncing tag hierarchy changes.
-
-    TODO: These tests require move_tag() to be implemented in the Database API.
-    """
-
-    def test_move_tag_to_different_parent_syncs(
-        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
-    ):
-        """Changing a tag's parent_id propagates correctly."""
-        node_a, node_b = two_nodes_with_servers
-
-        # Create hierarchy on A: Parent1 -> Child, Parent2
-        parent1 = create_tag_on_node(node_a, "Parent1")
-        parent2 = create_tag_on_node(node_a, "Parent2")
-        child = create_tag_on_node(node_a, "Child", parent1)
-
-        # Sync to B
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify B has the hierarchy
-        child_b = node_b.db.get_tag(child)
-        assert child_b is not None
-        assert child_b.get("parent_id") == parent1
-
-        # Wait for timestamp precision
-        time.sleep(1.1)
-
-        # Move child to Parent2 on A
-        set_local_device_id(node_a.device_id)
-        node_a.db.move_tag(child, parent2)
-
-        # Verify A's change
-        child_a = node_a.db.get_tag(child)
-        assert child_a.get("parent_id") == parent2
-
-        # Sync to B
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify B's child now has Parent2
-        child_b = node_b.db.get_tag(child)
-        assert child_b.get("parent_id") == parent2, (
-            "Tag parent change should sync"
-        )
-
-    def test_orphan_tag_becomes_child_syncs(
-        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
-    ):
-        """Moving a root tag under another tag syncs."""
-        node_a, node_b = two_nodes_with_servers
-
-        # Create two root tags on A
-        parent = create_tag_on_node(node_a, "Parent")
-        orphan = create_tag_on_node(node_a, "Orphan")
-
-        # Sync to B
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify both are root tags on B
-        orphan_b = node_b.db.get_tag(orphan)
-        assert orphan_b.get("parent_id") is None
-
-        # Wait for timestamp precision
-        time.sleep(1.1)
-
-        # Make orphan a child of parent on A
-        set_local_device_id(node_a.device_id)
-        node_a.db.move_tag(orphan, parent)
-
-        # Sync to B
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify B's orphan is now under parent
-        orphan_b = node_b.db.get_tag(orphan)
-        assert orphan_b.get("parent_id") == parent, (
-            "Root tag becoming child should sync"
-        )
-
-    def test_child_becomes_root_syncs(
-        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
-    ):
-        """Moving a child tag to root level syncs."""
-        node_a, node_b = two_nodes_with_servers
-
-        # Create hierarchy on A
-        parent = create_tag_on_node(node_a, "Parent")
-        child = create_tag_on_node(node_a, "Child", parent)
-
-        # Sync to B
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify child is under parent on B
-        child_b = node_b.db.get_tag(child)
-        assert child_b.get("parent_id") == parent
-
-        # Wait for timestamp precision
-        time.sleep(1.1)
-
-        # Move child to root on A
-        set_local_device_id(node_a.device_id)
-        node_a.db.move_tag(child, None)
-
-        # Sync to B
-        sync_nodes(node_a, node_b)
-        node_b.reload_db()
-
-        # Verify B's child is now root
-        child_b = node_b.db.get_tag(child)
-        assert child_b.get("parent_id") is None, (
-            "Child becoming root should sync"
-        )
-
-
-# =============================================================================
-# TOMBSTONE / RESURRECTION PREVENTION TESTS
-# =============================================================================
-
 class TestTombstoneHandling:
     """Tests to verify deleted items don't resurrect."""
 
@@ -1062,10 +939,7 @@ class TestComplexWorkflows:
         assert len(audio_files_b) == 1, "B should have the audio file"
 
         transcriptions_b = node_b.db.get_transcriptions_for_audio_file(audio_id)
-        # Note: Transcription sync via subprocess may not work due to audiofile_directory config
-        # The Rust-level tests verify transcription sync works correctly
-        if len(transcriptions_b) != 2:
-            pytest.skip("Transcription sync via subprocess not fully configured")
+        assert len(transcriptions_b) == 2, "B should have both transcriptions"
 
         # Step 6: Sync B -> A
         result = sync_nodes(node_b, node_a)

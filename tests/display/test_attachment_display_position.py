@@ -96,8 +96,7 @@ class TestTuiAttachmentDisplay:
         # Read the tui.py source to verify compose order
         tui_path = Path(__file__).parent.parent.parent / "src" / "tui.py"
 
-        if not tui_path.exists():
-            pytest.skip("tui.py not found")
+        assert tui_path.exists(), "tui.py not found"
 
         content = tui_path.read_text()
 
@@ -159,8 +158,7 @@ class TestGuiAttachmentDisplay:
         # Read the note_pane.py to verify structure
         note_pane_path = Path(__file__).parent.parent.parent / "src" / "ui" / "note_pane.py"
 
-        if not note_pane_path.exists():
-            pytest.skip("note_pane.py not found")
+        assert note_pane_path.exists(), "note_pane.py not found"
 
         content = note_pane_path.read_text()
 
@@ -190,8 +188,7 @@ class TestGuiAttachmentDisplay:
         """Test that GUI displays required attachment fields."""
         note_pane_path = Path(__file__).parent.parent.parent / "src" / "ui" / "note_pane.py"
 
-        if not note_pane_path.exists():
-            pytest.skip("note_pane.py not found")
+        assert note_pane_path.exists(), "note_pane.py not found"
 
         content = note_pane_path.read_text()
 

@@ -368,14 +368,20 @@ class TestTagHierarchySync:
         # Sync initial state
         sync_nodes(node_a, node_b)
 
-        # Reparent on A
-        set_local_device_id(node_a.device_id)
-        # This would require a reparent method - for now just verify structure synced
-        # node_a.db.reparent_tag(child, parent2)
-
-        # Verify initial parent on B
         child_b = node_b.db.get_tag(child)
         assert child_b.get("parent_id") == parent1
+
+        # Reparent on A, under another parent, then to the top level
+        set_local_device_id(node_a.device_id)
+        assert node_a.db.reparent_tag(child, parent2)
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+        assert node_b.db.get_tag(child).get("parent_id") == parent2
+
+        assert node_a.db.reparent_tag(child, None)
+        sync_nodes(node_a, node_b)
+        node_b.reload_db()
+        assert node_b.db.get_tag(child).get("parent_id") is None
 
 
 class TestComplexNoteTagScenarios:

@@ -847,80 +847,6 @@ class TestAudioFileSyncIntegration:
             audio_b = node_b.db.get_audio_file(audio_id)
             assert audio_b is not None, f"Audio file {audio_id} should exist"
 
-    @pytest.mark.skip(reason="Peer-to-peer binary transfer is disabled: audio binaries go through cloud storage and are downloaded on demand. Re-enable when the peer-transfer storage provider exists.")
-    def test_automatic_binary_sync_on_push(
-        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
-    ) -> None:
-        """Test that binary files are automatically uploaded during sync.
-
-        This verifies the fix for the atomicity issue where metadata would
-        sync but binary files required a separate manual upload.
-        """
-        node_a, node_b = two_nodes_with_audiofiles
-
-        # Create audio file with binary content on node A
-        test_content = b"AUTOMATIC_BINARY_SYNC_TEST_DATA_" * 50
-
-        set_local_device_id(node_a.device_id)
-        note_id = node_a.db.create_note("Auto binary sync test")
-        audio_id = node_a.db.create_audio_file("auto-sync.mp3")
-        node_a.db.attach_to_note(note_id, audio_id, "audio_file")
-
-        # Write binary file to A's directory
-        audiodir_a = Path(node_a.config.get_audiofile_directory())
-        (audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]).write_bytes(test_content)
-
-        # Sync A -> B (should automatically upload binary)
-        result = sync_nodes(node_a, node_b)
-        assert result["success"] is True, f"Sync failed: {result}"
-
-        # Verify binary file exists on B (without manual upload)
-        audiodir_b = Path(node_b.config.get_audiofile_directory())
-        binary_b = audiodir_b / node_b.db.get_audio_file(audio_id)["disk_name"]
-        assert binary_b.exists(), (
-            "Binary file should be automatically uploaded during sync"
-        )
-        assert binary_b.read_bytes() == test_content
-
-    @pytest.mark.skip(reason="Peer-to-peer binary transfer is disabled: audio binaries go through cloud storage and are downloaded on demand. Re-enable when the peer-transfer storage provider exists.")
-    def test_automatic_binary_sync_on_pull(
-        self, two_nodes_with_audiofiles: Tuple[SyncNode, SyncNode]
-    ) -> None:
-        """Test that binary files are automatically downloaded during sync.
-
-        This verifies the fix for the atomicity issue where metadata would
-        sync but binary files required a separate manual download.
-        """
-        node_a, node_b = two_nodes_with_audiofiles
-
-        # Create audio file with binary content on node B (server)
-        test_content = b"AUTOMATIC_BINARY_DOWNLOAD_TEST_" * 50
-
-        set_local_device_id(node_b.device_id)
-        note_id = node_b.db.create_note("Auto binary download test")
-        audio_id = node_b.db.create_audio_file("auto-download.ogg")
-        node_b.db.attach_to_note(note_id, audio_id, "audio_file")
-
-        # Write binary file to B's directory
-        audiodir_b = Path(node_b.config.get_audiofile_directory())
-        (audiodir_b / node_b.db.get_audio_file(audio_id)["disk_name"]).write_bytes(test_content)
-
-        # A should not have the file yet
-        audiodir_a = Path(node_a.config.get_audiofile_directory())
-        binary_a = audiodir_a / node_a.db.get_audio_file(audio_id)["disk_name"]
-        assert not binary_a.exists()
-
-        # Sync A -> B (A pulls from B, should automatically download binary)
-        result = sync_nodes(node_a, node_b)
-        assert result["success"] is True, f"Sync failed: {result}"
-
-        # Verify binary file was automatically downloaded to A
-        assert binary_a.exists(), (
-            "Binary file should be automatically downloaded during sync"
-        )
-        assert binary_a.read_bytes() == test_content
-
-
 class TestDeletedEntitySyncIntegration:
     """Tests for syncing deleted entities (notes, tags).
 
@@ -1080,17 +1006,12 @@ class TestDeletedEntitySyncIntegration:
         assert tags_b[0]["id"] == tag_id2
 
 
-@pytest.mark.skip(reason="Transcription sync requires audiofile directory configured in sync subprocess, not yet implemented")
 class TestTranscriptionSyncIntegration:
     """Tests for syncing transcriptions between nodes.
 
     Transcriptions are associated with audio files and should
     sync along with them.
 
-    TODO: These tests are skipped because they require the sync subprocess
-    to have audiofile_directory configured, which requires additional
-    infrastructure to pass through. The Rust-level tests verify the core
-    sync logic works.
     """
 
     @pytest.fixture
