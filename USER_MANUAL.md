@@ -700,6 +700,13 @@ VoiceAndroid's user manual.
 - A peer can be **renamed** on this device (`sync rename-peer`, "Rename…") and
   **forgotten** (`sync remove-peer`, "Forget"): a forgotten peer's card does
   not bring it back until it is added again or paired again.
+- **Finding each other**: a listening device announces itself on the local
+  network with a hash of the account id, never the id. An operation tries
+  the address it remembers first; if nothing answers there, it asks the
+  network where the peer is and remembers the answer. `sync discover` and
+  the dialogue's "Find on this network" list the devices of the account
+  nearby. A listener without a configured `public_url` serves its own
+  network only; a phone on hotel wifi is not a server for the hotel.
 - Instances can be run as a systemd service to run in the background.
 
 On the instance designated as the server:

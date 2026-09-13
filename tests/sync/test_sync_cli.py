@@ -505,6 +505,21 @@ class TestSettingsCLI:
         assert "not set" in stderr
 
 
+def _wait_for_status(url: str, seconds: float = 20.0):
+    """The status answer once the listener is up, or the last error after the wait."""
+    import requests
+
+    deadline = time.monotonic() + seconds
+    last: Optional[BaseException] = None
+    while time.monotonic() < deadline:
+        try:
+            return requests.get(url, timeout=5, verify=False)
+        except requests.RequestException as e:
+            last = e
+            time.sleep(0.25)
+    raise AssertionError(f"the listener did not answer within {seconds} s: {last}")
+
+
 class TestSyncServeCLI:
     """Tests for 'sync serve' command."""
 
@@ -535,16 +550,9 @@ class TestSyncServeCLI:
         )
 
         try:
-            # Wait for server to start
-            time.sleep(2)
-
-            # Check server is responding
-            # The server serves https with its own certificate by default
-            resp = requests.get(
-                f"https://127.0.0.1:{sync_node_a.port}/sync/status",
-                timeout=5,
-                verify=False,
-            )
+            # The server serves https with its own certificate by default;
+            # it is up when the status answers, within a generous wait
+            resp = _wait_for_status(f"https://127.0.0.1:{sync_node_a.port}/sync/status")
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "ok"
@@ -589,14 +597,7 @@ class TestSyncServeCLI:
         )
 
         try:
-            time.sleep(2)
-
-            import requests
-            resp = requests.get(
-                f"https://127.0.0.1:{custom_port}/sync/status",
-                timeout=5,
-                verify=False,
-            )
+            resp = _wait_for_status(f"https://127.0.0.1:{custom_port}/sync/status")
             assert resp.status_code == 200
 
         finally:

@@ -926,7 +926,11 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    the listener switch), the phone's peers card, the hostname and the
    model name as default device names (UI-9..11). Content descriptions
    are on the new controls; the screen-reader and large-font pass waits
-   for the interface swap.
+   for the interface swap. **Stage 7 done 2026-09-13** (DISC-1..3): the
+   announcement with the account's hash (zeroconf on the desktop,
+   NsdManager on the phone), the browse when the remembered address is
+   silent, `sync discover` and "Find on this network"; and Stage 6's
+   LAN-only listener (LISTEN-3).
 8. Stage 8, the wizard, with Stage 14's bucket hardening and Stage 13's
    bucket items.
 9. Stage 13's bitrate option can go in at any point; it touches only the

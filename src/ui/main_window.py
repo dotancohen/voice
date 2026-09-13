@@ -632,10 +632,34 @@ class MainWindow(QMainWindow):
 
             self._listener_thread = threading.Thread(target=serve, daemon=True, name="voice-listener")
             self._listener_thread.start()
+            self._announce_listener(port)
             self.statusBar().showMessage(f"Listening for peers on port {port}", 5000)
         else:
             stop_sync_server()
+            self._stop_announcing()
             self.statusBar().showMessage("No longer listening for peers", 5000)
+
+    def _announce_listener(self, port: int) -> None:
+        """Announce this listener on the local network (Stage 7) while it runs."""
+        from voicecore import certificate_fingerprint
+        from src.core.discovery import Announcer
+
+        try:
+            fingerprint = certificate_fingerprint(str(self.config.get_config_dir()))
+        except Exception:  # noqa: BLE001
+            fingerprint = ""
+        self._announcer = Announcer(self.db.account_id(), self.config.get_device_id_hex(), self.config.get_device_name(), port, fingerprint)
+        try:
+            self._announcer.start()
+        except Exception as e:  # noqa: BLE001 - listening does not depend on it
+            logger.info(f"Not announced on the network: {e}")
+            self._announcer = None
+
+    def _stop_announcing(self) -> None:
+        announcer = getattr(self, "_announcer", None)
+        if announcer is not None:
+            announcer.stop()
+            self._announcer = None
 
     def _this_device_lines(self) -> str:
         """The account, the device and the address a peer would type, for About."""

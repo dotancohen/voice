@@ -20,3 +20,6 @@ cryptography>=42.0.0
 
 # QR codes for pairing (pure Python, draws to a terminal and to PNG)
 segno>=1.6.0
+
+# Finding peers on the local network (Stage 7): announces and browses _voicesync._tcp
+zeroconf>=0.132.0

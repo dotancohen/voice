@@ -1711,14 +1711,16 @@ def _request_line(result: Any) -> str:
     return f"  Request {request_id}" if request_id else ""
 
 
-def cmd_sync_operation(config: Config, operation: str, args: argparse.Namespace) -> int:
+def cmd_sync_operation(db: Database, config: Config, operation: str, args: argparse.Namespace) -> int:
     """Deliver, exchange, send or fetch with one peer (the terms table)."""
     peer = _peer_by_prefix(config, args.peer_id)
     if peer is None:
         print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
         return 1
+    from src.core.discovery import run_with_discovery
     client = SyncClient(str(config.get_config_dir()))
-    result = getattr(client, {"deliver": "deliver", "exchange": "exchange", "send": "send_to_peer", "fetch": "fetch_from_peer"}[operation])(peer["peer_id"])
+    method = getattr(client, {"deliver": "deliver", "exchange": "exchange", "send": "send_to_peer", "fetch": "fetch_from_peer"}[operation])
+    result = run_with_discovery(config, db.account_id(), peer, method)
     if args.format == "json":
         print(json.dumps({"peer_id": peer["peer_id"], "operation": operation, **_sync_result_to_json(result)}, indent=2))
         return 0 if result.success else 1
@@ -1963,9 +1965,13 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
     peer_id = getattr(args, 'peer_id', None)
 
     if peer_id:
-        # Sync with specific peer
+        # Sync with specific peer; when it is not reached at the remembered
+        # address, the network is asked where it is (Stage 7)
+        from src.core.discovery import run_with_discovery
         client = SyncClient(str(config.get_config_dir()))
-        result = client.sync_with_peer(peer_id)
+        peer = _peer_by_prefix(config, peer_id) or {"peer_id": peer_id, "peer_name": peer_id[:UUID_SHORT_LEN], "peer_url": ""}
+        peer_id = peer["peer_id"]
+        result = run_with_discovery(config, db.account_id(), peer, client.sync_with_peer)
 
         if args.format == "json":
             print(json.dumps({"peer_id": peer_id, **_sync_result_to_json(result)}, indent=2))
@@ -2491,9 +2497,43 @@ def cmd_sync_serve_root(root: Path, args: argparse.Namespace) -> int:
     return _serve(None, str(root), port, args)
 
 
+def _announcers(config_dir: Optional[str], root: Optional[str], port: int) -> List[Any]:
+    """One announcement per account served (Stage 7): the hash of its id, this device, the fingerprint."""
+    from voicecore import account_list, certificate_fingerprint
+    from src.core.discovery import Announcer
+
+    machine_dir = root or config_dir
+    try:
+        fingerprint = certificate_fingerprint(str(machine_dir))
+    except Exception:  # noqa: BLE001 - made when the listener starts
+        fingerprint = ""
+    machine = Config(config_dir=Path(config_dir) if config_dir else Path(root), root=Path(root) if root else None)
+    accounts = []
+    if root:
+        try:
+            accounts = [a["account_id"] for a in account_list(root)]
+        except Exception:  # noqa: BLE001
+            accounts = []
+    elif config_dir:
+        try:
+            accounts = [Database(Path(machine.get("database_file"))).account_id()]
+        except Exception:  # noqa: BLE001
+            accounts = []
+    return [Announcer(a, machine.get_device_id_hex(), machine.get_device_name(), port, fingerprint) for a in accounts if a]
+
+
 def _serve(config_dir: Optional[str], root: Optional[str], port: int, args: argparse.Namespace) -> int:
     verbose = getattr(args, 'verbose', False)
     no_color = getattr(args, 'no_color', False)
+    plain_http = getattr(args, 'plain_http', False)
+
+    # Announced on the network while serving, unless plain http (loopback only)
+    announcers = [] if plain_http or getattr(args, "no_announce", False) else _announcers(config_dir, root, port)
+    for announcer in announcers:
+        try:
+            announcer.start()
+        except Exception as e:  # noqa: BLE001 - serving does not depend on it
+            print(f"Not announced on the network: {e}", file=sys.stderr)
 
     # Use Rust sync server via voicecore bindings
     # The server handles its own startup message and Ctrl-C
@@ -2502,7 +2542,7 @@ def _serve(config_dir: Optional[str], root: Optional[str], port: int, args: argp
             config_dir=config_dir,
             host=getattr(args, 'host', '0.0.0.0'),
             port=port,
-            plain_http=getattr(args, 'plain_http', False),
+            plain_http=plain_http,
             verbose=verbose,
             ansi_colors=not no_color,
             root=root,
@@ -2510,7 +2550,28 @@ def _serve(config_dir: Optional[str], root: Optional[str], port: int, args: argp
     except KeyboardInterrupt:
         # Rust already handled the shutdown, just exit cleanly
         pass
+    finally:
+        for announcer in announcers:
+            announcer.stop()
 
+    return 0
+
+
+def cmd_sync_discover(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """The devices of this account announcing on the network (Stage 7)."""
+    from src.core.discovery import browse
+
+    found = browse(db.account_id(), float(getattr(args, "timeout", 3.0)))
+    known = {p["peer_id"] for p in config.get_peers()}
+    if args.format == "json":
+        print(json.dumps([{"device_id": f.device_id, "name": f.name, "urls": f.urls, "certificate_fingerprint": f.certificate_fingerprint, "is_peer": f.device_id in known} for f in found], indent=2))
+        return 0
+    if not found:
+        print("No device of this account is announcing on this network.")
+        return 0
+    for f in found:
+        mark = "peer" if f.device_id in known else "not a peer yet: sync add-peer, or pair"
+        print(f"{f.name} ({f.device_id[:UUID_SHORT_LEN]}) at {', '.join(f.urls)}  [{mark}]")
     return 0
 
 
@@ -3630,6 +3691,10 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # sync status
     sync_subparsers.add_parser("status", help="Show sync status and device info")
 
+    # sync discover
+    discover_parser = sync_subparsers.add_parser("discover", help="The devices of this account announcing on the local network")
+    discover_parser.add_argument("--timeout", type=float, default=3.0, help="Seconds to listen for answers (default 3)")
+
     # sync check
     check_parser = sync_subparsers.add_parser("check", help="Check the connection to a peer: reachability, certificate, account, key, clock, free space, listener, each with its code")
     check_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
@@ -3740,6 +3805,11 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "--no-color",
         action="store_true",
         help="Disable ANSI color codes in log output"
+    )
+    serve_parser.add_argument(
+        "--no-announce",
+        action="store_true",
+        help="Do not announce this listener on the local network"
     )
     serve_parser.add_argument(
         "--plain-http",
@@ -4190,8 +4260,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_sync_now(db, config, args)
             elif sync_cmd == "check":
                 return cmd_sync_check(config, args)
+            elif sync_cmd == "discover":
+                return cmd_sync_discover(db, config, args)
             elif sync_cmd in ("deliver", "exchange", "send", "fetch"):
-                return cmd_sync_operation(config, sync_cmd, args)
+                return cmd_sync_operation(db, config, sync_cmd, args)
             elif sync_cmd == "conflicts":
                 return cmd_sync_conflicts(db, args)
             elif sync_cmd == "resolve":

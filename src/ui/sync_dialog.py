@@ -170,6 +170,10 @@ class SyncDialog(QDialog):
         self.add_button = QPushButton("Add by address…")
         self.add_button.clicked.connect(self._add_peer)
         peer_actions.addWidget(self.add_button)
+        self.find_button = QPushButton("Find on this network")
+        self.find_button.setAccessibleDescription("Devices of this account announcing on the local network; a found one can be added as a peer")
+        self.find_button.clicked.connect(self._find_on_network)
+        peer_actions.addWidget(self.find_button)
         peer_actions.addStretch()
         layout.addLayout(peer_actions)
 
@@ -309,8 +313,10 @@ class SyncDialog(QDialog):
             "send": client.send_to_peer,
             "fetch": client.fetch_from_peer,
         }[operation]
+        from src.core.discovery import run_with_discovery
+
         try:
-            result = method(peer["peer_id"])
+            result = run_with_discovery(self.config, self.db.account_id(), peer, method)
         except Exception as e:  # noqa: BLE001
             self.result_label.setText(f"{operation} with {peer['peer_name']} could not run: {e}")
             return
@@ -401,6 +407,34 @@ class SyncDialog(QDialog):
         self.refresh()
 
     # ----- the peers
+
+    def _find_on_network(self) -> None:
+        """The devices of this account announcing nearby (Stage 7); one can be added."""
+        from src.core.discovery import browse
+
+        self.result_label.setText("Listening on the network for three seconds…")
+        try:
+            found = browse(self.db.account_id(), 3.0)
+        except Exception as e:  # noqa: BLE001
+            self.result_label.setText(f"Could not browse the network: {e}")
+            return
+        known = {p["peer_id"] for p in self.peers}
+        if not found:
+            self.result_label.setText("No device of this account is announcing on this network.")
+            return
+        lines = []
+        for entry in found:
+            if entry.device_id in known:
+                lines.append(f"{entry.name} ({entry.device_id[:UUID_SHORT_LEN]}) at {', '.join(entry.urls)}: already a peer")
+                continue
+            answer = QMessageBox.question(self, "Found on the network", f"{entry.name} ({entry.device_id[:UUID_SHORT_LEN]}) at {', '.join(entry.urls)} is of this account. Add it as a peer?")
+            if answer == QMessageBox.StandardButton.Yes and entry.urls:
+                self.config.add_peer(entry.device_id, entry.name or entry.device_id[:UUID_SHORT_LEN], entry.urls[0], entry.certificate_fingerprint or None, True)
+                lines.append(f"{entry.name}: added")
+            else:
+                lines.append(f"{entry.name}: not added")
+        self.result_label.setText("\n".join(lines))
+        self.refresh()
 
     def _rename_peer(self) -> None:
         peer = self._selected_peer()
