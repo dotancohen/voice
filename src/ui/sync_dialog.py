@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -200,6 +201,27 @@ class SyncDialog(QDialog):
         actions.addWidget(self.wizard_button)
         actions.addStretch()
         layout.addLayout(actions)
+
+        # Encryption of recordings in the bucket (Stage 15): off until the key was exported
+        encryption = QHBoxLayout()
+        self.encrypt_box = QCheckBox("Encrypt recordings in the bucket")
+        self.encrypt_box.setAccessibleDescription("New uploads are encrypted with the account's recording key; export the key first")
+        self.encrypt_box.toggled.connect(self._set_encryption)
+        encryption.addWidget(self.encrypt_box)
+        self.export_key_button = QPushButton("Export the recording key…")
+        self.export_key_button.setAccessibleDescription("Show the key as text and a QR code; keep it on paper")
+        self.export_key_button.clicked.connect(self._export_recording_key)
+        encryption.addWidget(self.export_key_button)
+        self.import_key_button = QPushButton("Import…")
+        self.import_key_button.setAccessibleDescription("Keep a recording key from an export")
+        self.import_key_button.clicked.connect(self._import_recording_key)
+        encryption.addWidget(self.import_key_button)
+        self.reupload_button = QPushButton("Re-upload existing recordings encrypted")
+        self.reupload_button.clicked.connect(self._reupload_encrypted)
+        encryption.addWidget(self.reupload_button)
+        encryption.addStretch()
+        layout.addLayout(encryption)
+        self._refresh_encryption()
 
         peer_actions = QHBoxLayout()
         self.rename_button = QPushButton("Rename…")
@@ -500,6 +522,91 @@ class SyncDialog(QDialog):
             code = f" ({row['code']})" if row["code"] else ""
             lines.append(f"{mark} {row['name']}: {row['detail']}{code}")
         self.result_label.setText("\n".join(lines))
+
+    # ----- encryption (Stage 15)
+
+    def _refresh_encryption(self) -> None:
+        """The switch follows the synced setting and stays off until the key was exported here."""
+        from voicecore import encryption_state
+
+        try:
+            state = encryption_state(str(self.config.get_config_dir()))
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"Encryption state not read: {e}")
+            state = {"has_key": False, "exported": False, "on": False}
+        self.encrypt_box.blockSignals(True)
+        self.encrypt_box.setChecked(bool(state["on"]))
+        self.encrypt_box.setEnabled(bool(state["has_key"] and state["exported"]) or bool(state["on"]))
+        self.encrypt_box.blockSignals(False)
+        self.encrypt_box.setToolTip("" if state["exported"] else "Export the recording key first")
+        self.reupload_button.setEnabled(bool(state["on"] and state["has_key"]))
+
+    def _set_encryption(self, on: bool) -> None:
+        from voicecore import set_encryption_on
+
+        try:
+            set_encryption_on(on, str(self.config.get_config_dir()))
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Not changed", str(e))
+        self._refresh_encryption()
+
+    def _export_recording_key(self) -> None:
+        """The key as text and a QR code (ENC-1); showing it is the export the switch waits for."""
+        from voicecore import recording_key_export
+
+        text = recording_key_export(str(self.config.get_config_dir()))
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Recording key")
+        box = QVBoxLayout(dialog)
+        try:
+            import io
+
+            import segno
+
+            buffer = io.BytesIO()
+            segno.make(text, error="m").save(buffer, kind="png", scale=6)
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue())
+            image = QLabel()
+            image.setPixmap(pixmap)
+            image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            box.addWidget(image)
+        except ImportError:
+            box.addWidget(QLabel("(install segno to draw the QR code; the text below is the same key)"))
+        text_label = QLabel(text)
+        text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        box.addWidget(text_label)
+        box.addWidget(QLabel("Recording key. Keep this on paper. Without it these recordings cannot be played."))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        copy = buttons.addButton("Copy", QDialogButtonBox.ButtonRole.ActionRole)
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(text))
+        buttons.rejected.connect(dialog.reject)
+        box.addWidget(buttons)
+        dialog.exec()
+        self._refresh_encryption()
+
+    def _import_recording_key(self) -> None:
+        from voicecore import recording_key_import
+
+        text, ok = QInputDialog.getText(self, "Import the recording key", "The 43 characters from an export:")
+        if not ok or not text.strip():
+            return
+        try:
+            recording_key_import(text, str(self.config.get_config_dir()))
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Not imported", str(e))
+        self._refresh_encryption()
+
+    def _reupload_encrypted(self) -> None:
+        """The plain objects' recordings up again encrypted (ENC-3), one at a time, resumable."""
+        from voicecore import reupload_encrypted
+
+        try:
+            result = reupload_encrypted(str(self.config.get_config_dir()))
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Not re-uploaded", str(e))
+            return
+        self.result_label.setText(f"Re-uploaded encrypted: {result.uploaded}; not on this device: {result.skipped}; failed: {result.failed}" + ("; " + "; ".join(result.errors) if result.errors else ""))
 
     def _show_code(self) -> None:
         """The code another device reads to join this account (PAIR-1)."""

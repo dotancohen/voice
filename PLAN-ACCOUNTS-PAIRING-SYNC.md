@@ -837,6 +837,12 @@ unreadable for ever. The design makes that loss hard.
 - **Rotation** of the recording key is not in this work; the key is exported,
   imported and carried, never changed.
 
+**Done 2026-09-13** (ENC-1..4). One change from the text above: the chunk
+nonce is the file nonce with the chunk index in its last four bytes, not the
+file nonce alone with the index only in the associated data, because GCM
+must never see one nonce twice under one key. The bucket secret is still not
+under the Keystore (open question 4).
+
 ## Stage 16 — Protocol version 2, and room for other applications
 
 - **The protocol version becomes `2`.** Headers, device cards, pairing and
@@ -955,7 +961,12 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    the phone, `voice-phone-backup` copying it.
 9. Stage 13's bitrate option can go in at any point; it touches only the
    recorder.
-10. Stage 15, encryption, last. Stage 16's version bump goes in with step 3,
+10. Stage 15, encryption, last. **Done 2026-09-13** (ENC-1..4): the cipher
+    module, the key in the configuration and in the pairing replies, the
+    encrypted upload through the parts loop, the download and fetch that
+    open on arrival, the keyless server that serves as it holds, export and
+    import on every interface, the switch that waits for the export, and
+    "Re-upload existing recordings encrypted". Stage 16's version bump goes in with step 3,
     and its handshake fields with step 4. **Stage 16 done 2026-09-13**
     (PROTO-12, PROTO-13): version 2.0, `PROTOCOL_TOO_OLD` both ways,
     `application` and `entity_types` in the handshake, `?types=` on the

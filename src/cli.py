@@ -1522,6 +1522,57 @@ def cmd_account_remove(root: Optional[str], args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_account_recording_key(config: Config, args: argparse.Namespace) -> int:
+    """Export or import the account's recording key (Stage 15, ENC-1)."""
+    from voicecore import recording_key_export, recording_key_import
+
+    config_dir = str(config.config_dir) if config.config_dir else None
+    command = getattr(args, "recording_key_command", None)
+    if command == "export":
+        text = recording_key_export(config_dir)
+        if not args.text_only:
+            try:
+                import segno
+
+                segno.make(text, error="m").terminal(compact=True)
+            except ImportError:
+                print("(install segno to draw the QR code; the text below is the same key)")
+        print(text)
+        print("Recording key. Keep this on paper. Without it these recordings cannot be played.")
+        return 0
+    if command == "import":
+        recording_key_import(args.text, config_dir)
+        print("The recording key is kept; recordings in the bucket open on this device again.")
+        return 0
+    print("Error: say export or import", file=sys.stderr)
+    return 1
+
+
+def cmd_storage_encrypt(config: Config, args: argparse.Namespace) -> int:
+    """Encryption of new uploads: on, off, or the state (ENC-3)."""
+    from voicecore import encryption_state, set_encryption_on
+
+    config_dir = str(config.config_dir) if config.config_dir else None
+    if args.state:
+        set_encryption_on(args.state == "on", config_dir)
+    state = encryption_state(config_dir)
+    print(f"Encryption of new uploads: {'on' if state['on'] else 'off'}")
+    print(f"Recording key on this device: {'yes' if state['has_key'] else 'no'}; exported: {'yes' if state['exported'] else 'no'}")
+    return 0
+
+
+def cmd_storage_reupload_encrypted(config: Config, args: argparse.Namespace) -> int:
+    """Send the plain objects' recordings up again encrypted (ENC-3)."""
+    from voicecore import reupload_encrypted
+
+    config_dir = str(config.config_dir) if config.config_dir else None
+    result = reupload_encrypted(config_dir)
+    print(f"Re-uploaded encrypted: {result.uploaded}; not on this device: {result.skipped}; failed: {result.failed}")
+    for error in result.errors:
+        print(f"  - {error}")
+    return 0 if result.failed == 0 else 1
+
+
 def cmd_account_show_code(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Show the code another device reads to join this account (PAIR-1)."""
     from voicecore import listen_urls, pairing_offer
@@ -4138,6 +4189,15 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     )
     show_code_parser.add_argument("--text-only", action="store_true", help="Print the setup text without the QR code")
     account_subparsers.add_parser("hide-code", help="Withdraw the code shown by show-code")
+    recording_key_parser = account_subparsers.add_parser(
+        "recording-key",
+        help="The account's recording key (Stage 15): export it as text and a QR code, or import one from an export"
+    )
+    recording_key_sub = recording_key_parser.add_subparsers(dest="recording_key_command")
+    export_parser = recording_key_sub.add_parser("export", help="Show the key; made now when the account has none. Keep it on paper")
+    export_parser.add_argument("--text-only", action="store_true", help="Print the key without the QR code")
+    import_parser = recording_key_sub.add_parser("import", help="Keep a key from an export: how a device that lost everything reads the bucket again")
+    import_parser.add_argument("text", help="The 43 characters of the key")
     host_parser = account_subparsers.add_parser(
         "host",
         help="Show the grant text with which the holder of an account gives it to this server to host. Needs no account here"
@@ -4180,6 +4240,9 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
 
     # storage status - show current configuration
     storage_subparsers.add_parser("status", help="Show current cloud storage configuration")
+    encrypt_parser = storage_subparsers.add_parser("encrypt", help="Encryption of recordings in the bucket (Stage 15): on, off, or the state")
+    encrypt_parser.add_argument("state", nargs="?", choices=["on", "off"], help="Turn it on (the key must be exported first) or off; nothing prints the state")
+    storage_subparsers.add_parser("reupload-encrypted", help="Send the plain objects' recordings up again encrypted, one at a time, resumable")
 
     # storage setup: the wizard
     setup_parser = storage_subparsers.add_parser("setup", help="The bucket wizard: make the key, make and harden the bucket, test it, save it for every device")
@@ -4395,6 +4458,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_account_show_code(db, config, args)
             elif account_cmd == "hide-code":
                 return cmd_account_hide_code(config, args)
+            elif account_cmd == "recording-key":
+                return cmd_account_recording_key(config, args)
             elif account_cmd == "host":
                 return cmd_account_host(config.get_root(), args)
             elif account_cmd == "grant-host":
@@ -4492,6 +4557,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return cmd_storage_disable(db, args)
             elif storage_cmd == "upload-pending":
                 return cmd_storage_upload_pending(config, args)
+            elif storage_cmd == "encrypt":
+                return cmd_storage_encrypt(config, args)
+            elif storage_cmd == "reupload-encrypted":
+                return cmd_storage_reupload_encrypted(config, args)
             elif storage_cmd == "download-missing":
                 return cmd_storage_download_missing(config, args)
             elif storage_cmd == "mirror":

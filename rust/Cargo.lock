@@ -2674,6 +2674,7 @@ dependencies = [
  "if-addrs",
  "rcgen",
  "reqwest",
+ "ring",
  "rusqlite",
  "rust-s3",
  "rustls",

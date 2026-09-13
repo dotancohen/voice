@@ -1178,6 +1178,31 @@ python -m src.main cli storage disable
 - Every recording carries the hash of its bytes. The bucket object is named by it, so the same file imported on two devices is stored once; a download whose bytes do not match the hash is removed and reported instead of being kept as the recording.
 - A file larger than 8 MiB goes up in parts. If the connection drops, the parts already in the bucket stay there and the next `upload-pending` (or the phone's next Upload) sends only the rest; the object appears only when every part is there. Parts of an upload never finished are removed by the bucket's own rule after two days.
 
+### Encrypting recordings in the bucket
+
+Off by default. When on, nobody without the account's **recording key** can
+listen to a recording in the bucket, Amazon included. The price is a key that,
+if lost, makes those recordings unreadable for ever, so:
+
+1. Export the key first: `cli account recording-key export` (a QR code and 43
+   characters), "Export the recording key…" in File → Sync…, or "Export the
+   key" under Advanced Settings on the phone. Keep it on paper. The switch
+   stays off until the key was exported from that device.
+2. Turn it on: `cli storage encrypt on`, the "Encrypt recordings in the bucket"
+   box, or the switch on the phone. The setting is synced, so every device of
+   the account encrypts from then on. Every device receives the key when it is
+   paired; a device that lost everything imports it (`cli account recording-key
+   import <text>`, "Import…", "Import a key").
+3. Recordings already in the bucket stay plain until you press "Re-upload
+   existing recordings encrypted" (`cli storage reupload-encrypted`); it goes
+   one file at a time and continues where it stopped.
+
+A device with the key keeps its own copies plain: downloads and fetches are
+opened on arrival. A device without the key (a server that mirrors the bucket)
+keeps the objects as they are and serves them as they are; the device that
+fetches from it opens them. Turning encryption off makes new uploads plain and
+leaves the encrypted objects readable by any device with the key.
+
 ### Manual Upload and Download
 
 ```bash

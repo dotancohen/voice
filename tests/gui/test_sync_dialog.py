@@ -9,6 +9,13 @@ from core.config import Config
 from core.database import Database
 from ui.sync_dialog import SyncDialog, not_duplicated_sentence, refusal_code, result_sentence
 
+
+def pathlib_of(config: Config):
+    """The database the configuration names: the one the module functions open."""
+    from pathlib import Path
+
+    return Path(config._rust_config.get_database_file())
+
 DESK = "0199aaaaaaaa7000800000000000000a"
 PHONE = "0199aaaaaaaa7000800000000000000b"
 
@@ -67,6 +74,34 @@ class TestSyncDialog:
         assert test_config.get_peers() == []
         assert test_config.is_forgotten(DESK)
         assert dialog.peers_table.rowCount() == 0
+
+    def test_the_encryption_switch_waits_for_the_export_and_follows_the_synced_setting(self, qapp, test_config: Config, empty_db: Database, monkeypatch) -> None:
+        """ENC-1, ENC-3 in the dialogue: the box is off and disabled until the key
+        was exported from this device; after the export it can turn on, and the
+        setting it writes is the synced one the database holds."""
+        import json
+
+        import voicecore
+
+        config_dir = str(test_config.get_config_dir())
+        db = Database(pathlib_of(test_config))
+        try:
+            db.set_file_storage_config("s3", json.dumps({"bucket": "voice-x", "region": "us-east-1", "access_key_id": "k", "secret_access_key": "s"}))
+            dialog = SyncDialog(db, test_config)
+            assert not dialog.encrypt_box.isChecked() and not dialog.encrypt_box.isEnabled()
+            assert dialog.encrypt_box.toolTip() == "Export the recording key first"
+            # The export dialogue is modal; stand in for it and check the state after
+            monkeypatch.setattr("PySide6.QtWidgets.QDialog.exec", lambda self: 0)
+            dialog._export_recording_key()
+            assert voicecore.encryption_state(config_dir)["exported"]
+            assert dialog.encrypt_box.isEnabled() and not dialog.encrypt_box.isChecked()
+            dialog.encrypt_box.setChecked(True)
+            assert voicecore.encryption_state(config_dir)["on"]
+            assert dialog.reupload_button.isEnabled()
+            dialog.encrypt_box.setChecked(False)
+            assert not voicecore.encryption_state(config_dir)["on"]
+        finally:
+            db.close()
 
     def test_this_device_is_in_plain_sight(self, qapp, test_config: Config, empty_db: Database) -> None:
         dialog = SyncDialog(empty_db, test_config)

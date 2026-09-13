@@ -133,6 +133,77 @@ class TestTheWizardSteps:
         assert not s3.deleted_anything()
         empty_db.close()
 
+    def test_encrypted_uploads_are_enc_objects_that_open_only_with_the_key(self, s3: FakeS3, test_config, test_config_dir: Path) -> None:
+        """ENC-1, ENC-3, ENC-4 through the fake bucket: the switch refuses before
+        an export; with it on, the object is `.enc` and starts with the cipher's
+        header; a download opens it back to the plain file; a plain object is
+        re-uploaded encrypted on request; a bad key is refused at import."""
+        from voicecore import (
+            download_audio_file_from_cloud,
+            encryption_state,
+            recording_key_export,
+            recording_key_import,
+            reupload_encrypted,
+            set_encryption_on,
+            upload_pending_audio_files,
+        )
+
+        config_dir = str(test_config_dir)
+        empty_db = Database(Path(test_config._rust_config.get_database_file()))
+        try:
+            state = state_for(s3)
+            assert create_bucket(state) is None
+            save(state, empty_db)
+            audio_dir = test_config_dir / "audio"
+            audio_dir.mkdir()
+            test_config.set_audiofile_directory(str(audio_dir))
+
+            # A plain upload first, to be re-uploaded encrypted later
+            plain_id = empty_db.create_audio_file("קודם.ogg", 1735689600)
+            (audio_dir / empty_db.get_audio_file(plain_id)["local_name"]).write_bytes(b"uploaded before encryption" * 100)
+            plain_hash = empty_db.store_content_hash(plain_id, audio_dir)
+            assert upload_pending_audio_files(config_dir).uploaded == 1
+            assert f"{plain_hash}.ogg" in s3.buckets["voice-abc123"]
+
+            assert encryption_state(config_dir) == {"has_key": False, "exported": False, "on": False}
+            with pytest.raises(RuntimeError, match="Export the recording key first"):
+                set_encryption_on(True, config_dir)
+            key = recording_key_export(config_dir)
+            assert len(key) == 43
+            assert encryption_state(config_dir) == {"has_key": True, "exported": True, "on": False}
+            set_encryption_on(True, config_dir)
+            assert encryption_state(config_dir)["on"]
+
+            audio_id = empty_db.create_audio_file("סוד.ogg", 1735689700)
+            content = bytes(range(256)) * 20
+            local = audio_dir / empty_db.get_audio_file(audio_id)["local_name"]
+            local.write_bytes(content)
+            content_hash = empty_db.store_content_hash(audio_id, audio_dir)
+            result = upload_pending_audio_files(config_dir)
+            assert (result.uploaded, result.failed) == (1, 0), result.errors
+            object_key = f"{content_hash}.ogg.enc"
+            stored = s3.buckets["voice-abc123"][object_key]
+            assert stored[:8] == b"VOICEENC" and content not in stored
+            row = empty_db.get_audio_file(audio_id)
+            assert row["storage_key"] == object_key and row["storage_encrypted"] is True
+
+            local.unlink()
+            assert download_audio_file_from_cloud(audio_id, config_dir)["status"] == "downloaded"
+            assert local.read_bytes() == content, "opened on arrival with the key"
+
+            again = reupload_encrypted(config_dir)
+            assert (again.uploaded, again.failed) == (1, 0), again.errors
+            assert empty_db.get_audio_file(plain_id)["storage_key"] == f"{plain_hash}.ogg.enc"
+            assert s3.buckets["voice-abc123"][f"{plain_hash}.ogg.enc"][:8] == b"VOICEENC"
+
+            with pytest.raises(Exception):
+                recording_key_import("not a key", config_dir)
+            recording_key_import(f" {key}\n", config_dir)
+            assert encryption_state(config_dir)["has_key"]
+            assert not s3.deleted_anything()
+        finally:
+            empty_db.close()
+
 
 @pytest.mark.cli
 class TestFromTheCommandLine:

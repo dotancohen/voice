@@ -112,6 +112,7 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     dict.set_item("deleted_at_zone", &audio_file.deleted_at_zone)?;
     dict.set_item("local_name", &audio_file.local_name)?;
     dict.set_item("content_sha256", &audio_file.content_sha256)?;
+    dict.set_item("storage_encrypted", audio_file.storage_encrypted)?;
     Ok(dict)
 }
 
@@ -1079,7 +1080,7 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None, file_created_at_offset=None, content_sha256=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None, file_created_at_offset=None, content_sha256=None, storage_encrypted=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
@@ -1097,6 +1098,7 @@ impl PyDatabase {
         primary_transcription_id: Option<&str>,
         file_created_at_offset: Option<i32>,
         content_sha256: Option<&str>,
+        storage_encrypted: Option<bool>,
     ) -> PyResult<()> {
         self.inner_ref()?
             .apply_sync_audio_file(
@@ -1115,6 +1117,7 @@ impl PyDatabase {
                 primary_transcription_id,
                 file_created_at_offset,
                 content_sha256,
+                storage_encrypted,
             )
             .map_err(voice_error_to_pyerr)
     }
@@ -2295,7 +2298,7 @@ impl From<file_storage::DownloadMissingResult> for PyDownloadResult {
 /// Open config, database and audio directory for a cloud storage operation.
 fn cloud_context(
     config_dir: Option<&str>,
-) -> PyResult<(tokio::runtime::Runtime, database::Database, std::path::PathBuf)> {
+) -> PyResult<(tokio::runtime::Runtime, database::Database, std::path::PathBuf, Option<voicecore_lib::crypto::RecordingKey>)> {
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let config_path = config_dir.map(std::path::PathBuf::from);
@@ -2306,7 +2309,8 @@ fn cloud_context(
             "Audiofile directory not configured. Set it with 'cli config set audiofile_directory <path>'",
         )
     })?;
-    Ok((runtime, db, std::path::PathBuf::from(audiofile_dir)))
+    let key = cfg.recording_key();
+    Ok((runtime, db, std::path::PathBuf::from(audiofile_dir), key))
 }
 
 /// Download one audio file from cloud storage on demand.
@@ -2322,11 +2326,11 @@ fn download_audio_file_from_cloud<'py>(
     audio_file_id: &str,
     config_dir: Option<&str>,
 ) -> PyResult<PyObject> {
-    let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
+    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
     // The database moves into the closure: it is Send, not Sync, and the
     // interpreter lock is released while the download runs
     let outcome = py
-        .allow_threads(move || runtime.block_on(file_storage::download_audio_file(&db, &audiofile_dir, audio_file_id)))
+        .allow_threads(move || runtime.block_on(file_storage::download_audio_file(&db, &audiofile_dir, audio_file_id, key.as_ref())))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     let dict = PyDict::new(py);
     match outcome {
@@ -2351,8 +2355,8 @@ fn download_audio_file_from_cloud<'py>(
 #[pyfunction]
 #[pyo3(signature = (note_id, config_dir=None))]
 fn download_audio_files_for_note(py: Python<'_>, note_id: &str, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
-    let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
-    py.allow_threads(move || runtime.block_on(file_storage::download_audio_files_for_note(&db, &audiofile_dir, note_id)))
+    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
+    py.allow_threads(move || runtime.block_on(file_storage::download_audio_files_for_note(&db, &audiofile_dir, note_id, key.as_ref())))
         .map(PyDownloadResult::from)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
@@ -2362,8 +2366,8 @@ fn download_audio_files_for_note(py: Python<'_>, note_id: &str, config_dir: Opti
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
 fn download_missing_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyResult<PyDownloadResult> {
-    let (runtime, db, audiofile_dir) = cloud_context(config_dir)?;
-    py.allow_threads(move || runtime.block_on(file_storage::download_missing_audio_files(&db, &audiofile_dir)))
+    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
+    py.allow_threads(move || runtime.block_on(file_storage::download_missing_audio_files(&db, &audiofile_dir, key.as_ref())))
         .map(PyDownloadResult::from)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
@@ -2400,10 +2404,11 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
         )
     })?;
     let audiofile_path = std::path::PathBuf::from(audiofile_dir);
+    let key = cfg.recording_key();
 
     // Run the upload without the interpreter lock; the database moves in
     let result: Result<file_storage::UploadPendingResult, file_storage::FileStorageError> =
-        py.allow_threads(move || runtime.block_on(file_storage::upload_pending_audio_files(&db, &audiofile_path)));
+        py.allow_threads(move || runtime.block_on(file_storage::upload_pending_audio_files(&db, &audiofile_path, key.as_ref())));
 
     match result {
         Ok(r) => Ok(PyUploadPendingResult {
@@ -2413,6 +2418,65 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
             deferred: r.deferred,
             errors: r.errors,
         }),
+        Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
+    }
+}
+
+/// The recording key's text (Stage 15, ENC-1), made now when the account has
+/// none; showing it counts as the export the encryption switch waits for.
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn recording_key_export(config_dir: Option<&str>) -> PyResult<String> {
+    let mut cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    if cfg.recording_key_text().is_empty() {
+        cfg.set_recording_key(&voicecore_lib::crypto::RecordingKey::generate().to_text()).map_err(voice_error_to_pyerr)?;
+    }
+    cfg.set_recording_key_exported(true).map_err(voice_error_to_pyerr)?;
+    Ok(cfg.recording_key_text().to_string())
+}
+
+/// Keep a recording key from an export (ENC-1).
+#[pyfunction]
+#[pyo3(signature = (text, config_dir=None))]
+fn recording_key_import(text: &str, config_dir: Option<&str>) -> PyResult<()> {
+    let mut cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    cfg.set_recording_key(text).map_err(voice_error_to_pyerr)?;
+    cfg.set_recording_key_exported(true).map_err(voice_error_to_pyerr)
+}
+
+/// Where encryption stands: has_key, exported, on.
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn encryption_state<'py>(py: Python<'py>, config_dir: Option<&str>) -> PyResult<PyObject> {
+    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    let d = PyDict::new(py);
+    d.set_item("has_key", !cfg.recording_key_text().is_empty())?;
+    d.set_item("exported", cfg.recording_key_exported())?;
+    d.set_item("on", db.encryption_on().map_err(voice_error_to_pyerr)?)?;
+    Ok(d.into_any().unbind())
+}
+
+/// Turn encryption of new uploads on or off (ENC-3); on needs the key exported here first.
+#[pyfunction]
+#[pyo3(signature = (on, config_dir=None))]
+fn set_encryption_on(on: bool, config_dir: Option<&str>) -> PyResult<()> {
+    let cfg = config::Config::new(config_dir.map(std::path::PathBuf::from)).map_err(voice_error_to_pyerr)?;
+    if on && (cfg.recording_key_text().is_empty() || !cfg.recording_key_exported()) {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err("Export the recording key first: without it these recordings cannot be played"));
+    }
+    let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
+    db.set_encryption_on(on).map_err(voice_error_to_pyerr)
+}
+
+/// "Re-upload existing recordings encrypted" (ENC-3).
+#[pyfunction]
+#[pyo3(signature = (config_dir=None))]
+fn reupload_encrypted(py: Python<'_>, config_dir: Option<&str>) -> PyResult<PyUploadPendingResult> {
+    let (runtime, db, audiofile_dir, key) = cloud_context(config_dir)?;
+    let result = py.allow_threads(move || runtime.block_on(file_storage::reupload_encrypted(&db, &audiofile_dir, None, None, key.as_ref())));
+    match result {
+        Ok(r) => Ok(PyUploadPendingResult { uploaded: r.uploaded, skipped: r.skipped, failed: r.failed, deferred: r.deferred, errors: r.errors }),
         Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
     }
 }
@@ -3287,6 +3351,11 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register file storage functions
     m.add_class::<PyUploadPendingResult>()?;
     m.add_function(wrap_pyfunction!(upload_pending_audio_files, m)?)?;
+    m.add_function(wrap_pyfunction!(recording_key_export, m)?)?;
+    m.add_function(wrap_pyfunction!(recording_key_import, m)?)?;
+    m.add_function(wrap_pyfunction!(encryption_state, m)?)?;
+    m.add_function(wrap_pyfunction!(set_encryption_on, m)?)?;
+    m.add_function(wrap_pyfunction!(reupload_encrypted, m)?)?;
     m.add_class::<PyDownloadResult>()?;
     m.add_function(wrap_pyfunction!(download_audio_file_from_cloud, m)?)?;
     m.add_function(wrap_pyfunction!(download_audio_files_for_note, m)?)?;
