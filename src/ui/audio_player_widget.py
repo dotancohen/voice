@@ -31,7 +31,7 @@ from src.core.audio_player import AudioPlayer, PlaybackState, format_time, is_mp
 from src.core.waveform import (
     GENERATE_WAVEFORM_PROMPT,
     WAVEFORM_BAR_COUNT,
-    extract_waveform,
+    decode_waveform,
     is_large_recording,
 )
 from src.ui.styles import BUTTON_STYLE
@@ -288,6 +288,7 @@ class AudioPlayerWidget(QFrame):
         transcription_counts: Optional[Dict[str, int]] = None,
         cached_waveforms: Optional[Dict[str, List[int]]] = None,
         on_waveform_extracted: Optional[callable] = None,
+        get_waveform_bars: Optional[callable] = None,
     ) -> None:
         """Set the audio files to display.
 
@@ -296,7 +297,10 @@ class AudioPlayerWidget(QFrame):
             get_file_path: Callable that takes audio_id and returns file path.
             transcription_counts: Optional dict mapping audio_file_id to transcription count.
             cached_waveforms: Optional dict mapping audio_id to cached waveform data (0-255 values).
-            on_waveform_extracted: Optional callback(audio_id, waveform) called when waveform is extracted.
+            on_waveform_extracted: Optional callback(audio_id, waveform, levels) called when a
+                recording is decoded: its bars as 0-255 values, and the levels kept with it (FILE-20).
+            get_waveform_bars: Optional callable(audio_id) giving the bars from the levels a
+                device kept for the recording, or None; used before decoding anything.
         """
         self._audio_files = audio_files
         self._transcription_counts = transcription_counts or {}
@@ -343,6 +347,12 @@ class AudioPlayerWidget(QFrame):
         for i, path in enumerate(self._file_paths):
             if i in self._waveforms:
                 continue  # Already have cached waveform
+            # Levels another device kept (FILE-20): drawn without decoding,
+            # and without asking, however long the recording is
+            stored = get_waveform_bars(self._audio_file_ids[i]) if get_waveform_bars else None
+            if stored:
+                self._waveforms[i] = stored
+                continue
             if not path.exists():
                 continue
             if is_large_recording(path):
@@ -384,14 +394,16 @@ class AudioPlayerWidget(QFrame):
             self._player.toggle_play_pause()
 
     def _draw_and_cache(self, index: int) -> List[float]:
-        """Decode one recording, draw its bars, and hand them to the caller."""
-        waveform = extract_waveform(self._file_paths[index], WAVEFORM_BAR_COUNT)
+        """Decode one recording, draw its bars, and hand the bars and the levels
+        they are drawn from (FILE-20) to the caller."""
+        accumulator = decode_waveform(self._file_paths[index], WAVEFORM_BAR_COUNT)
+        waveform = accumulator.bars() if accumulator else []
         if waveform and self._on_waveform_extracted:
             audio_id = self._audio_file_ids[index] if index < len(self._audio_file_ids) else ""
             if audio_id:
                 # Convert to 0-255 for storage
                 waveform_bytes = [min(255, max(0, int(v * 255))) for v in waveform]
-                self._on_waveform_extracted(audio_id, waveform_bytes)
+                self._on_waveform_extracted(audio_id, waveform_bytes, accumulator.levels())
         return waveform
 
     def _show_waveform_for(self, index: int) -> None:

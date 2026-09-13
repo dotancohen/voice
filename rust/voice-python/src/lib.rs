@@ -1069,7 +1069,7 @@ impl PyDatabase {
         }
     }
 
-    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None, content_sha256=None, storage_encrypted=None, disk_name=None))]
+    #[pyo3(signature = (id, imported_at, filename, file_created_at=None, duration_seconds=None, summary=None, modified_at=None, deleted_at=None, sync_received_at=None, storage_provider=None, storage_key=None, storage_uploaded_at=None, primary_transcription_id=None, content_sha256=None, storage_encrypted=None, disk_name=None, waveform_levels=None))]
     fn apply_sync_audio_file(
         &self,
         id: &str,
@@ -1088,6 +1088,7 @@ impl PyDatabase {
         content_sha256: Option<&str>,
         storage_encrypted: Option<bool>,
         disk_name: Option<&str>,
+        waveform_levels: Option<&str>,
     ) -> PyResult<()> {
         self.inner_ref()?
             .apply_sync_audio_file(
@@ -1107,6 +1108,7 @@ impl PyDatabase {
                 content_sha256,
                 storage_encrypted,
                 disk_name,
+                waveform_levels,
             )
             .map_err(voice_error_to_pyerr)
     }
@@ -1114,6 +1116,21 @@ impl PyDatabase {
     /// Names two recordings share resolved and pending renames made on disk (FILE-15). Returns files renamed.
     fn settle_file_names(&self, audio_dir: &str) -> PyResult<usize> {
         self.inner_ref()?.settle_file_names(std::path::Path::new(audio_dir)).map_err(voice_error_to_pyerr)
+    }
+
+    /// Keep the levels a recording's waveform is drawn from (FILE-20).
+    fn set_waveform_levels(&self, audio_id: &str, levels: Vec<u8>) -> PyResult<()> {
+        self.inner_ref()?.set_waveform_levels(audio_id, &levels).map_err(voice_error_to_pyerr)
+    }
+
+    /// The levels a device kept for a recording's waveform, or None (FILE-20).
+    fn waveform_levels(&self, audio_id: &str) -> PyResult<Option<Vec<u8>>> {
+        self.inner_ref()?.waveform_levels(audio_id).map_err(voice_error_to_pyerr)
+    }
+
+    /// The bars of a recording's waveform from its kept levels, or None (FILE-20).
+    fn waveform_bars(&self, audio_id: &str, bar_count: usize) -> PyResult<Option<Vec<f32>>> {
+        self.inner_ref()?.waveform_bars(audio_id, bar_count).map_err(voice_error_to_pyerr)
     }
 
     /// Compute and store a recording's content hash (Stage 13) from its file
@@ -2463,6 +2480,12 @@ fn set_encryption_on(on: bool, config_dir: Option<&str>) -> PyResult<()> {
     db.set_encryption_on(on).map_err(voice_error_to_pyerr)
 }
 
+/// Every audio format a recording may be imported in, by extension: the one list, kept in the core.
+#[pyfunction]
+fn audio_file_formats() -> Vec<String> {
+    voicecore_lib::models::AUDIO_FILE_FORMATS.iter().map(|f| f.to_string()).collect()
+}
+
 /// "Re-upload existing recordings encrypted" (ENC-3).
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
@@ -3350,6 +3373,7 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encryption_state, m)?)?;
     m.add_function(wrap_pyfunction!(set_encryption_on, m)?)?;
     m.add_function(wrap_pyfunction!(reupload_encrypted, m)?)?;
+    m.add_function(wrap_pyfunction!(audio_file_formats, m)?)?;
     m.add_class::<PyDownloadResult>()?;
     m.add_function(wrap_pyfunction!(download_audio_file_from_cloud, m)?)?;
     m.add_function(wrap_pyfunction!(download_audio_files_for_note, m)?)?;

@@ -86,7 +86,7 @@ from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
 from src.core.search import build_tag_search_term, execute_search
 from src.core.timestamp_utils import format_timestamp
-from src.core.waveform import extract_waveform, waveform_with_progress, WAVEFORM_BAR_COUNT
+from src.core.waveform import decode_waveform, waveform_with_progress, WAVEFORM_BAR_COUNT
 
 # Re-export for tests
 __all__ = ["VoiceTUI", "run", "add_tui_subparser", "TagsTree", "NotesList", "NotesListView", "NoteDetail", "SearchInput"]
@@ -1250,11 +1250,18 @@ class TUIAudioPlayer(Container):
         # Set files in player
         self._player.set_audio_files(self._file_paths)
 
-        # Extract waveforms (synchronous for simplicity)
+        # Waveforms: from the levels a device kept (FILE-20), else decoded
+        # here (synchronous for simplicity) and the levels kept
         for i, path in enumerate(self._file_paths):
-            if path.exists():
-                waveform = extract_waveform(path, WAVEFORM_BAR_COUNT)
-                self._waveforms[i] = waveform
+            audio_id = audio_files[i].get("id", "")
+            stored = db.waveform_bars(audio_id, WAVEFORM_BAR_COUNT) if audio_id else None
+            if stored:
+                self._waveforms[i] = stored
+            elif path.exists():
+                accumulator = decode_waveform(path, WAVEFORM_BAR_COUNT)
+                self._waveforms[i] = accumulator.bars() if accumulator else []
+                if accumulator and audio_id and accumulator.levels():
+                    db.set_waveform_levels(audio_id, accumulator.levels())
 
         # Update files label
         files_text = ", ".join(file_display[:2])

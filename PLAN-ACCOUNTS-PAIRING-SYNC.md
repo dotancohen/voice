@@ -962,7 +962,8 @@ At this point the owner's phone delivers to the owner's desktop. Then:
    the round trip, "Replace key", "Test everything", `sync check --all`,
    the checklist at the top of the sync dialogue, upload asking first.
    **Stage 13's content hash and upload in parts done 2026-09-13** (FILE-18,
-   FILE-19). **The Keystore for the device key done 2026-09-13** (AUTH-9).
+   FILE-19). **The Keystore for the device key done 2026-09-13** (AUTH-9). **Waveform levels kept with the recording and every common
+   audio format done 2026-09-13** (FILE-20, FILE-21).
    Not yet: the bucket secret under the Keystore (open question 4) and the
    dependency audits (Stage 14; `cargo audit` and `pip-audit` are not
    installed on this machine). **Stage 13's folder and

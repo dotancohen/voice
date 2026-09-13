@@ -418,7 +418,7 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
     """Import audio files from a directory.
 
     For each valid audio file:
-    1. Validate format (mp3, wav, flac, ogg, opus, m4a)
+    1. Validate format (every common audio format: AUDIO_FILE_FORMATS)
     2. Get file_created_at from filesystem metadata
     3. Create Note with content="Audio: {filename}", created_at=file_created_at
     4. Create AudioFile record
@@ -674,6 +674,51 @@ def cmd_download_audiofile(db: Database, config: Config, args: argparse.Namespac
     else:
         print(f"{audio_file['filename']} has not been uploaded to cloud storage by its device yet")
     return 0
+
+
+def cmd_audiofiles_waveforms(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """Decode every recording on this device that has no waveform levels yet
+    and keep its levels (FILE-20), so every device draws its waveform without
+    decoding it. A recording another device already decoded is skipped.
+
+    Returns:
+        Exit code (0 when every recording that could be decoded was, 1 when
+        the audio directory is not configured or any file failed to decode)
+    """
+    from src.core.waveform import decode_waveform
+
+    audiofile_dir = config.get_audiofile_directory()
+    if not audiofile_dir:
+        print("Error: audiofile_directory not configured.", file=sys.stderr)
+        print("Run: voice config set audiofile_directory /path/to/audio/files", file=sys.stderr)
+        return 1
+    manager = AudioFileManager(audiofile_dir)
+
+    kept = already = not_here = failed = 0
+    for audio_file in db.get_all_audio_files():
+        if audio_file.get("deleted_at"):
+            continue
+        if db.waveform_levels(audio_file["id"]) is not None:
+            already += 1
+            continue
+        path = manager.get_record_path(audio_file)
+        if not path.is_file():
+            not_here += 1
+            continue
+        accumulator = decode_waveform(path)
+        levels = accumulator.levels() if accumulator else []
+        if not levels:
+            failed += 1
+            print(f"Could not decode {audio_file['disk_name']}", file=sys.stderr)
+            continue
+        db.set_waveform_levels(audio_file["id"], levels)
+        kept += 1
+        if kept % 100 == 0:
+            print(f"Kept the waveform levels of {kept} recordings so far")
+
+    print(f"Kept the waveform levels of {kept} recordings; {already} had them already; "
+          f"{not_here} are not on this device; {failed} could not be decoded")
+    return 1 if failed else 0
 
 
 def cmd_download_note_audiofiles(db: Database, config: Config, args: argparse.Namespace) -> int:
@@ -3675,6 +3720,13 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Audio file ID (or prefix) to download"
     )
 
+    # audiofiles-waveforms command
+    cli_subparsers.add_parser(
+        "audiofiles-waveforms",
+        help="Decode every recording on this device that has no waveform levels yet and keep its "
+             "levels, so every device draws its waveform without decoding it"
+    )
+
     # note-audiofiles-download command
     download_note_parser = cli_subparsers.add_parser(
         "note-audiofiles-download",
@@ -4406,6 +4458,8 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             return cmd_show_audiofile(db, config, args)
         elif args.cli_command == "audiofile-download":
             return cmd_download_audiofile(db, config, args)
+        elif args.cli_command == "audiofiles-waveforms":
+            return cmd_audiofiles_waveforms(db, config, args)
         elif args.cli_command == "note-audiofiles-download":
             return cmd_download_note_audiofiles(db, config, args)
         elif args.cli_command == "transcribe-backlog":

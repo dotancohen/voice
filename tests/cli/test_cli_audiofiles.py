@@ -199,3 +199,52 @@ class TestShowAudiofile:
         # CLI returns 1 and prints error to stdout
         assert result.returncode == 1
         assert "not found" in result.stdout.lower()
+
+
+class TestAudiofilesWaveforms:
+    """audiofiles-waveforms: the desktop decodes, every device draws (FILE-20)."""
+
+    def test_keeps_the_levels_of_every_recording_here_once(
+        self, config_with_audiofiles: Path, tmp_path: Path
+    ) -> None:
+        import json
+        import math
+        import shutil
+        import wave
+
+        if not shutil.which("ffmpeg"):
+            pytest.fail("ffmpeg is required to decode recordings")
+        source = tmp_path / "source"
+        source.mkdir()
+        with wave.open(str(source / "זכרון 2004.wav"), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(8000)
+            out.writeframes(b"".join(
+                int(12000 * math.sin(i / 9) * (i / 16000)).to_bytes(2, "little", signed=True)
+                for i in range(16000)
+            ))
+        env = {**os.environ, "VOICE_CONFIG_DIR": str(config_with_audiofiles)}
+
+        def cli(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, "-m", "src.main", "cli", *args],
+                capture_output=True, text=True, env=env,
+            )
+
+        assert cli("audiofiles-import", str(source)).returncode == 0
+        first = cli("audiofiles-waveforms")
+        assert first.returncode == 0, first.stderr
+        assert "Kept the waveform levels of 1 recordings; 0 had them already" in first.stdout
+
+        from voicecore import Database as RustDatabase
+        config = json.loads((config_with_audiofiles / "config.json").read_text())
+        db = RustDatabase(config["database_file"])
+        [audio_file] = db.get_all_audio_files()
+        levels = db.waveform_levels(audio_file["id"])
+        assert levels is not None and max(levels) == 255
+        bars = db.waveform_bars(audio_file["id"], 150)
+        assert len(bars) == 150 and bars[-1] > bars[0], "the recording grows louder to its end"
+
+        second = cli("audiofiles-waveforms")
+        assert "Kept the waveform levels of 0 recordings; 1 had them already" in second.stdout

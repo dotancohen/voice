@@ -36,6 +36,7 @@ from src.core.models import UUID_SHORT_LEN
 from src.core.note_editor import NoteEditorMixin
 from src.core.audiofile_manager import AudioFileManager
 from src.core.timestamp_utils import format_timestamp
+from src.core.waveform import WAVEFORM_BAR_COUNT
 from src.ui.audio_player_widget import AudioPlayerWidget
 from src.ui.tag_management_dialog import TagManagementDialog
 from src.ui.transcription_widget import TranscriptionsContainer
@@ -430,6 +431,7 @@ class NotePane(QWidget, NoteEditorMixin):
                     transcription_counts=transcription_counts,
                     cached_waveforms=cached_waveforms,
                     on_waveform_extracted=self._on_waveform_extracted,
+                    get_waveform_bars=self._stored_waveform_bars,
                 )
                 self.audio_player.show()
                 self._update_media_missing(note_id)
@@ -461,15 +463,31 @@ class NotePane(QWidget, NoteEditorMixin):
         """
         return self.db.get_transcription_content(transcription_id)
 
-    def _on_waveform_extracted(self, audio_id: str, waveform: List[int]) -> None:
+    def _stored_waveform_bars(self, audio_id: str) -> Optional[List[float]]:
+        """The bars from the levels a device kept for this recording (FILE-20)."""
+        try:
+            return self.db.waveform_bars(audio_id, WAVEFORM_BAR_COUNT)
+        except Exception as e:
+            logger.warning(f"Failed to read the waveform levels of {audio_id[:8]}: {e}")
+            return None
+
+    def _on_waveform_extracted(self, audio_id: str, waveform: List[int], levels: List[int]) -> None:
         """Callback when a waveform is extracted from an audio file.
 
-        Updates the note's display cache with the waveform data.
+        Keeps the levels with the recording, so every device draws its
+        waveform without decoding it (FILE-20), and writes the bars into the
+        note's display cache.
 
         Args:
             audio_id: Audio file UUID hex string
             waveform: Waveform data as list of 0-255 values
+            levels: The levels the bars are drawn from
         """
+        if levels:
+            try:
+                self.db.set_waveform_levels(audio_id, levels)
+            except Exception as e:
+                logger.warning(f"Failed to keep the waveform levels of {audio_id[:8]}: {e}")
         if not self.current_note_id:
             return
         try:

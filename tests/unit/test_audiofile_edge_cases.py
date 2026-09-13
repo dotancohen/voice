@@ -452,15 +452,19 @@ class TestSupportedFormatEdgeCases:
         """Test empty filename."""
         assert is_supported_audio_format("") is False
 
+    def test_every_common_audio_format_is_supported(self) -> None:
+        """The owner's decision (2026-09-13): every common audio format is
+        imported, 3gp, amr and aac among them, and the old voice notes are
+        in all of them."""
+        for ext in ["3gp", "amr", "aac", "mp3", "m4a", "wma", "mp4", "aiff", "awb", "webm", "wav", "ogg", "opus", "flac"]:
+            assert is_supported_audio_format(f"test.{ext}") is True, ext
+
     def test_no_extension(self) -> None:
         """Test filename without extension."""
         assert is_supported_audio_format("audiofile") is False
         assert is_supported_audio_format("audio.") is False
 
     def test_unknown_formats(self) -> None:
-        """Test unsupported formats."""
-        assert is_supported_audio_format("test.aac") is False
-        assert is_supported_audio_format("test.wma") is False
-        assert is_supported_audio_format("test.mp4") is False
+        """Test unsupported formats: files that are not audio."""
         assert is_supported_audio_format("test.txt") is False
         assert is_supported_audio_format("test.jpg") is False

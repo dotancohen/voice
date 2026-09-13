@@ -13,6 +13,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+from voicecore import audio_file_formats
+
 # Length of short UUID display (e.g., "019b8ffd5711" instead of full 32-char UUID)
 UUID_SHORT_LEN = 12
 
@@ -129,4 +131,6 @@ class AudioFile:
 
 
 # Supported audio file formats for import
-AUDIO_FILE_FORMATS = frozenset(["mp3", "wav", "flac", "ogg", "opus", "m4a"])
+# Every common audio format a recording may be imported in, by extension: the
+# one list, kept in the core (the owner's decision, 2026-09-13).
+AUDIO_FILE_FORMATS = frozenset(audio_file_formats())

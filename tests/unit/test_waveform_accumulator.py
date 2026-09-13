@@ -180,3 +180,39 @@ class TestLargeRecordings:
         assert GENERATE_WAVEFORM_PROMPT == (
             "Click to generate waveform\nResource intensive operation on large file"
         )
+
+
+def test_the_levels_kept_with_a_recording_draw_the_same_bars():
+    """FILE-20: the levels a device keeps give every other device the bars it
+    would have decoded itself, through the core, without the audio."""
+    from voicecore import Database as RustDatabase
+    import tempfile, os
+
+    samples = [((i * 613) % 30_000) * (1 if i % 7 else -1) for i in range(WAVEFORM_BAR_COUNT * 8 * 50)]
+    samples[len(samples) // 3] = 32_000
+    accumulator = WaveformAccumulator()
+    accumulator.expect(len(samples))
+    accumulator.add_samples(samples)
+    bars = accumulator.bars()
+    levels = accumulator.levels()
+    assert len(levels) == WAVEFORM_BAR_COUNT * WaveformAccumulator.SLOTS_PER_BAR
+    assert max(levels) == 255 and min(levels) >= 0
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = RustDatabase(os.path.join(tmp, "notes.db"))
+        audio_id = db.create_audio_file("הקלטה.3gp", None, None)
+        assert db.waveform_bars(audio_id, WAVEFORM_BAR_COUNT) is None
+        db.set_waveform_levels(audio_id, levels)
+        assert list(db.waveform_levels(audio_id)) == levels
+        drawn = db.waveform_bars(audio_id, WAVEFORM_BAR_COUNT)
+    assert len(drawn) == len(bars)
+    for i, (mine, theirs) in enumerate(zip(bars, drawn)):
+        # Levels are whole numbers out of 255: a bar may differ by one step
+        assert abs(mine - theirs) <= 1 / 255 + 1e-6, f"bar {i}: {mine} vs {theirs}"
+
+
+def test_levels_of_silence_are_zero_and_of_nothing_are_empty():
+    accumulator = WaveformAccumulator()
+    accumulator.add_samples([0] * 5_000)
+    assert accumulator.levels() and set(accumulator.levels()) == {0}
+    assert WaveformAccumulator().levels() == []

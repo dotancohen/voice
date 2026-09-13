@@ -164,6 +164,22 @@ class WaveformAccumulator:
             bars.append(scaled(max(self._slots[start : min(end, self._filled)])))
         return bars
 
+    def levels(self) -> List[int]:
+        """The levels the bars are drawn from, kept with the recording (FILE-20).
+
+        One value from 0 to 255 per slot, the loudest slot at 255. Any device
+        draws the same bars from them (``voicecore`` ``bars_from_levels``)
+        without decoding the audio again. Empty when no audio arrived.
+        """
+        if not self._any:
+            return []
+        if self._in_slot > 0:
+            self._commit()
+        loudest = max(self._slots[: self._filled], default=0.0)
+        if loudest <= 0:
+            return [0] * self._filled
+        return [min(255, round(v / loudest * 255)) for v in self._slots[: self._filled]]
+
     def _commit(self) -> None:
         if self._filled == len(self._slots):
             self._halve()
@@ -228,14 +244,27 @@ def extract_waveform(file_path: Path | str, bar_count: int = WAVEFORM_BAR_COUNT)
         List of normalized amplitude values (0.0 to 1.0), one per bar.
         Returns empty list if extraction fails.
     """
+    accumulator = decode_waveform(file_path, bar_count)
+    return accumulator.bars() if accumulator else []
+
+
+def decode_waveform(
+    file_path: Path | str, bar_count: int = WAVEFORM_BAR_COUNT
+) -> Optional[WaveformAccumulator]:
+    """Decode a recording once into an accumulator, which gives both its bars
+    and the levels kept with the recording (FILE-20).
+
+    Returns:
+        The accumulator, or None when the file cannot be decoded.
+    """
     if not _check_ffmpeg():
         logger.warning("ffmpeg not found, cannot extract waveform")
-        return []
+        return None
 
     file_path = Path(file_path)
     if not file_path.exists():
         logger.warning(f"File not found: {file_path}")
-        return []
+        return None
 
     accumulator = WaveformAccumulator(bar_count)
     duration = get_audio_duration(file_path)
@@ -279,16 +308,16 @@ def extract_waveform(file_path: Path | str, bar_count: int = WAVEFORM_BAR_COUNT)
         process.stdout.close()
         if process.wait(timeout=300) != 0:
             logger.warning(f"ffmpeg failed for {file_path}")
-            return []
+            return None
 
-        return accumulator.bars()
+        return accumulator
 
     except subprocess.TimeoutExpired:
         logger.warning(f"ffmpeg took too long for {file_path}")
-        return []
+        return None
     except Exception as e:
         logger.warning(f"Error extracting waveform for {file_path}: {e}")
-        return []
+        return None
     finally:
         if process is not None and process.poll() is None:
             process.kill()

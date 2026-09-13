@@ -593,6 +593,21 @@ class Database:
         ``audio_dir`` (Stage 13); call it after the file is copied there."""
         return self._rust_db.store_content_hash(audio_id, str(audio_dir))
 
+    def set_waveform_levels(self, audio_id: str, levels: List[int]) -> None:
+        """Keep the levels a recording's waveform is drawn from (FILE-20);
+        they sync with the recording to every device."""
+        self._rust_db.set_waveform_levels(audio_id, list(levels))
+
+    def waveform_levels(self, audio_id: str) -> Optional[List[int]]:
+        """The levels a device kept for this recording, or None."""
+        levels = self._rust_db.waveform_levels(audio_id)
+        return list(levels) if levels is not None else None
+
+    def waveform_bars(self, audio_id: str, bar_count: int) -> Optional[List[float]]:
+        """The recording's waveform bars from its kept levels, without reading
+        the audio (FILE-20); None when no device kept levels yet."""
+        return self._rust_db.waveform_bars(audio_id, bar_count)
+
     def get_audio_file(self, audio_id: str) -> Optional[Dict[str, Any]]:
         """Get an audio file by ID.
 
