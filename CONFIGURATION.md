@@ -165,7 +165,12 @@ This device's identifier for sync. Do not change it.
 ### device_name
 
 **Type**: `string`
-**Default**: the machine's host name, or `"Voice Device"` when the host name is empty
+**Default**: the first of (1) the name the user gave the computer: the name
+set in its system settings (the pretty hostname on Linux, the Computer Name on
+macOS), then its host name, such as `"teva-2025"`; (2) its type, such as
+`"Ubuntu desktop"`; (3) an animal with the ends of its IPv6 and IPv4 addresses,
+such as `"Wombat 81:4c 7.21"`. A name that is empty or starts with `localhost`
+counts as none (SYNC_SPECIFICATION UI-11)
 **Machine setting**
 
 The name other devices of the account show for this device. Set it with
