@@ -107,7 +107,7 @@ class AudioFile:
     """Represents an audio file entity.
 
     Audio files are stored on disk and can be attached to notes via NoteAttachment.
-    The actual file is stored at `{audiofile_directory}/{id}.{extension}`.
+    The file is stored at `{audiofile_directory}/{disk_name}`, the name the row stores (FILE-15).
 
     Attributes:
         id: Unique identifier for the audio file (UUID7 as bytes)

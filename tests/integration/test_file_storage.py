@@ -27,7 +27,7 @@ from voicecore import download_audio_file_from_cloud, upload_pending_audio_files
 
 from core.config import Config
 from core.database import Database
-from core.storage_setup import SetupState, check_everything, create_bucket, harden, round_trip, save, set_lifecycle, take_key
+from core.storage_setup import SetupState, check_all_paths, create_bucket, devices_of, harden, round_trip, save, set_lifecycle, take_key
 from tests.faulty_network import FaultyLink
 from tests.local_s3 import REGION
 
@@ -119,7 +119,10 @@ def within(seconds: float, operation: Callable):
     took = time.monotonic() - started
     if worker.is_alive():
         pytest.fail(f"Still running after {seconds:.0f} s: a dead link must end the operation, not hang it")
-    return box["value"], took
+    # Taken out of the box: an exception's traceback holds `run`'s frame and the
+    # frame holds `box`, so while `box` held the exception that cycle kept the
+    # device's Database alive until the garbage collector's next run
+    return box.pop("value"), took
 
 
 def sha256(content: bytes) -> str:
@@ -166,10 +169,13 @@ class TestTheWizardAgainstARealS3:
 
     def test_a_wrong_secret_is_refused_in_words(self, local_s3) -> None:
         state = make_bucket(local_s3, secret="wJalrXUtnFEMI/K7MDENG/bPxRfiCYWRONGSECRET")
-        assert create_bucket(state) == "The secret is wrong, or has a space on the end."
+        problem = create_bucket(state)
+        # The explanation, then the service's own words
+        assert problem.startswith("The secret is wrong, or has a space on the end."), problem
+        assert "SignatureDoesNotMatch" in problem, problem
 
     def test_the_bucket_check_of_a_saved_configuration_finds_the_bucket(self, device: Device) -> None:
-        rows = {r["name"]: r for r in check_everything(str(device.config_dir), device.config, device.db)}
+        rows = {r["name"]: r for r in check_all_paths(str(device.config_dir), devices_of(device.config))}
         assert rows["Bucket: Bucket"]["passed"], rows
         assert rows["Bucket: Round trip"]["passed"], rows
         assert rows["Bucket: Lifecycle rules"]["passed"], rows
@@ -278,14 +284,16 @@ class TestFailuresOfTheBucket:
 
 
 class TestTheBucketOverAFailingNetwork:
-    def test_an_unreachable_bucket_fails_the_upload_quickly_and_the_next_run_uploads(self, linked_device, local_s3) -> None:
+    def test_an_unreachable_bucket_fails_the_upload_after_three_tries_and_the_next_run_uploads(self, linked_device, local_s3) -> None:
         dev, link = linked_device
         content = os.urandom(30_000)
         audio_id = dev.recording("בלי רשת.ogg", content)
         link.refuse()
-        result, took = within(60, dev.upload)
+        result, took = within(150, dev.upload)
         assert (result.uploaded, result.failed) == (0, 1), result.errors
-        assert took < 15, f"a refused connection is known at once; it took {took:.1f} s"
+        # A refused connection is known at once: the second try comes straight
+        # after the first, the third a minute later (FILE-14)
+        assert 55 < took < 90, f"two tries at once and a third after a minute; it took {took:.1f} s"
         assert dev.db.get_audio_file(audio_id)["storage_key"] is None
 
         link.pass_through()
@@ -330,10 +338,11 @@ class TestTheBucketOverAFailingNetwork:
         content = os.urandom(12 * MIB)
         audio_id = dev.recording("קפא.wav", content)
         link.freeze_after(bytes_up=3 * MIB)
-        result, took = within(240, dev.upload)
+        result, took = within(300, dev.upload)
         assert not isinstance(result, BaseException), result
         assert (result.uploaded, result.failed) == (0, 1)
-        assert took < 120, f"a frozen link must end the upload within a read timeout; it took {took:.0f} s"
+        # Three tries, each ended by the stall timeout, the third a minute after the second (FILE-14)
+        assert took < 210, f"a frozen link must end each try within the stall timeout; it took {took:.0f} s"
         assert dev.db.get_audio_file(audio_id)["storage_key"] is None
 
         link.pass_through()
@@ -362,9 +371,10 @@ class TestTheBucketOverAFailingNetwork:
         assert dev.upload().uploaded == 1
         dev.path(audio_id).unlink()
         link.freeze_after(bytes_down=MIB)
-        outcome, took = within(240, lambda: dev.download(audio_id))
+        outcome, took = within(300, lambda: dev.download(audio_id))
         assert isinstance(outcome, RuntimeError), outcome
-        assert took < 120, f"a frozen link must end the download within a read timeout; it took {took:.0f} s"
+        # Three tries, each ended by the read timeout, the third a minute after the second (FILE-14)
+        assert took < 210, f"a frozen link must end each try within the read timeout; it took {took:.0f} s"
         assert not dev.path(audio_id).exists()
 
         link.pass_through()
@@ -389,12 +399,13 @@ class TestTheBucketOverAFailingNetwork:
         dev, link = linked_device
         audio_id = dev.recording("דלי שותק.ogg", os.urandom(20_000))
         link.stall()
-        result, took = within(240, dev.upload)
+        result, took = within(480, dev.upload)
         assert not isinstance(result, BaseException), result
         assert (result.uploaded, result.failed) == (0, 1)
         # Thirty seconds for the existence check, then the body goes into the
         # socket buffers at once and the answer is waited for a minute (FILE-14)
-        assert took < 120, f"a bucket that never answers must end the upload within its two deadlines; it took {took:.0f} s"
+        # The existence check, then three tries each waiting out the answer deadline, the third a minute after the second (FILE-14)
+        assert took < 420, f"a bucket that never answers must end each try within its deadlines; it took {took:.0f} s"
         assert dev.db.get_audio_file(audio_id)["storage_key"] is None
 
     def test_a_slow_link_uploads_and_downloads_whole(self, linked_device) -> None:

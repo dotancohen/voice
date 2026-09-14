@@ -310,3 +310,24 @@ class TestTagShiftClick:
         assert add_spy.count() == 1
         # tag_selected should NOT be emitted
         assert selected_spy.count() == 0
+
+
+@pytest.mark.gui
+class TestHiddenTags:
+    """The hidden tags of internal features are never shown."""
+
+    def test_no_hidden_tag_is_shown_however_deep_and_nothing_is_warned(self, qapp, empty_db: Database, caplog) -> None:
+        """_system, its children and _too-big under _nonsynced are all left out;
+        a tag of the user's own is shown."""
+        empty_db.create_tag("פגישות", None)
+        with caplog.at_level("WARNING", logger="ui.tags_pane"), caplog.at_level("WARNING", logger="src.ui.tags_pane"):
+            pane = TagsPane(empty_db)
+
+        shown = []
+        pending = [pane.model.item(i) for i in range(pane.model.rowCount())]
+        while pending:
+            item = pending.pop()
+            shown.append(item.text())
+            pending.extend(item.child(i) for i in range(item.rowCount()))
+        assert shown == ["פגישות"]
+        assert not [r for r in caplog.records if "invalid parent_id" in r.getMessage()]

@@ -28,8 +28,9 @@ def audio_file_extension(filename: str) -> str:
     """Normalised extension used for an audio file on disk and in cloud storage.
 
     This must match ``audio_file_extension`` in voicecore ``models.rs``: every
-    platform derives ``{audio_id}.{ext}`` from the original filename with this
-    rule, so a file written by one device is found by all the others.
+    platform takes the extension of a recording's names (its bucket object, a
+    new recording's name) from the original filename with this rule. A file on
+    disk is found only by the name its row stores (``disk_name``, FILE-15).
 
     - Lowercased (``REC.MP3`` -> ``mp3``)
     - Last dot wins (``my.recording.ogg`` -> ``ogg``)
@@ -88,7 +89,8 @@ def parse_date_from_filename(filename: str) -> Optional[datetime]:
 class AudioFileManager:
     """Manages audio file operations on disk.
 
-    Audio files are stored as {audiofile_directory}/{uuid}.{extension}.
+    A recording's file is stored as {audiofile_directory}/{disk_name}, the name
+    its row stores (FILE-15); the name is never derived from the id.
     """
 
     def __init__(self, audiofile_directory: Path | str) -> None:
@@ -151,9 +153,9 @@ class AudioFileManager:
         Args:
             path: Path to the file.
             original_name: The name the file arrived under, when that is not
-                the name it is stored under. A stored recording is named
-                ``{audio_id}.{ext}`` and so carries no date; the name the
-                recorder gave it, which is kept in the database, often does.
+                the name it is stored under. The stored name can differ (a
+                collision suffix); the name the recorder gave it, which is kept
+                in the database, often carries the date.
 
         Returns:
             The file creation time, or None if it can't be determined.

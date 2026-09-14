@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from core.database import Database
+from tests.fake_s3 import TEST_BUCKET, TEST_KEY_ID, TEST_SECRET, FakeS3, bucket_holding
 
 HERE = "01a09526bbbb70808f15a84d31aaa8d2"
 PHONE = "01a0952602bc70808f15a84d31aaa8d2"
@@ -21,12 +22,19 @@ def audio_dir(tmp_path: Path) -> Path:
     return path
 
 
-def recording(db: Database, audio_dir: Path, name: str, content: bytes, in_note: bool = True) -> str:
+@pytest.fixture
+def s3():
+    fake = FakeS3(TEST_KEY_ID, TEST_SECRET).start()
+    yield fake
+    fake.stop()
+
+
+def recording(db: Database, audio_dir: Path, name: str, content: bytes, in_note: bool = True, here: str = HERE) -> str:
     audio_id = db.create_audio_file(name, 1735689600)
     if in_note:
         db.attach_to_note(db.create_note(""), audio_id, "audio_file")
     (audio_dir / db.get_audio_file(audio_id)["disk_name"]).write_bytes(content)
-    db.store_content_hash(audio_id, audio_dir)
+    db.store_content_hash(audio_id, audio_dir, here)
     return audio_id
 
 
@@ -34,21 +42,44 @@ def places(db: Database, audio_id: str) -> dict:
     return {loc["place"]: loc["present"] for loc in db.file_locations(audio_id)}
 
 
-def test_the_folder_is_compared_and_a_copy_is_removed_only_when_another_place_holds_it(empty_db: Database, audio_dir: Path) -> None:
-    audio_id = recording(empty_db, audio_dir, "הקלטה ביום הולדת.m4a", b"voice" * 100)
-    assert empty_db.check_files_here(audio_dir, HERE) == (1, 0)
-    assert places(empty_db, audio_id) == {HERE: True}
+def test_a_copy_is_removed_only_when_the_bucket_confirms_now_that_it_holds_the_file(test_config, audio_dir: Path, s3: FakeS3) -> None:
+    """FILE-26: what the rows say is not enough. The bucket is asked; an object
+    that is not there, or waits for the lifecycle rule, confirms nothing, and
+    the copy stays with the reason. The removal runs through the sync client,
+    which opens the configuration's database, so the test uses that one."""
+    from voicecore import SyncClient
 
-    with pytest.raises(Exception, match="on this device only"):
-        empty_db.remove_local_copy(audio_id, audio_dir, HERE)
-    assert (audio_dir / empty_db.get_audio_file(audio_id)["disk_name"]).exists()
+    test_config.set_audiofile_directory(str(audio_dir))
+    here = test_config.get_device_id_hex()
+    db = Database(Path(test_config._rust_config.get_database_file()))
+    try:
+        audio_id = recording(db, audio_dir, "הקלטה ביום הולדת.m4a", b"voice" * 100, here=here)
+        path = audio_dir / db.get_audio_file(audio_id)["disk_name"]
+        assert places(db, audio_id) == {here: True}, "hashing the file states this device's copy"
+        client = SyncClient(str(test_config.get_config_dir()))
+        with pytest.raises(Exception, match="no other place is known to hold it"):
+            client.remove_local_copy(audio_id)
 
-    empty_db.update_audio_file_storage(audio_id, "s3", "k.m4a")
-    assert places(empty_db, audio_id) == {"cloud": True, HERE: True}
-    empty_db.remove_local_copy(audio_id, audio_dir, HERE)
-    assert places(empty_db, audio_id) == {"cloud": True, HERE: False}
-    assert not (audio_dir / empty_db.get_audio_file(audio_id)["disk_name"]).exists()
-    assert empty_db.get_audio_file(audio_id) is not None, "the recording stays"
+        key = bucket_holding(s3, db, audio_id, path, here)
+        del s3.buckets[TEST_BUCKET][key]
+        with pytest.raises(Exception, match="the bucket does not hold it"):
+            client.remove_local_copy(audio_id)
+        assert places(db, audio_id) == {"cloud": False, here: True}, "the bucket's answer is stated"
+        assert path.exists()
+
+        other = recording(db, audio_dir, "ממתינה למחיקה.ogg", b"other" * 50, here=here)
+        other_key = bucket_holding(s3, db, other, audio_dir / db.get_audio_file(other)["disk_name"], here)
+        s3.tags.setdefault(TEST_BUCKET, {})[other_key] = {"voice-purged": "1"}
+        with pytest.raises(Exception, match="the bucket does not hold it"):
+            client.remove_local_copy(other)
+
+        bucket_holding(s3, db, audio_id, path, here)
+        assert client.remove_local_copy(audio_id) == f"Removed {path.name} from this device; the bucket holds it"
+        assert places(db, audio_id) == {"cloud": True, here: False}
+        assert not path.exists()
+        assert db.get_audio_file(audio_id) is not None, "the recording stays"
+    finally:
+        db.close()
 
 
 def test_a_file_deleted_by_hand_is_stated_gone_and_a_missing_folder_says_nothing(empty_db: Database, audio_dir: Path, tmp_path: Path) -> None:

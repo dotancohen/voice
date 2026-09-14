@@ -71,9 +71,12 @@ def within(seconds: float, operation: Callable):
     took = time.monotonic() - started
     if worker.is_alive():
         pytest.fail(f"Still running after {seconds:.0f} s: a dead link must end the operation, not hang it")
+    # Taken out of the box: an exception's traceback holds `run`'s frame and the
+    # frame holds `box`, so while `box` held the exception that cycle kept the
+    # nodes' databases alive until the garbage collector's next run
     if "error" in box:
-        raise box["error"]
-    return box["value"], took
+        raise box.pop("error")
+    return box.pop("value"), took
 
 
 def notes_on(node: SyncNode, count: int, size: int = 1000) -> list:
@@ -264,11 +267,12 @@ class TestRecordingsOverAFailingLink:
         audio_id, path = give_recording(node_a, 3 * MIB)
         assert client_of(node_a).sync_with_peer(node_b.device_id_hex).success
         link.freeze_after(bytes_up=MIB)
-        result, took = within(300, lambda: client_of(node_a).send_to_peer(node_b.device_id_hex))
+        result, took = within(360, lambda: client_of(node_a).send_to_peer(node_b.device_id_hex))
         assert result.sent == 0 and result.errors
         # The socket buffers take the whole body before the freeze shows, so
-        # each of the three tries waits a minute for an answer (FILE-14)
-        assert took < 240, f"three tries of at most a minute each and their waits; it took {took:.0f} s"
+        # each of the three tries waits a minute for an answer, and the third
+        # comes a minute after the second (FILE-14)
+        assert took < 300, f"three tries of at most a minute each, the third a minute after the second; it took {took:.0f} s"
         node_b.reload_db()
         assert not local_path(node_b, audio_id).exists(), "a file that did not arrive whole is not in its place"
 
@@ -281,9 +285,9 @@ class TestRecordingsOverAFailingLink:
         audio_id, path = give_recording(node_b, 3 * MIB)
         assert client_of(node_a).sync_with_peer(node_b.device_id_hex).success
         link.freeze_after(bytes_down=MIB)
-        result, took = within(240, lambda: client_of(node_a).fetch_from_peer(node_b.device_id_hex))
+        result, took = within(300, lambda: client_of(node_a).fetch_from_peer(node_b.device_id_hex))
         assert result.fetched == 0 and result.errors
-        assert took < 150, f"three tries of thirty seconds each and their waits; it took {took:.0f} s"
+        assert took < 210, f"three tries of thirty seconds each, the third a minute after the second; it took {took:.0f} s"
         assert not local_path(node_a, audio_id).exists()
 
         link.pass_through()

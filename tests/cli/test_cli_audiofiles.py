@@ -248,3 +248,43 @@ class TestAudiofilesWaveforms:
 
         second = cli("audiofiles-waveforms")
         assert "Kept the waveform levels of 0 recordings; 1 had them already" in second.stdout
+
+
+class TestImportingAFolderAgain:
+    """D31: importing a folder again does not import the files it already
+    imported; the same bytes under another name are a recording of their own."""
+
+    def test_the_second_import_skips_what_the_first_imported(self, tmp_path):
+        import json as _json
+        import os as _os
+        import subprocess as _subprocess
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        project = _Path(__file__).parent.parent.parent
+        config_dir = tmp_path / "voice"
+        config_dir.mkdir()
+        audio_dir = tmp_path / "audio"
+        audio_dir.mkdir()
+        (config_dir / "config.json").write_text(_json.dumps({"database_file": str(config_dir / "notes.db"), "audiofile_directory": str(audio_dir)}))
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "הקלטה.mp3").write_bytes(b"ID3" + b"\x00" * 2000)
+
+        def cli(*args):
+            env = {**_os.environ, "VOICE_CONFIG_DIR": str(config_dir), "PYTHONPATH": str(project)}
+            return _subprocess.run([_sys.executable, "-m", "src.main", "cli", *args], capture_output=True, text=True, env=env, cwd=str(project), timeout=120)
+
+        first = cli("audiofiles-import", str(source))
+        assert "Imported 1 file(s), 0 error(s)" in first.stdout, first.stdout + first.stderr
+
+        second = cli("audiofiles-import", str(source))
+        assert "Imported 0 file(s), 0 error(s)" in second.stdout, second.stdout + second.stderr
+        assert "Skipped 1 file(s) already imported" in second.stdout
+        assert sorted(p.name for p in audio_dir.iterdir()) == ["הקלטה.mp3"], "no second copy on disk"
+
+        (source / "עותק.mp3").write_bytes((source / "הקלטה.mp3").read_bytes())
+        third = cli("audiofiles-import", str(source))
+        assert "Imported 1 file(s), 0 error(s)" in third.stdout, "a copy under another name is imported"
+        listed = cli("--format", "json", "notes-list")
+        assert len(_json.loads(listed.stdout)) == 2, listed.stdout

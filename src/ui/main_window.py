@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
             self.db,
             audiofile_directory=audiofile_directory,
             config_dir=self.config.get_config_dir(),
+            config=self.config,
         )
 
         # Add panes to splitter
@@ -170,6 +171,10 @@ class MainWindow(QMainWindow):
         replace_key_action = QAction("Replace the bucket's &key…", self)
         replace_key_action.triggered.connect(self.open_replace_key)
         file_menu.addAction(replace_key_action)
+        paths_action = QAction("Test all syncing &paths…", self)
+        paths_action.setStatusTip("Check the connection to every other device of the account and to the bucket")
+        paths_action.triggered.connect(self.open_sync_paths)
+        file_menu.addAction(paths_action)
 
         # The periodic backup (SNAP-5) while the desktop is open: checked
         # every quarter hour, copied when the interval has passed
@@ -418,7 +423,15 @@ class MainWindow(QMainWindow):
     def open_storage_wizard(self) -> None:
         from src.ui.storage_wizard import StorageWizard
 
-        StorageWizard(self.db, self.config, listen_action=self.listen_action, parent=self).exec()
+        wizard = StorageWizard(self.db, self.config, parent=self)
+        if wizard.exec() and wizard.set_up_sync_now():
+            self.open_sync_dialog()
+
+    def open_sync_paths(self) -> None:
+        """Test all syncing paths: every other device and the bucket."""
+        from src.ui.sync_paths_dialog import SyncPathsDialog
+
+        SyncPathsDialog(self.config, parent=self).exec()
 
     def open_replace_key(self) -> None:
         from src.ui.storage_wizard import ReplaceKeyWizard
@@ -739,11 +752,13 @@ class MainWindow(QMainWindow):
 
     def _this_device_lines(self) -> str:
         """The account, the device and the address a peer would type, for About."""
-        from voicecore import certificate_fingerprint, listen_urls
+        from voicecore import certificate_fingerprint, listen_addresses
+
+        from src.core.addresses_text import address_words
 
         config_dir = str(self.config.get_config_dir())
         port = self.config.get_sync_server_port()
-        urls = listen_urls(port)
+        addresses = listen_addresses(port)
         try:
             fingerprint = certificate_fingerprint(config_dir)
         except Exception:  # noqa: BLE001
@@ -751,7 +766,7 @@ class MainWindow(QMainWindow):
         return (
             f"<b>Account:</b> {self.db.account_id()}<br>"
             f"<b>Device:</b> {self.config.get_device_id_hex()} ({self.config.get_device_name()})<br>"
-            f"<b>Address:</b> {', '.join(urls) or 'unknown'}<br>"
+            f"<b>Address:</b> {address_words(addresses)}<br>"
             f"<b>Certificate:</b> {fingerprint}"
         )
 

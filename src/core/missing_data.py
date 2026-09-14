@@ -1,11 +1,10 @@
 """Calculating data that was never calculated.
 
-Some facts about a Recording are not known when it arrives: a file imported
-before lengths were recorded has none; a Recording copied without its
-filesystem dates has no reliable creation time; a Note written before the
-display caches existed has none. None of that is lost data — it can be read
-back off the file, or calculated again — but until it is, the application shows
-less than it knows.
+Some facts about a Recording are not known when it arrives: a file whose length
+could not be read when it was imported has none; a Recording copied without
+its filesystem dates has no reliable creation time. None of that is lost data —
+it can be read back off the file — but until it is, the application shows less
+than it knows.
 
 This module finds those gaps and calculates what is missing. It is one
 operation with one report, offered on every interface (CLI, GUI, TUI, Web API),
@@ -18,13 +17,9 @@ timezone offset, where it was never recorded, cannot be derived from the file �
 writing this machine's offset would state something false about where the user
 was. Those gaps are counted and reported, never invented.
 
-**Why the counting is separated from the database.** The gaps this module closes
-are gaps in old data: a Recording imported before lengths were recorded, a Note
-written before the caches existed. ``create_note`` builds the caches now, so no
-sequence of API calls produces a cache-less Note, which means the counting
-cannot be tested honestly against a database this process wrote. ``survey_rows``
-and ``notes_missing_caches`` therefore take rows, and the tests give them rows
-that look like the old data. See ``VoiceFamily/TECHNICAL-DECISIONS.md`` 6.5.
+**Why the counting is separated from the database.** ``survey_rows`` takes rows,
+so each kind of gap is tested with rows that have it, whichever way a database
+comes to hold them. See ``VoiceFamily/TECHNICAL-DECISIONS.md`` 6.5.
 """
 
 from __future__ import annotations
@@ -104,45 +99,28 @@ class Report:
 
 
 def audio_path(audio_dir: Optional[Path], audio_file: Dict[str, Any]) -> Optional[Path]:
-    """Where a Recording's file is, by the naming rule the core defines.
+    """Where a Recording's file is: the audio directory and the name the row
+    stores (``disk_name``, FILE-15). A name is never derived from the id.
 
-    None when there is no audio directory or the file is not on this machine.
+    None when there is no audio directory, the row names no file, or the file
+    is not on this machine.
     """
-    if audio_dir is None:
+    if audio_dir is None or not audio_file.get("disk_name"):
         return None
-    filename = audio_file.get("filename") or ""
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
-    path = audio_dir / f"{audio_file['id']}.{ext}"
-    return path if path.exists() else None
+    from src.core.audiofile_manager import AudioFileManager
 
-
-def notes_missing_caches(notes: Iterable[Dict[str, Any]]) -> List[str]:
-    """The ids of Notes whose display caches were never built.
-
-    The list query returns the *list* cache and deliberately leaves the Note
-    pane's cache out (it selects NULL for that column, because the list does not
-    need it). So the list cache is what can be judged from a list row; a Note
-    missing it is a Note whose caches were never built, and rebuilding rebuilds
-    both. Counting the other one would mean a query per Note — eleven thousand
-    of them on this user's database — to learn nothing more.
-    """
-    return [
-        note["id"]
-        for note in notes
-        if not note.get("deleted_at") and not note.get("list_display_cache")
-    ]
+    path = AudioFileManager(str(audio_dir)).get_record_path(audio_file)
+    return path if path.is_file() else None
 
 
 def survey_rows(
     recordings: Iterable[Dict[str, Any]],
-    notes: Iterable[Dict[str, Any]],
     file_is_here: Callable[[Dict[str, Any]], bool],
 ) -> Survey:
     """What is missing, counted from rows.
 
     Args:
         recordings: Audio file rows, as ``get_all_audio_files`` returns them.
-        notes: Note rows, as ``get_all_notes`` returns them.
         file_is_here: Whether that Recording's file is on this machine.
 
     Returns:
@@ -165,12 +143,9 @@ def survey_rows(
         if recording.get("imported_at_offset") is None:
             missing_offset += 1
 
-    missing_cache = len(notes_missing_caches(notes))
-
     return Survey(gaps=[
         Gap("duration", "Recordings with no length recorded", missing_duration),
         Gap("file_created_at", "Recordings with no creation date", missing_created),
-        Gap("note_cache", "Notes with no display cache", missing_cache),
         Gap(
             "absent_file", "Recordings whose file is not on this computer",
             missing_file, calculable=False,
@@ -196,7 +171,6 @@ def survey(db, config) -> Survey:
 
     return survey_rows(
         db.get_all_audio_files(),
-        db.get_all_notes(),
         lambda recording: audio_path(audio_dir, recording) is not None,
     )
 
@@ -207,7 +181,6 @@ def calculate_missing_data(
     *,
     durations: bool = True,
     file_dates: bool = True,
-    caches: bool = True,
     limit: Optional[int] = None,
     progress: Optional[Callable[[str], None]] = None,
 ) -> Report:
@@ -219,9 +192,8 @@ def calculate_missing_data(
         durations: Read the length of Recordings that have none.
         file_dates: Read the creation date of Recordings that have none, from
             the filesystem or the file name (the same rule the importer uses).
-        caches: Rebuild the display caches of Notes that have none.
         limit: At most this many Recordings, for a run that should not take all
-            night. Caches are not limited: rebuilding one is milliseconds.
+            night.
         progress: Called with a line of text as each item is done, so an
             interface can show what is happening.
 
@@ -277,9 +249,8 @@ def calculate_missing_data(
                     report.failed["duration"] = report.failed.get("duration", 0) + 1
 
             if needs_date and manager is not None:
-                # The stored file is named after its id, so the date a recorder
-                # wrote into the name is in the recorded filename, not in the
-                # name on disk.
+                # The date a recorder wrote into the name is in the recorded
+                # filename; the name on disk may differ (a collision suffix).
                 made = manager.get_file_created_at(here, recording.get("filename"))
                 if made is not None:
                     db.update_audio_file_created_at(recording["id"], int(made.timestamp()))
@@ -293,19 +264,5 @@ def calculate_missing_data(
 
             if did_something:
                 done += 1
-
-    if caches:
-        rebuilt = 0
-        for note_id in notes_missing_caches(db.get_all_notes()):
-            try:
-                # Rebuilds both caches of that Note
-                db.rebuild_all_caches_for_note(note_id)
-                rebuilt += 1
-            except Exception as e:
-                logger.warning(f"Could not rebuild the cache of {note_id[:8]}: {e}")
-                report.failed["note_cache"] = report.failed.get("note_cache", 0) + 1
-        if rebuilt:
-            report.calculated["note_cache"] = rebuilt
-            say(f"Rebuilt the display cache of {rebuilt} Note(s)")
 
     return report

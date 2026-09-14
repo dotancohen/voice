@@ -191,8 +191,8 @@ class SyncDialog(QDialog):
         self.show_code_button.setAccessibleDescription("A code another device reads to join this account")
         self.show_code_button.clicked.connect(self._show_code)
         actions.addWidget(self.show_code_button)
-        self.test_all_button = QPushButton("Test everything")
-        self.test_all_button.setAccessibleDescription("The connection check against every peer and the bucket, as one table")
+        self.test_all_button = QPushButton("Test all syncing paths…")
+        self.test_all_button.setAccessibleDescription("The connection check against every other device of the account and the bucket, as one table")
         self.test_all_button.clicked.connect(self._test_everything)
         actions.addWidget(self.test_all_button)
         self.wizard_button = QPushButton("Set up the bucket…")
@@ -367,20 +367,15 @@ class SyncDialog(QDialog):
     def _open_wizard(self) -> None:
         from src.ui.storage_wizard import StorageWizard
 
-        StorageWizard(self.db, self.config, listen_action=self.listen_action, parent=self).exec()
+        # Already in the Sync window: the last page does not offer to open it
+        StorageWizard(self.db, self.config, offer_sync=False, parent=self).exec()
         self.refresh()
 
     def _test_everything(self) -> None:
-        """Every peer and the bucket, as one table (Stage 8 step 11)."""
-        from src.core.storage_setup import check_everything
+        """Test all syncing paths: every other device and the bucket."""
+        from src.ui.sync_paths_dialog import SyncPathsDialog
 
-        self.result_label.setText("Checking every peer and the bucket…")
-        try:
-            rows = check_everything(str(self.config.get_config_dir()), self.config, self.db)
-        except Exception as e:  # noqa: BLE001
-            self.result_label.setText(f"The checks could not run: {e}")
-            return
-        self.result_label.setText("\n".join(f"{'✓' if r['passed'] else '✗'} {r['name']}: {r['detail']}{' (' + r['code'] + ')' if r.get('code') else ''}" for r in rows) or "Nothing to check yet.")
+        SyncPathsDialog(self.config, parent=self).exec()
 
     def _last_peer(self) -> Optional[Dict[str, Any]]:
         """The peer the visible button names: the last used, else the only one."""
@@ -419,17 +414,19 @@ class SyncDialog(QDialog):
                 action.triggered.connect(lambda _checked=False, o=operation, p=other: self._run(o, p))
 
     def _this_device_text(self) -> str:
-        from voicecore import certificate_fingerprint, listen_urls
+        from voicecore import certificate_fingerprint, listen_addresses
+
+        from src.core.addresses_text import address_words
 
         port = self.config.get_sync_server_port()
-        urls = listen_urls(port)
+        addresses = listen_addresses(port)
         try:
             fingerprint = certificate_fingerprint(str(self.config.get_config_dir()))
         except Exception:  # noqa: BLE001
             fingerprint = "(made when the listener first runs)"
         return (
             f"<b>This device:</b> {self.config.get_device_name()} ({self.config.get_device_id_hex()})<br>"
-            f"<b>Address:</b> {', '.join(urls) or 'unknown (not on a network?)'}, port {port}<br>"
+            f"<b>Address:</b> {address_words(addresses)} (port {port})<br>"
             f"<b>Certificate:</b> {fingerprint}"
         )
 
@@ -610,11 +607,14 @@ class SyncDialog(QDialog):
 
     def _show_code(self) -> None:
         """The code another device reads to join this account (PAIR-1)."""
-        from voicecore import listen_urls, pairing_offer, pairing_withdraw
+        from voicecore import listen_addresses, pairing_offer, pairing_withdraw
 
-        urls = listen_urls(self.config.get_sync_server_port())
+        from src.core.addresses_text import address_words
+
+        addresses = listen_addresses(self.config.get_sync_server_port())
+        urls = addresses["urls"]
         if not urls:
-            QMessageBox.warning(self, "No address", "This machine's address is not known; is it on a network?")
+            QMessageBox.warning(self, "No address", addresses["sentence"])
             return
         if self.listen_action is not None and not self.listen_action.isChecked():
             self.listen_action.setChecked(True)
@@ -645,6 +645,9 @@ class SyncDialog(QDialog):
         text_label.setWordWrap(True)
         text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         box.addWidget(text_label)
+        address_label = QLabel(f"This device's address: {address_words(addresses)}")
+        address_label.setWordWrap(True)
+        box.addWidget(address_label)
         box.addWidget(QLabel("Treat this like a password: it is valid for ten minutes and for one device."))
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)

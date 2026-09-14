@@ -119,20 +119,32 @@ class Database:
             note_id = uuid.UUID(bytes=note_id).hex
         return self._rust_db.undelete_note(note_id)
 
-    def purge_note(self, note_id: Union[bytes, str]) -> List[str]:
+    def purge_note(self, note_id: Union[bytes, str]) -> List[Dict[str, str]]:
         """Empty one note out of the trash for good, on every device.
 
         The note, its history, its tag links, its attachments and the
         recordings that hung on this note alone are removed, here and on
         every device this one syncs with. It cannot be undone.
 
-        Returns the ids of the audio files that were removed, so the caller
-        can delete the files from disk.
+        Returns the recordings that were removed, as dicts with ``id`` and
+        ``disk_name`` (the name the file has here, FILE-15), so the caller
+        deletes exactly those files (``core.purge.remove_purged_files``).
         """
         if isinstance(note_id, bytes):
             import uuid
             note_id = uuid.UUID(bytes=note_id).hex
         return self._rust_db.purge_note(note_id)
+
+    def made_here_but_missing(self, audio_id: str, audio_dir: str, here: Optional[str] = None) -> Optional[str]:
+        """"recorded" or "imported" when this device made the recording, no place
+        is known to hold it, and its file is not in the audio folder under the
+        name the row stores; None otherwise (FILE-25)."""
+        return self._rust_db.made_here_but_missing(audio_id, str(audio_dir), here)
+
+    def find_imported_audio_file(self, filename: str, content_sha256: str) -> Optional[str]:
+        """The id of the live recording imported under this file name with these
+        bytes, or None (D31): an import skips a file the account already holds."""
+        return self._rust_db.find_imported_audio_file(filename, content_sha256)
 
     def merge_notes(self, note_id_1: Union[bytes, str], note_id_2: Union[bytes, str]) -> str:
         """Merge two notes into one.
@@ -356,20 +368,6 @@ class Database:
         """
         self._rust_db.update_peer_sync_time(peer_device_id, peer_name)
 
-    def get_changes_since(
-        self, since: Optional[int] = None, limit: int = 1000
-    ) -> Dict[str, Any]:
-        """Get all changes since a timestamp.
-
-        Args:
-            since: Unix timestamp to get changes after (None for all)
-            limit: Maximum number of changes to return
-
-        Returns:
-            Dict with 'changes' list and 'latest_timestamp'
-        """
-        return self._rust_db.get_changes_since(since, limit)
-
     def get_changes_after_seq(
         self, cursor: int = 0, upto: Optional[int] = None, limit: int = 1000
     ) -> Dict[str, Any]:
@@ -429,11 +427,6 @@ class Database:
         id; the device this process runs as when not given."""
         return self._rust_db.check_files_here(str(audio_dir), here)
 
-    def remove_local_copy(self, audio_id: str, audio_dir: "Path | str", here: Optional[str] = None) -> None:
-        """Remove this device's copy of a recording to save space; the recording
-        stays. Refused when no other place holds the file (FILE-22)."""
-        self._rust_db.remove_local_copy(audio_id, str(audio_dir), here)
-
     def max_upload_bytes(self) -> int:
         """The account's upload limit in bytes (FILE-23)."""
         return self._rust_db.max_upload_bytes()
@@ -470,13 +463,6 @@ class Database:
         """Replace the database's contents with a snapshot's; the state replaced is snapshotted first."""
         self._rust_db.restore_snapshot(name)
 
-    def get_full_dataset(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Get the full dataset for initial sync.
-
-        Returns:
-            Dictionary with notes, tags, and note_tags lists.
-        """
-        return self._rust_db.get_full_dataset()
 
     # ============================================================================
     # Sync apply methods
@@ -616,10 +602,11 @@ class Database:
         many files were renamed."""
         return self._rust_db.settle_file_names(str(audio_dir))
 
-    def store_content_hash(self, audio_id: str, audio_dir: "Path | str") -> str:
-        """Compute and store the recording's content hash from its file under
-        ``audio_dir`` (Stage 13); call it after the file is copied there."""
-        return self._rust_db.store_content_hash(audio_id, str(audio_dir))
+    def store_content_hash(self, audio_id: str, audio_dir: "Path | str", here: Optional[str] = None) -> str:
+        """Compute and store a recording's content hash from its file in the
+        audio folder; this device (`here`, by default the local one) states that
+        it holds the file (FILE-22). Returns the hash."""
+        return self._rust_db.store_content_hash(audio_id, str(audio_dir), here)
 
     def set_waveform_levels(self, audio_id: str, levels: List[int]) -> None:
         """Keep the levels a recording's waveform is drawn from (FILE-20);
@@ -816,14 +803,6 @@ class Database:
     # Maintenance methods
     # ============================================================================
 
-    def normalize_database(self) -> None:
-        """Normalize database data for consistency.
-
-        This includes:
-        - Timestamp normalization (ISO 8601 to SQLite format)
-        - Future: Unicode normalization
-        """
-        self._rust_db.normalize_database()
 
     # ============================================================================
     # Transcription methods

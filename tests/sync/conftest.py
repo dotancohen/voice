@@ -484,8 +484,8 @@ def simulate_network_partition(node: SyncNode):
 # ============================================================================
 # Subprocess-based helpers for concurrent tests
 # ============================================================================
-# These helpers run operations in separate processes to avoid thread-safety
-# issues with the Rust PyDatabase (marked as 'unsendable').
+# These helpers run operations in separate processes, so the concurrent
+# operations run as they do on separate devices.
 
 
 def run_db_operation(

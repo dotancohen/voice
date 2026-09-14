@@ -10,22 +10,34 @@ from PySide6.QtWidgets import QMessageBox
 
 from core.config import Config
 from core.database import Database
+from tests.fake_s3 import TEST_KEY_ID, TEST_SECRET, FakeS3, bucket_holding
 from ui.note_pane import NotePane
 
 
 @pytest.fixture
-def pane_with_recording(qapp, test_config: Config, empty_db: Database, tmp_path: Path):
+def s3():
+    fake = FakeS3(TEST_KEY_ID, TEST_SECRET).start()
+    yield fake
+    fake.stop()
+
+
+@pytest.fixture
+def pane_with_recording(qapp, test_config: Config, tmp_path: Path):
+    """A note pane on the configuration's database: removing a copy runs
+    through the sync client, which opens that database (FILE-26)."""
     audio_dir = tmp_path / "audio"
     audio_dir.mkdir()
     test_config.set_audiofile_directory(str(audio_dir))
-    note_id = empty_db.create_note("פתק עם הקלטה")
-    audio_id = empty_db.create_audio_file("הקלטה במחשב.ogg", 1735689600)
-    empty_db.attach_to_note(note_id, audio_id, "audio_file")
-    path = audio_dir / empty_db.get_audio_file(audio_id)["disk_name"]
+    db = Database(Path(test_config._rust_config.get_database_file()))
+    note_id = db.create_note("פתק עם הקלטה")
+    audio_id = db.create_audio_file("הקלטה במחשב.ogg", 1735689600)
+    db.attach_to_note(note_id, audio_id, "audio_file")
+    path = audio_dir / db.get_audio_file(audio_id)["disk_name"]
     path.write_bytes(b"recording bytes")
-    pane = NotePane(empty_db, audiofile_directory=audio_dir, config_dir=test_config.get_config_dir())
+    pane = NotePane(db, audiofile_directory=audio_dir, config_dir=test_config.get_config_dir(), config=test_config)
     pane.load_note(note_id)
-    return pane, empty_db, audio_id, path
+    yield pane, db, audio_id, path
+    db.close()
 
 
 @pytest.mark.gui
@@ -45,12 +57,12 @@ class TestRecordingCopiesInTheNotePane:
         monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text: warned.update(title=title, text=text))
         pane._remove_local_copy(audio_id)
         assert warned["title"] == "Not removed"
-        assert "on this device only" in warned["text"]
+        assert "no other place is known to hold it" in warned["text"]
         assert path.exists()
 
-    def test_a_copy_held_elsewhere_is_removed_after_the_user_agrees(self, pane_with_recording, monkeypatch) -> None:
+    def test_a_copy_the_bucket_holds_is_removed_after_the_user_agrees(self, pane_with_recording, s3: FakeS3, monkeypatch) -> None:
         pane, db, audio_id, path = pane_with_recording
-        db.update_audio_file_storage(audio_id, "s3", "k.ogg")
+        bucket_holding(s3, db, audio_id, path)
         answers = iter([QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes])
         monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: next(answers))
 

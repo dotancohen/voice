@@ -56,6 +56,9 @@ def reason_words(recording: Dict[str, Any], limit_bytes: int, names: Dict[str, s
     if reason == "waiting_for_upload":
         holders = ", ".join(place_label(p, names, here) for p in recording["held_by"])
         return f"waiting for {holders} to upload it"
+    if reason in ("imported_here_file_missing", "recorded_here_file_missing"):
+        sentence = MADE_HERE_BUT_MISSING["imported" if reason == "imported_here_file_missing" else "recorded"]
+        return f"no device and no bucket is known to hold it; {sentence[0].lower()}{sentence[1:]}"
     return "no device and no bucket is known to hold it"
 
 
@@ -100,8 +103,27 @@ def issue_sections(issues: Dict[str, Any], names: Dict[str, str], here: Optional
     return sections
 
 
+# What "Where are the copies?" says when this device made a recording, no
+# place is known to hold it and its file is not in the audio folder (FILE-25)
+MADE_HERE_BUT_MISSING = {
+    "imported": "Imported on this device, but its file was not found in the audio folder after the import",
+    "recorded": "Recorded on this device, but its file was not found in the audio folder after the recording",
+}
+
+
+def _here(config) -> Optional[str]:
+    """This device's id from the configuration, when there is one."""
+    return config.get_device_id_hex() if config is not None else None
+
+
 def location_lines(db, audio_id: str, config=None) -> List[str]:
-    """Where a recording's copies are, one line per place, as last stated."""
+    """Where a recording's copies are, one line per place, as last stated.
+
+    When no place is known and this device made the recording (an import or its
+    recorder), but its file is not in the audio folder under the name the row
+    stores, a second line says so: the row was made, and the file never arrived
+    or was moved away.
+    """
     from src.core.timestamp_utils import format_timestamp
 
     names = place_names(db, config)
@@ -109,5 +131,12 @@ def location_lines(db, audio_id: str, config=None) -> List[str]:
     for location in db.file_locations(audio_id):
         state = "holds it" if location["present"] else "does not hold it"
         since = format_timestamp(location["changed_at"] // 1000)
-        lines.append(f"{place_label(location['place'], names)}: {state} (since {since})")
-    return lines or ["No place is known to hold it"]
+        lines.append(f"{place_label(location['place'], names, _here(config))}: {state} (since {since})")
+    if lines:
+        return lines
+    lines = ["No place is known to hold it"]
+    audio_dir = config.get_audiofile_directory() if config is not None else None
+    kind = db.made_here_but_missing(audio_id, audio_dir, _here(config)) if audio_dir else None
+    if kind:
+        lines.append(MADE_HERE_BUT_MISSING[kind])
+    return lines

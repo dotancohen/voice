@@ -94,6 +94,13 @@ cd ../..
 
 This compiles the Rust code and installs it as a Python module. Rebuild after any changes to Rust code in `submodules/voicecore/` or `rust/voice-python/`.
 
+The Android build writes a library of the same name into the same shared build
+directory. If `import voicecore` then fails with
+`dynamic module does not define module export function (PyInit_voicecore)`,
+maturin installed the phone's library: `touch rust/voice-python/src/lib.rs` and
+run `maturin develop --release` again from `rust/voice-python/`
+(`CLAUDE.md`, "Building the Python bindings").
+
 ## Updating
 
 ```bash

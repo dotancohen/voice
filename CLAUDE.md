@@ -30,6 +30,23 @@ This rebuilds the core **without** the `uniffi` feature into the shared
 bindings before running it, or force the featured build first
 (`../VoiceAndroid/CLAUDE.md`).
 
+**The collision works the other way too.** The core crate and this crate both
+name their library `voicecore`, so cargo writes both to that one
+`release/libvoicecore.so` (cargo warns: "has the same output filename"). After
+a phone build, `maturin develop` has copied the phone's library into the
+virtual environment and still printed `Installed voice-python`; every desktop
+interface and every test then fails at import with
+`dynamic module does not define module export function (PyInit_voicecore)`.
+After maturin, check the installed file before anything else:
+
+```bash
+cd /home/dotancohen/Projects/VoiceFamily/Voice
+nm -D --defined-only .venv/lib/python3.12/site-packages/voicecore/voicecore.cpython-312-x86_64-linux-gnu.so | grep -c PyInit_voicecore
+```
+
+It must print 1. If it prints 0, `touch rust/voice-python/src/lib.rs` and run
+maturin again from `rust/voice-python/`.
+
 ### Running the core's tests
 
 ```bash

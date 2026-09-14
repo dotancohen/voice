@@ -9,7 +9,12 @@ Written on 2026-09-13 from the code itself (Voice commit `9086989`, core commit
 `987f769`). Checked against the code on 2026-09-14, on branch
 `accounts-pairing-sync`: Voice commit `10365ef`, VoiceCore commit `fe788d1`.
 Voice's `submodules/voicecore` points at core commit `abedc04`; the three
-VoiceCore commits after it change only `CLAUDE.md` and `README.md`. Where a
+VoiceCore commits after it change only `CLAUDE.md` and `README.md`. Brought up
+to date later the same day with VoiceCore commit `ba0244d`, which Voice's
+submodule points at: one database schema and no migrations (section 7.1), who
+made a Recording (FILE-25) and a copy removed only when another place confirms
+that it holds the file (FILE-26) (section 8.7), where a listener can be reached
+(LISTEN-4, section 8.5), and the pages of the bucket wizard (section 8.10). Where a
 document says something different from the code, the code was taken as the
 truth. The disagreements that remain are listed in
 [section 12](#12-where-older-documents-disagree-with-the-code), and defects
@@ -117,6 +122,15 @@ library (`crate-type = ["cdylib"]`, library name `voicecore`). The tool
 from voicecore import Database as RustDatabase
 ```
 
+The Rust `Database` keeps the core's database behind a lock
+(`inner: Mutex<Option<Database>>`; `inner_ref()` returns the held lock), and
+neither it nor `SyncClient` is marked `unsendable`. Either may be used and
+freed on any thread: Python's garbage collector frees an object on whichever
+thread happens to trigger it, and an `unsendable` object freed there raised
+"is unsendable, but is being dropped on another thread" and was never closed.
+Two threads calling one `Database` take turns. `tests/unit/test_database_threads.py`
+covers it.
+
 The binding crate depends on the core by path
 (`voicecore_lib = { package = "voicecore", path = "../../submodules/voicecore" }`),
 so building the binding also compiles the core.
@@ -153,14 +167,14 @@ function that is missing from a binding does not exist on that platform.
 Voice/
 ├── src/                     the application (section 4)
 │   ├── main.py              entry point: chooses the account and the interface
-│   ├── cli.py               command-line interface (argparse), 4,724 lines
-│   ├── tui.py               terminal interface (Textual), 2,624 lines
-│   ├── web.py               web API (Flask), 604 lines
+│   ├── cli.py               command-line interface (argparse), 4,665 lines
+│   ├── tui.py               terminal interface (Textual), 2,611 lines
+│   ├── web.py               web API (Flask), 590 lines
 │   ├── ui/                  graphical interface (PySide6 / Qt)
 │   └── core/                logic shared by the four interfaces, no Qt
 ├── rust/
 │   ├── Cargo.toml           Rust workspace holding the binding crate
-│   └── voice-python/        PyO3 binding: src/lib.rs, 3,487 lines
+│   └── voice-python/        PyO3 binding: src/lib.rs, 3,526 lines
 ├── submodules/
 │   ├── voicecore/           the Rust core (git submodule)
 │   └── voicetranscription/  transcription library; Python binding in bindings/python,
@@ -231,10 +245,10 @@ recording files on disk when a sync changed their names (FILE-15).
 
 | File | Purpose |
 |---|---|
-| `main_window.py` | The window, its menu bar (File → Issues... opens `IssuesDialog`), and the connections between the three panes |
+| `main_window.py` | The window, its menu bar (File → Issues... opens `IssuesDialog`, File → Test all syncing paths… opens `SyncPathsDialog`), and the connections between the three panes. About shows this device's address ("Address: …", section 8.5) |
 | `tags_pane.py` | The Tag tree; selecting a Tag filters the Note list |
 | `notes_list_pane.py` | The Note list and search box; draws rows from `notes.di_cache_note_list_pane_display` |
-| `note_pane.py` | One Note: text, Tags, Recordings, Transcriptions, the conflict banner; reads `notes.di_cache_note_pane_display`. Shows where a Recording's copies are (after `check_files_here`, section 8.7) and removes this computer's copy after a Yes/No question |
+| `note_pane.py` | One Note: text, Tags, Recordings, Transcriptions, the conflict banner; reads `notes.di_cache_note_pane_display`. Shows where a Recording's copies are (after `check_files_here`, section 8.7) and, after a Yes/No question, removes this computer's copy through `SyncClient.remove_local_copy`, which goes ahead only when the bucket or a device that holds the file confirms that it does (FILE-26) |
 | `audio_player_widget.py` | Waveform drawing (`WaveformWidget`) and the player. The Recording list has a context menu, "Where are the copies?" and "Remove from this device", which emits `locations_requested` or `remove_local_requested` |
 | `transcription_widget.py` | A Transcription's text and its five flags |
 | `transcription_dialog.py` | Choosing a transcription service and its options |
@@ -244,8 +258,10 @@ recording files on disk when a sync changed their names (FILE-15).
 | `trash_dialog.py` | Deleted Notes: recover, or purge for good |
 | `version_dialogs.py` | A field's history, and resolving a conflict |
 | `issues_dialog.py` | `IssuesDialog`: the Issues list (section 8.8) as a tree, read again by the Refresh button |
-| `sync_dialog.py` | Sync, deliver, exchange, send and fetch with a peer, in a `QThread` so the window stays responsive |
-| `storage_wizard.py` | Step-by-step creation of the S3 bucket |
+| `sync_dialog.py` | Sync, deliver, exchange, send and fetch with a peer, in a `QThread` so the window stays responsive. Shows this device's address ("Address: …"), and the My code dialog "This device's address: …" (section 8.5) |
+| `storage_wizard.py` | The bucket wizard, one step on each page: `ConsoleStepPage` (pages 1–4), `KeyPage`, `RegionPage`, `BucketPage`, `ReadyPage`, `SyncPage`; and `ReplaceKeyWizard` (section 8.10) |
+| `theme.py` | `apply_theme(app, theme)`: qdarktheme's stylesheet and its palette together, called by `src/main.py`. Whatever is drawn by hand takes its colours from the palette, as the wizard's copy icon does |
+| `sync_paths_dialog.py` | `SyncPathsDialog`, the window "Test all syncing paths": `storage_setup.check_all_paths` on a thread of its own, the result as a table (section 8.10). Opened by File → Test all syncing paths… and by the Sync window's button of that name |
 | `styles.py` | Shared style sheet fragments |
 
 ### 4.3 The terminal interface: `src/tui.py` (Textual)
@@ -260,7 +276,8 @@ right to left. It runs over SSH on a server.
 Keys added on 2026-09-14: **F8** opens `IssuesScreen` (F5 reads the list again,
 Escape closes it); **w** shows, as a notification, where the copies of the
 Recording the player is on are; **x** removes this computer's copy of that
-Recording on the second press.
+Recording on the second press, once the bucket or a device that holds the file
+confirms that it does (FILE-26).
 
 ### 4.4 The command line: `src/cli.py` (argparse)
 
@@ -280,9 +297,12 @@ with subcommands:
 There are also single commands for Notes, Tags (`tag-rename`, `tag-move`),
 Recordings, transcription, the trash and maintenance. Among them:
 `audiofile-show <id>` prints a `Copies:` section (where each copy is),
-`audiofile-remove-local <id>` removes this device's copy (exit status 1 when
-refused), and `issues` prints the Issues list (`--format json` prints the
-core's dictionary). Run `bin/voice cli --help` and
+`audiofile-remove-local <id>` removes this device's copy once another place
+confirms that it holds the file (exit status 1, with what each place answered,
+when refused), and `issues` prints the Issues list (`--format json` prints the
+core's dictionary). `account show-code` prints "This device's address: …" and
+`account host` "This machine's address: …" under the code, or "The addresses
+given: …" when `--url` was given (section 8.5). Run `bin/voice cli --help` and
 `bin/voice cli <command> --help` for the complete, current list; the help text
 is the maintained reference.
 
@@ -291,8 +311,9 @@ is the maintained reference.
 A JSON API with these routes: `/api/notes` (GET, POST),
 `/api/notes/<note_id>` (GET, PUT, DELETE), `/api/notes/<note_id>/attachments`,
 `/api/audiofiles/<audio_id>`, `/api/audiofiles/<audio_id>/locations` (GET),
-`/api/audiofiles/<audio_id>/remove-local` (POST; 409 when no other place holds
-the file), `/api/issues` (GET), `/api/storage/upload-limit` (GET, and PUT with
+`/api/audiofiles/<audio_id>/remove-local` (POST; 200 with `removed`,
+`sentence` and `locations`; 409 with what each place answered when no other
+place confirmed that it holds the file), `/api/issues` (GET), `/api/storage/upload-limit` (GET, and PUT with
 `{"megabytes": n}`), `/api/tags`, `/api/search`, `/api/trash`,
 `/api/trash/<note_id>/recover`, `/api/trash/<note_id>` (DELETE),
 `/api/transcription-queue` (GET, POST) with `/next`, `/remove`, `/clear`,
@@ -304,7 +325,7 @@ This is not the sync server. The sync server is Rust (section 5).
 
 | File | Purpose |
 |---|---|
-| `database.py` | Wrapper around `voicecore.Database`. Accepts ids as `bytes` or hex, reports this computer's timezone to the core when a database is opened. Since 2026-09-14 also `file_locations`, `check_files_here`, `remove_local_copy`, `max_upload_bytes`, `set_max_upload_mb`, `issues` |
+| `database.py` | Wrapper around `voicecore.Database`. Accepts ids as `bytes` or hex, reports this computer's timezone to the core when a database is opened. Since 2026-09-14 also `file_locations`, `check_files_here`, `made_here_but_missing`, `max_upload_bytes`, `set_max_upload_mb`, `issues`. Removing a copy is not here: it asks other places over the network, so it is `SyncClient.remove_local_copy` (section 8.7) |
 | `config.py` | Wrapper around `voicecore.Config` (`config.json`) |
 | `models.py` | Frozen dataclasses `Note`, `Tag`, `NoteAttachment`, `AudioFile`; `AUDIO_FILE_FORMATS`, read from the core |
 | `audiofile_manager.py` | Copies an imported file into the audio directory under its `disk_name`, never overwriting; reads a file's creation date from the filesystem or its name |
@@ -321,8 +342,10 @@ This is not the sync server. The sync server is Rust (section 5).
 | `cloud_storage.py` | Download from the bucket, and the "missing, in cloud" status |
 | `storage_setup.py` | The steps of the bucket wizard, shared by the CLI and the GUI. A refused bucket creation suggests another name only when the service's sentence says the name is taken |
 | `issues_text.py` | The sentences of the Issues list and of where a Recording's copies are, used by the CLI, the GUI and the TUI: `size_words`, `place_names`, `place_label`, `issue_sections`, `location_lines`. The web API returns the core's dictionaries instead |
+| `addresses_text.py` | `address_words`: this device's address in words, from the core's `listen_addresses` (LISTEN-4), for the Sync window, About, the My code dialog and the command line (section 8.5) |
 | `discovery.py` | Finding peers on the local network with **zeroconf** (`_voicesync._tcp`) |
 | `missing_data.py` | Survey and calculation of facts that were never recorded (lengths, dates, caches) |
+| `purge.py` | `remove_purged_files`: deletes the files of purged Recordings by the `disk_name` the core returns, for every interface |
 | `timestamp_utils.py` | Formatting a timestamp at its own offset; this computer's timezone |
 | `validation.py` | Id, Tag name and search query checks |
 
@@ -334,28 +357,28 @@ Files in `submodules/voicecore/src/`, largest first (line counts of 2026-09-14):
 
 | File | Lines | Purpose |
 |---|---|---|
-| `database.rs` | 9,382 | Opening the database, creating and migrating tables, every query, the display caches, the change feed, snapshots, where each copy of a Recording is (`file_locations`), the account's upload limit |
-| `sync_server.rs` | 4,879 | The HTTP server peers connect to (`/sync/...`, `/pair/...`), built on **axum** |
-| `android.rs` | 2,820 | The Android binding (not used by the desktop) |
-| `versions.rs` | 2,615 | Versioned fields: history, heads, merges, conflicts (section 7.4) |
-| `sync_client.rs` | 2,286 | The side that connects: sync, deliver, exchange, send, fetch, join |
-| `file_storage.rs` | 1,561 | Upload to and download from the bucket; skips files over the upload limit; states the bucket's and this device's copies |
-| `config.rs` | 1,335 | `config.json`: device id and name, peers, keys, backup, audio directory |
-| `validation.rs` | 806 | Checks on ids, names, timestamps |
-| `models.rs` | 781 | Entity structs, attachment types, the audio format list, recording file names |
-| `bucket_setup.rs` | 755 | Creating and hardening an S3 bucket; the core's own signed requests (`signed`, `send_signed_watched`, `get_signed_stream`); `explain_error` and `explain_refusal` |
-| `file_storage_s3.rs` | 485 | Bucket upload of a small file or of parts, download, and the existence check, each as a signed request of `bucket_setup.rs` |
-| `sync_apply.rs` | 419 | Applying one batch of changes from a peer |
+| `database.rs` | 8,488 | Opening the database and making its one schema (section 7.1), every query, the display caches, the change feed, snapshots, where each copy of a Recording is (`file_locations`), the promises to keep a copy (`file_holds`, `file_removals`), the account's upload limit |
+| `sync_server.rs` | 4,774 | The HTTP server peers connect to (`/sync/...`, `/pair/...`), built on **axum**, including `POST /sync/audio/:id/keep` (FILE-26); `listen_addresses`, where this device's listener can be reached (LISTEN-4) |
+| `android.rs` | 2,848 | The Android binding (not used by the desktop) |
+| `sync_client.rs` | 2,520 | The side that connects: sync, deliver, exchange, send, fetch, join; `remove_local_copy` (FILE-26); `reach`, which tries a peer at the addresses on its device card when its remembered address does not answer (LISTEN-4) |
+| `versions.rs` | 2,480 | Versioned fields: history, heads, merges, conflicts (section 7.4) |
+| `file_storage.rs` | 1,651 | Upload to and download from the bucket; skips files over the upload limit; states the bucket's and this device's copies; `bucket_holds`, the question FILE-26 asks the bucket |
+| `config.rs` | 1,232 | `config.json`: device id and name, peers, keys, backup, audio directory |
+| `bucket_setup.rs` | 1,034 | Creating and hardening an S3 bucket; the core's own signed requests (`signed`, `send_signed_watched`, `get_signed_stream`); `explain_error` and `explain_refusal` |
+| `models.rs` | 791 | Entity structs, attachment types, the audio format list, recording file names |
+| `validation.rs` | 509 | Checks on ids, Tag names and paths, Note content, search queries, audio file extensions |
+| `file_storage_s3.rs` | 496 | Bucket upload of a small file or of parts, download, and the existence check, each as a signed request of `bucket_setup.rs` |
+| `sync_apply.rs` | 458 | Applying one batch of changes from a peer |
+| `issues.rs` | 425 | The Issues list (ISSUE-1), calculated at every call and never stored |
 | `accounts.rs` | 413 | The index of accounts on one installation (`accounts.db`) |
 | `crypto.rs` | 405 | Encryption of Recordings in the bucket (AES-256-GCM) |
 | `search.rs` | 394 | Search |
-| `issues.rs` | 387 | The Issues list (ISSUE-1), calculated at every call and never stored |
 | `merge.rs` | 382 | Merging Notes |
 | `pairing.rs` | 342 | Pairing codes and setup texts |
-| `sync_protocol.rs` | 309 | Request and response types, error codes |
+| `sync_protocol.rs` | 317 | Request and response types, error codes |
 | `tls.rs` | 296 | Self-signed certificates for the server |
+| `transfer.rs` | 250 | Streaming a file between peers; `stall_of_upload`, which ends an upload that stops moving (section 8.9) |
 | `auth.rs` | 248 | Device keys and device cards |
-| `transfer.rs` | 210 | Streaming a file between peers; `stall_of_upload`, which ends an upload that stops moving (section 8.9) |
 | `timezone.rs` | 127 | The local timezone reported by the application |
 | `error.rs` | 126 | `VoiceError` |
 | `waveform.rs` | 78 | Waveform levels kept with a Recording |
@@ -414,27 +437,26 @@ account's `config.json`.
   one ordinary file, with no server process.
 - It is opened by `Database::new` in `database.rs`, which sets **WAL** journal
   mode, sets `busy_timeout` to 10 seconds (a second connection waits instead of
-  failing with "database is locked"), and then runs every **migration** in a
-  fixed order:
+  failing with "database is locked"), and then calls `create_schema`. A file
+  whose `PRAGMA user_version` is `SCHEMA_VERSION` (1) is opened as it is. An
+  empty file gets the whole schema, in one write transaction, in this order,
+  and is then stamped `PRAGMA user_version = 1`:
 
 ```
-init_database                        the original tables, indexes and system Tags
-migrate_add_sync_received_at
-migrate_timestamps_to_unix           text dates became Unix seconds
-migrate_add_storage_columns
-migrate_add_file_storage_config_table
-migrate_drop_legacy_conflict_tables  the six old conflicts_* tables
-create_version_tables                field_versions, field_heads ... (versions.rs)
-migrate_create_root_versions
-migrate_add_sync_sequence            seq columns, triggers, most newer tables and columns,
-                                     including file_locations and audio_files.size_bytes
-migrate_add_timezone_columns
+create_tables              every table and index of the notes and the sync
+create_version_tables      field_versions, field_heads ... (versions.rs)
+create_sequence_triggers   the seq column's index and triggers of every synced table
+create_identity            database_id and account_id in sync_meta
+create_system_tags         the four system Tags and the root versions of their names and parents
 ```
 
-- **There is no schema version number.** Each migration checks whether its
-  table or column already exists and skips that step when it exists. Opening a
-  database twice is therefore harmless. To add a column, add a
-  "check, then `ALTER TABLE`" step to a migration function.
+- **One schema, and no migrations.** A file that has tables and another
+  number is refused with the sentence "This database was written by another
+  version of Voice (schema N; this version reads schema 1) and is not opened.
+  Start with an empty data directory." Nothing converts a database. Because a
+  file that carries the current number is opened as it is, a table or column
+  added to `create_tables` reaches only a file made afterwards; a file of the
+  earlier schema needs a new `SCHEMA_VERSION`, and is then refused.
 - **Ids** are **UUID7** values stored as 16-byte **BLOB**s. The applications
   show them as 32 lowercase hexadecimal characters with no hyphens. In the
   version tables, `entity_id` is stored as that text instead.
@@ -514,6 +536,7 @@ three timestamps. Removing a Tag from a Note sets `deleted_at`; the row stays.
 | `duration_seconds` | Length, when known |
 | `summary` | Versioned text |
 | `device_id` | The device that created the row |
+| `origin_device_id`, `origin_kind` | The installation that made the Recording, and how: `recorded` or `imported` (FILE-25). Written by that installation, synced, set once and never changed by a later row |
 | `content_sha256` | SHA-256 of the file's bytes; also the bucket object's name |
 | `size_bytes` | The file's size, written together with the content hash, synced, and never changed once known (FILE-23). NULL until a device has measured the file |
 | `storage_provider`, `storage_key`, `storage_uploaded_at` | Set after an upload to the bucket; NULL means not uploaded |
@@ -534,8 +557,9 @@ three timestamps. Removing a Tag from a Note sets `deleted_at`; the row stays.
 | `state` | The five flags, space-separated; `!` in front means "not". Default: `original !verified !verbatim !cleaned !polished`. The column keeps the name `state` because renaming a synced column is expensive (TECHNICAL-DECISIONS 1.4) |
 | `device_id` | The device that made it |
 
-**System Tags.** `init_database` creates four Tags whose ids are the same on
-every device, so sync never duplicates them:
+**System Tags.** `create_system_tags` creates four Tags whose ids are the same
+on every device, with root versions of their names and parents, so sync never
+duplicates them and two devices made apart merge them without a conflict:
 
 | Tag | Id | Purpose |
 |---|---|---|
@@ -612,7 +636,7 @@ rows are not versioned either; they have a rule of their own (section 8.7).
 | `sync_sequence` | One row holding a counter for the whole database |
 | `seq` column | On `field_versions`, `notes`, `tags`, `note_tags`, `note_attachments`, `audio_files`, `transcriptions`, `file_storage_config`, `purges`, `file_locations`. **Triggers** set it from the counter when a row is inserted, or when a synced column really changed. Cache columns never change it |
 | `sync_meta` | Key/value: `database_id` (a random id; a new one means the database was replaced) and `account_id` |
-| `sync_peers` | One row per peer: `peer_id`, `peer_name`, `peer_url`, `certificate_fingerprint`, `last_sync_at`, `last_received_cursor`, `last_sent_seq`, `peer_database_id`, `peer_account_id`, `last_operation`, `peer_entity_types`, and older timestamp columns |
+| `sync_peers` | One row per peer: `peer_id`, `peer_name`, `peer_url`, `certificate_fingerprint`, `last_sync_at`, `last_received_cursor`, `last_sent_seq`, `peer_database_id`, `peer_account_id`, `last_operation`, `peer_entity_types` |
 | `sync_failures` | Changes from a peer that could not be applied, kept and tried again at the next batch |
 | `purges` | Everything ever purged: `entity_type`, `entity_id`, `purged_at`, `device_id`. Kept for ever, so a peer that has not heard of the purge cannot bring the item back |
 | `file_storage_config` | One row (`id = 'default'`): the bucket settings, as JSON in `config` |
@@ -631,7 +655,8 @@ entity id `<audio id>:<place>`. Synced settings and device cards travel as
 | Table | Purpose |
 |---|---|
 | `pairing_offers` | The hash of a pairing code while it is valid, its expiry, failed attempts |
-| `audio_file_copies` | Which peer was known to hold which Recording. Replaced by `file_locations`: nothing writes it any more, and it is read once, by the migration that first creates `file_locations` |
+| `file_holds` | A promise this device gave a peer to keep its copy of a Recording until `until_ms`, while that peer removes its own (FILE-26, section 8.7) |
+| `file_removals` | A removal of this device's copy that is under way, since `since_ms`; while it is there, a peer asking this device to keep its copy is refused (FILE-26) |
 | `upload_parts` | Journal of an upload in parts, so an interrupted upload continues |
 | `pending_file_renames` | A Recording whose file must still be renamed on disk |
 | `purged_objects` | Bucket objects deleted by a purge |
@@ -710,11 +735,14 @@ WHERE audio_id = X'0190a1b2c3d47e5f8a9b0c1d2e3f4a5b';
 
 1. `db.create_audio_file(name, file_created_at, audio_dir)`: the core creates
    the row and decides `disk_name`. An imported file keeps its own name; a
-   name that is already taken gets a suffix from the Recording's id.
+   name that is already taken gets a suffix from the Recording's id. The row
+   names this device as `origin_device_id`, with `origin_kind` `imported`
+   (FILE-25).
 2. `AudioFileManager.import_file(path, disk_name)` copies the file into the
    audio directory. It refuses to overwrite a file.
-3. `db.store_content_hash(audio_file_id, audio_dir)` stores the SHA-256 and the
-   file's size (`size_bytes`).
+3. `db.store_content_hash(audio_file_id, audio_dir, here)` stores the SHA-256
+   and the file's size (`size_bytes`), and states that this device holds the
+   file (section 8.7).
 4. A Note is created, and `db.attach_to_note(note_id, audio_file_id, "audio_file")` links the two.
 
 ### 8.3 Transcribing
@@ -767,6 +795,8 @@ page twice changes nothing (it is **idempotent**).
 for peers" in the GUI. It starts the Rust server in `sync_server.rs` over
 HTTPS with a self-signed certificate, which a peer remembers at its first
 connection (**TOFU**). Peers on the same network find each other by zeroconf.
+At every handshake a caller starts, the listener compares its own audio
+directory with what it has stated about its copies (`check_files_here`).
 
 **Files between installations** (FILE-12, FILE-13): `POST /sync/audio/missing`
 tells the sender which Recordings the receiver lacks and how many bytes of each
@@ -792,6 +822,31 @@ its own device key and one peer. A device keeps its own key in its
 device card. The setup text carries the listener's certificate fingerprint as
 `&f=`, when the offer finds the certificate (see section 13.1, item 1).
 
+**Where a listener can be reached** (LISTEN-4). `listen_addresses(port)` in the
+binding (`listen_addresses` in `sync_server.rs`) returns `detected`, `shown`,
+`urls` and `sentence`. The candidates are the private IPv4 addresses of the
+interfaces that can carry a local network: interfaces whose names start with
+`docker`, `br-`, `veth`, `virbr`, `vmnet`, `vboxnet`, `tun`, `tap`, `wg`, `zt`,
+`tailscale`, `lxc`, `lxdbr`, `cni`, `flannel`, `podman`, `kube`, `dummy`,
+`rmnet`, `ccmni`, `p2p`, `utun` or `ipsec` are left out, and a link-local
+address counts only when there is nothing else. The source address of this
+machine's route (a UDP socket connected to 192.0.2.1; nothing is sent) is the
+address found: it is shown alone and tried first. A single candidate is also
+the address found. Otherwise every candidate is shown, with the sentence "Only
+one of these addresses is correct; this device could not tell which. Another
+device tries each of them in turn." With none: "No address on a local network
+was found. Is this device on a network?". The host name (never `localhost`) is
+last in `urls`. `address_words` in `src/core/addresses_text.py` says it in one
+line for the Sync window, About, the My code dialog and `account show-code` /
+`account host`.
+
+A setup text carries every URL in `u=`; the device that reads it tries each in
+turn, each with its own client, and remembers the one that answered. When a
+peer's remembered address does not answer (a network error, not a refusal),
+`reach` in `sync_client.rs` tries each address on the peer's device card with
+the peer's pinned certificate and remembers the one that answers as the peer's
+`peer_url`; a sync, a pull, a push and an initial sync go through it.
+
 ### 8.6 Snapshots and backups
 
 - **Snapshot** (SNAP-1 to SNAP-4): a copy of `notes.db` in `snapshots/`,
@@ -816,25 +871,49 @@ Recording's file" or "no longer holds it". A place is a device of the account
   device that removes its copy while another uploads the file keeps both facts.
 - **Who writes a statement** (`set_file_location(audio_id, place, present)`,
   which writes nothing when the statement repeats the current one):
-  - this device, after it receives a file whole (`receive_audio_file` in
-    `sync_server.rs`), fetches one, or downloads one from the bucket;
+  - this device, after it hashes a file (`store_content_hash(audio_id,
+    audio_dir, here)`, so an import or a recording states its copy at once),
+    receives a file whole (`receive_audio_file` in `sync_server.rs`), fetches
+    one, downloads one from the bucket, or promises a peer to keep its copy;
   - the sender or fetcher, about the peer (`record_copy`); the peer's own
     newer statement replaces it;
   - `check_files_here(audio_dir, here)`, which compares the audio directory
     with this device's statements and returns (now here, now gone). It runs
-    before each sync, at every Issues list, and when "Where are the copies?"
-    is asked for. A directory that does not exist states nothing;
+    before each sync, at every handshake the listener answers, at every Issues
+    list, and when "Where are the copies?" is asked for. A directory that does
+    not exist states nothing;
   - the bucket's row: an upload (`update_audio_file_storage`) states present,
-    clearing an upload states absent, and a download that finds no object
-    states absent.
-- **Removing this device's copy**: `remove_local_copy(audio_id, audio_dir, here)`
-  deletes the file and states it gone. It is refused when no other place holds
-  the file. GUI: the Recording's context menu; TUI: `x` twice; CLI:
-  `audiofile-remove-local`; web: `POST /api/audiofiles/<id>/remove-local`.
-- **A purge** deletes the Recording's `file_locations` rows.
-- **An older database**: when the migration first creates the table, it writes
-  `cloud` rows for uploaded Recordings and peer rows from `audio_file_copies`.
-  Nothing on disk is read.
+    clearing an upload states absent, and a download (single or in a batch)
+    that finds no object, or an object whose hash is not the Recording's,
+    states absent. An upload that finds the object already in the bucket but
+    carrying the purge tag uploads it again.
+- **Removing this device's copy** (FILE-26): `SyncClient.remove_local_copy(audio_id)`
+  in `sync_client.rs`. It marks the removal (`begin_removal`, refused while this
+  device has promised a peer to keep the copy: "this device promised <device>
+  to keep its copy until <time>…"), then asks for a confirmation now: the
+  bucket directly (`bucket_holds`: the object exists and does not carry the
+  `voice-purged` tag), then each device stated to hold the file, through
+  `POST /sync/audio/:audio_id/keep`. That device answers `{"holds": bool,
+  "until_ms": int, "reason": str}` and, when it holds the whole file, promises
+  to keep it for ten minutes (`HOLD_MS`, `promise_to_keep`, written to
+  `file_holds`); while its own removal is under way it refuses ("this device is
+  removing its own copy"). Two devices that count on each other therefore
+  never both remove the file. On a confirmation the file goes and this device
+  states it gone (`finish_removal`), and the sentence is "Removed <disk name>
+  from this device; <place> holds it". Otherwise the mark is cleared
+  (`abandon_removal`) and the refusal names what each place answered, for
+  example "no other place is known to hold it", "the bucket does not hold it",
+  "<device> could not be reached: …", "no bucket is set up on this device".
+  When the bucket does not hold the file, the device that holds it must be
+  reachable at that moment. GUI: the Recording's context menu; TUI: `x` twice;
+  CLI: `audiofile-remove-local`; web: `POST /api/audiofiles/<id>/remove-local`.
+- **A purge** deletes the Recording's `file_locations` rows. Its bucket object
+  is not tagged purged while another Recording that stays uses the same object.
+- **Who made a Recording** (FILE-25): `origin_device_id` and `origin_kind`
+  (`recorded` or `imported`) on its row. `made_here_but_missing(audio_id,
+  audio_dir, here)` returns the kind when this device made the Recording, no
+  place is known to hold it, and its file is not in the audio directory; the
+  Issues list uses it (section 8.8).
 - `copies_of(audio_id, here)` and `not_duplicated(audio_dir, here)` read these
   rows. The `here` argument is this device's id; the Python binding takes it
   from the process when it is not given.
@@ -858,7 +937,7 @@ runs `check_files_here`. It returns:
 
 | Key | What is in it |
 |---|---|
-| `recordings_not_in_cloud` | Recordings not deleted and not stated present in the bucket, each with `size_bytes`, `held_by` and a `reason`: `no_bucket` (no bucket configured), else `too_large` (size known and over the limit), else `waiting_for_upload` (a device holds the file), else `no_copy_known`. A row with a `storage_key` and no `cloud` statement at all counts as in the bucket |
+| `recordings_not_in_cloud` | Recordings not deleted and not stated present in the bucket, each with `size_bytes`, `held_by` and a `reason`: `no_bucket` (no bucket configured), else `too_large` (size known and over the limit), else `waiting_for_upload` (a device holds the file), else `imported_here_file_missing` or `recorded_here_file_missing` (this device made it, and its file is not in the audio directory: `made_here_but_missing`, FILE-25), else `no_copy_known`. Only a `cloud` statement that says present counts as in the bucket |
 | `max_upload_bytes` | The limit the reasons were judged by |
 | `orphaned_transcriptions` | Transcriptions whose Recording row is not there |
 | `orphaned_attachments` | Attachments whose Note or Recording row is not there |
@@ -867,7 +946,10 @@ runs `check_files_here`. It returns:
 
 The Python binding adds `count` and gives `reason` as a string.
 `src/core/issues_text.py` turns the dictionary into titled sections of
-sentences. Opened from: GUI File → Issues...; TUI F8; `cli issues`;
+sentences; the two "made here" reasons, and the "Where are the copies?" lines,
+read "Imported on this device, but its file was not found in the audio folder
+after the import" or "Recorded on this device, but its file was not found in
+the audio folder after the recording". Opened from: GUI File → Issues...; TUI F8; `cli issues`;
 `GET /api/issues`.
 
 ### 8.9 Network timeouts (FILE-14)
@@ -885,12 +967,78 @@ only slow must not.
 | Bucket download (`bucket_setup::get_signed_stream`) | Connect 10 seconds; 30 seconds for a read to make progress (`STALL_TIMEOUT`); no overall limit |
 | Bucket existence check | A signed `HEAD` with 30 seconds |
 
-A transfer is tried three times, with waits of one, two and four seconds. A try
-after a broken send asks the peer (`missing_on_peer`) how many bytes it now
-holds and continues from there. A transfer that breaks keeps the bytes that
+A transfer (send, fetch, bucket upload, bucket download) is tried three times:
+the second try straight after the first, the third a minute after the second
+(`transfer::TRIES`, `transfer::wait_before_last_try`). After three files failed
+every try the operation stops and names the files it did not attempt
+(`transfer::stop_after_failures`). A try after a broken send asks the peer
+(`missing_on_peer`) how many bytes it now holds and continues from there. A transfer that breaks keeps the bytes that
 arrived in its part file on both sides.
 
 ### 8.10 The bucket wizard
+
+The pages of `src/ui/storage_wizard.py`, one step on each. The titles and
+lines of pages 1 to 5 are `console_pages` in `storage_setup.py`, so the GUI
+and `storage setup` say the same words:
+
+1. **`ConsoleStepPage`**, four times ("1. Open the Amazon console", "2. Make
+   the policy", "3. Make the user", "4. Make the access key"), subtitle "In
+   the Amazon console. Nothing here costs money.": the step's short lines.
+   `console_line` shows every value to type (the console's address, the
+   policy name, the user name) in bold with a `copy_button` right beside it.
+   Page 2 (`POLICY_STEP`) adds "The policy text:" with its own copy button and
+   the policy text.
+2. **`KeyPage`** ("5. Enter the key"): the boxes for the access key ID and the
+   secret access key are `KeyBoxes`: each is checked as it is typed, with a ✓
+   or ✗ line under it, and Next stays disabled until both have the right form
+   (Amazon: 20 capital letters and digits starting with `AKIA`; a secret of 40
+   letters, digits, `/` and `+`; `key_id_problem` and `secret_problem` in
+   `storage_setup.py`). The eye button inside the secret box (`secret_field`)
+   shows it. "A service other than Amazon (DigitalOcean, Backblaze, Hetzner,
+   MinIO)" shows the endpoint box and relaxes the form checks. Next, for
+   Amazon, calls `nearest_region`, which keeps the nearer regions that refused
+   the key in `state.regions_refused`; with an endpoint it asks nothing.
+3. **`RegionPage`** ("6. Choose the region"): proposes `state.nearest`; a
+   region in `state.regions_refused` is explained only when the user chooses
+   it, and Next is disabled for it. Next calls `choose_free_bucket`.
+4. **`BucketPage`** ("7. Make the bucket"): "Bucket name: <name>"; "Custom
+   bucket name and folder" shows the name and folder boxes instead. Next calls
+   `create_bucket` (a generated name taken by then is replaced and
+   `state.renamed_from` keeps the old one; a custom name that is taken is
+   refused), `harden`, `set_lifecycle` and `round_trip`, and keeps a ✓ or ✗
+   line for each in `state.report`. Only a failed `create_bucket` or round
+   trip keeps the page.
+5. **`ReadyPage`** ("8. The bucket is ready"): `state.report`; Next calls
+   `save`.
+6. **`SyncPage`** ("Sync between devices"): `stores_files_sentence` and the
+   check box "Set up sync now". `StorageWizard(offer_sync=False)`, as the Sync
+   window opens it, hides the question and the check box;
+   `set_up_sync_now()` tells `MainWindow.open_storage_wizard` whether to open
+   the Sync window after Finish.
+
+`KeyPage`, `RegionPage`, `BucketPage` and `ReplaceKeyPage` are
+`_WorkingPage`s. Its `validatePage` calls the page's `prepare` on the window's
+thread (False: a problem is said and the page stays; None: move on without
+asking the service; True: ask it), then runs `work` on a `threading.Thread`
+while the spinner and `waiting_sentence(endpoint)` show (`provider_name` names
+the service) and Back and Next are disabled. `_Relay` carries the result back
+to the window's thread: a problem sentence stays on the page; None moves the
+wizard on, or accepts it on the last page. `work` touches no database.
+`KeyBoxes` holds its page through a weak reference, so closing the wizard frees
+its pages at once rather than at the garbage collector's next run.
+
+`ReplaceKeyWizard` has one `ReplaceKeyPage` with the same checked boxes and
+eye, and the text "In the Amazon console: IAM Users → the bucket's user
+(voice-NNNN) → Security credentials → Create access key…". Its `prepare`
+reads the saved configuration (`saved_state`) and takes the key, its `work`
+runs `round_trip`, and it saves the key when the round trip passed.
+
+`src/ui/sync_paths_dialog.py`: `SyncPathsDialog` ("Test all syncing paths")
+reads `devices_of(config)` and the configuration directory on the window's
+thread, and runs `check_all_paths(config_dir, devices)` on a thread of its
+own, which opens its own `SyncClient`. Each row's name is "<device name or
+Bucket>: <check>", split into the Path and Check columns. `sync check --all`
+calls the same function.
 
 `src/core/storage_setup.py` calls `bucket_setup.rs` through the binding:
 
@@ -960,7 +1108,7 @@ cd submodules/voicecore && cargo test convergence   # random multi-device sync f
 
 | Directory or file | What it tests |
 |---|---|
-| `tests/unit/` | Database, cache rebuilds, conflicts, search, trash, transcription queue and flags, waveform, validation, where the copies are and the upload limit (`test_file_locations.py`), the Issues sentences (`test_issues_text.py`), start without an interface |
+| `tests/unit/` | Database, cache rebuilds, conflicts, search, trash, transcription queue and flags, waveform, validation, where the copies are, a copy removed only when the bucket confirms that it holds the file, and the upload limit (`test_file_locations.py`), the Issues sentences (`test_issues_text.py`), this device's address in words (`test_addresses_text.py`), start without an interface |
 | `tests/sync/` | Sync between real installations: pagination, conflicts, failures, pairing, hosting, file transfer, discovery, the flags agreement with Android, locations between devices (`test_file_locations_sync.py`), sync and transfers over a failing link (`test_sync_over_a_failing_network.py`) |
 | `tests/cli/`, `tests/tui/`, `tests/gui/`, `tests/web/` | One interface each; the Issues list and the copies in each (`test_cli_issues.py`, `test_tui_issues.py`, `test_tui_copies.py`, `test_issues_dialog.py`, `test_note_pane_copies.py`, `test_api_issues.py`) |
 | `tests/display/` | Where Attachments are placed in the Note view |
@@ -994,13 +1142,14 @@ warning fails the suite.
    soft; disagreements become conflicts (1.1).
 3. **Every editable value is written through the version functions**, never
    with plain SQL (7.4 above).
-4. **A new synced field or entity** touches `FIELD_REGISTRY`, the `seq`
-   triggers in `migrate_add_sync_sequence`, the feed in `collect_changes` and
-   `get_full_dataset`, `ALL_SYNC_ENTITY_TYPES` and `apply_one` in
-   `sync_apply.rs`, and both bindings (`VoiceCore/CLAUDE.md`, "Adding a
-   syncable entity type or field").
+4. **A new synced field or entity** touches `FIELD_REGISTRY`, its table and
+   columns in `create_tables`, its `seq` trigger list in
+   `create_sequence_triggers`, the feed in `collect_changes`,
+   `ALL_SYNC_ENTITY_TYPES` and `apply_one` in `sync_apply.rs`, and both
+   bindings (`VoiceCore/CLAUDE.md`, "Adding a syncable entity type or field").
 5. **Derived data is never synced** (a cache, a colour calculated from a name) (1.3).
-6. **A migration never changes a value that refers to a file** outside the database (3.1a).
+6. **Nothing converts an existing database**: there is one schema, and a
+   database of another schema is refused in words (section 7.1).
 7. **Memory never grows with the user's data**: stream or bound anything the
    size of a Recording, a log or a table (3.1).
 8. **No ambiguous words** in names or text: not "handle", "process", "manage",
@@ -1028,6 +1177,8 @@ warning fails the suite.
 | Where is a Recording's file? | `audio_files.disk_name` in the directory `audiofile_directory` |
 | Which devices hold a Recording? | `file_locations`, `bin/voice cli audiofile-show <id>` (section 8.7) |
 | Why is a Recording not in the bucket? | `bin/voice cli issues`, then `issues.rs` (section 8.8) |
+| Why was a copy not removed? | The refusal sentence, which says what each place answered; `remove_local_copy` in `sync_client.rs` (section 8.7) |
+| Why does a device show several addresses? | `listen_addresses` in `sync_server.rs` (section 8.5) |
 | Why did a transfer or an upload stop? | The error sentence, section 8.9, `transfer::stall_of_upload` |
 | What happens when a command runs? | `add_cli_subparser` in `src/cli.py`, then its `cmd_...` function |
 | What does this rule id mean? | `VoiceFamily/SYNC_SPECIFICATION.md` (FILE-22, VER-9 ...) or the plan (Stage N) |
@@ -1049,7 +1200,6 @@ the subjects of the rows below.
 |---|---|---|
 | `bin/voice`, the comment on line 3 | The launcher honours `-d` | `src/main.py` has no `-d`; the options are `-a/--account` and `$VOICE_CONFIG_DIR` |
 | `src/main.py`, the module docstring and the `--help` examples | `cli list-notes`, `cli search --tag Work` | The commands are `notes-list` and `notes-search` |
-| The docstrings of `AudioFile` in `src/core/models.py` and of `AudioFileManager` in `src/core/audiofile_manager.py` | A file is stored at `{audiofile_directory}/{id}.{extension}` | The file is named by `audio_files.disk_name` (FILE-15, TECHNICAL-DECISIONS 3.1a); the bucket object by the content hash (3.1b). Only rows older than `disk_name` keep `<id>.<ext>` |
 
 ---
 
@@ -1075,19 +1225,14 @@ seen in part and needs a test before it is fixed.
    `ensure_own_device_card`, called at every start, opens the account
    directory the same way and writes this device's card with an empty
    certificate fingerprint. `hosting_offer` opens the root and is not affected.
-2. **`cli note-purge` reads the live root.** `_remove_audio_files` in
-   `src/cli.py` calls `Config()` with no directory, so the core opens
-   `dirs::config_dir()/voice` (`~/.config/voice`) whatever `$VOICE_CONFIG_DIR`
-   and `-a` say, writes a `config.json` there when there is none, and deletes
-   matching files in that configuration's audio directory. Do not run
-   `note-purge` on the owner's computer until this is fixed.
-3. **Files of purged Recordings stay on disk.** Four functions look for them as
-   `<audio id>.*`: `_remove_audio_files` (`src/cli.py`),
-   `_remove_purged_audio_files` (`src/web.py`), `purge_audio_files`
-   (`src/tui.py`) and `remove_audio_files` (`src/ui/trash_dialog.py`). Files
-   are named by `disk_name`; only rows older than that column match.
-4. **Calculate missing data finds no file named by `disk_name`.**
-   `audio_path` in `src/core/missing_data.py` looks for `<id>.<ext>`.
+2. *(Fixed by 2026-09-14.)* `cli note-purge` read the live root through
+   `Config()` with no directory. It now deletes the files in the account's own
+   audio directory through `remove_purged_files` (`src/core/purge.py`).
+3. *(Fixed by 2026-09-14.)* Files of purged Recordings were looked for as
+   `<audio id>.*`. The CLI, the web API, the TUI and the trash dialog now
+   delete them by the `disk_name` the core returns (`src/core/purge.py`).
+4. *(Fixed by 2026-09-14.)* Calculate missing data looked for `<id>.<ext>`;
+   `audio_path` in `src/core/missing_data.py` now uses `disk_name`.
 5. **The bucket wizard's Save and "Replace key" remove `encrypt` and
    `max_upload_mb`.** `save` in `src/core/storage_setup.py` writes a
    configuration of bucket, region, keys, prefix and endpoint only, and
@@ -1165,7 +1310,9 @@ seen in part and needs a test before it is fixed.
 
 **maturin** — A tool that compiles a Rust crate written with PyO3 and installs it as a Python module.
 
-**Migration** — Code that changes an existing database's structure (new tables, new columns) so that it matches what the current code expects.
+**Migration** — Code that converts an existing database's structure (new tables, new columns) to what the current code expects. Voice has none: a database of another schema number is refused (section 7.1).
+
+**Schema** — The tables, columns, indexes and triggers of a database. Its number is kept in the file as `PRAGMA user_version`.
 
 **moto** — A Python library that imitates Amazon's services. The tests run its S3 server on this machine.
 

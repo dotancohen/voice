@@ -13,7 +13,7 @@ Endpoints:
     GET  /api/notes/<id>/attachments     List attachments for a note
     GET  /api/audiofiles/<id>            Get audio file details
     GET  /api/audiofiles/<id>/locations  Where the recording's copies are
-    POST /api/audiofiles/<id>/remove-local  Remove this device's copy (refused when it is the only one)
+    POST /api/audiofiles/<id>/remove-local  Remove this device's copy once the bucket or a holding device confirms it holds the file
     GET  /api/issues                     What needs the user's attention
     GET  /api/storage/upload-limit       The account's upload limit
     PUT  /api/storage/upload-limit       Set it: {"megabytes": 250}
@@ -77,25 +77,6 @@ def api_endpoint(func: Callable) -> Callable:
 # Where this installation keeps its recordings, so that a note removed for
 # good takes its files with it.
 audiofile_directory: Optional[str] = None
-
-
-def _remove_purged_audio_files(audio_ids: List[str]) -> int:
-    """Delete the files of recordings that were purged; return how many went.
-
-    The database says which recordings were removed; where their files live
-    is the application's business, not the core's.
-    """
-    if not audio_ids or not audiofile_directory:
-        return 0
-    removed = 0
-    for audio_id in audio_ids:
-        for path in Path(audiofile_directory).glob(f"{audio_id}.*"):
-            try:
-                path.unlink()
-                removed += 1
-            except OSError as e:
-                logger.warning(f"Could not delete {path}: {e}")
-    return removed
 
 
 def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -> Flask:
@@ -216,7 +197,7 @@ def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -
     @app.route("/api/maintenance/missing-data", methods=["GET"])
     @api_endpoint
     def survey_missing_data() -> Response:
-        """What was never worked out: Recording lengths, dates, display caches.
+        """What was never worked out: Recording lengths and creation dates.
 
         Changes nothing. Each entry says how many there are and whether it can
         be filled in at all.
@@ -243,7 +224,7 @@ def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -
     def calculate_missing_data() -> Response:
         """Calculate what can be calculated, and report what happened.
 
-        Body (all optional): `durations`, `file_dates`, `caches` as booleans to
+        Body (all optional): `durations`, `file_dates` as booleans to
         leave a kind of repair out, and `limit` to read at most that many
         Recordings in one run.
         """
@@ -254,7 +235,6 @@ def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -
             db, config,
             durations=bool(body.get("durations", True)),
             file_dates=bool(body.get("file_dates", True)),
-            caches=bool(body.get("caches", True)),
             limit=body.get("limit"),
         )
         return jsonify({
@@ -381,12 +361,14 @@ def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -
         validate_uuid_hex(note_id, "note_id")
         if not any(n["id"] == note_id for n in db.get_deleted_notes()):
             return jsonify({"error": f"Note {note_id} is not in the trash"}), 404
-        audio_ids = db.purge_note(note_id)
-        removed = _remove_purged_audio_files(audio_ids)
+        from src.core.purge import remove_purged_files
+
+        purged = db.purge_note(note_id)
+        removed = remove_purged_files(purged, audiofile_directory)
         return jsonify({
             "message": f"Note {note_id} removed for good",
-            "audio_files": audio_ids,
-            "files_removed": removed,
+            "audio_files": [r["id"] for r in purged],
+            "files_removed": len(removed),
         }), 200
 
     @app.route("/api/notes/<note_id>/attachments", methods=["GET"])
@@ -445,23 +427,27 @@ def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -
     @app.route("/api/audiofiles/<audio_id>/remove-local", methods=["POST"])
     @api_endpoint
     def remove_local_audiofile(audio_id: str) -> tuple[Response, int]:
-        """Remove this device's copy of a recording (FILE-22); 409 when no other place holds it."""
+        """Remove this device's copy of a recording (FILE-22) once the bucket or a
+        device that holds it confirms now that it does (FILE-26); 409 with what
+        each place answered when none confirmed."""
         validate_uuid_hex(audio_id, "audio_id")
         if not db.get_audio_file(audio_id):
             return jsonify({"error": f"Audio file {audio_id} not found"}), 404
         if not audiofile_directory:
             return jsonify({"error": "audiofile_directory is not configured"}), 400
+        from voicecore import SyncClient
+
         try:
-            db.remove_local_copy(audio_id, audiofile_directory)
+            sentence = SyncClient(str(config.get_config_dir())).remove_local_copy(audio_id)
         except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
             return jsonify({"error": str(e)}), 409
-        return jsonify({"removed": True, "locations": db.file_locations(audio_id)}), 200
+        return jsonify({"removed": True, "sentence": sentence, "locations": db.file_locations(audio_id)}), 200
 
     @app.route("/api/issues", methods=["GET"])
     @api_endpoint
     def get_issues() -> tuple[Response, int]:
         """What needs the user's attention (ISSUE-1)."""
-        return jsonify(db.issues(audiofile_directory)), 200
+        return jsonify(db.issues(audiofile_directory, config.get_device_id_hex())), 200
 
     @app.route("/api/storage/upload-limit", methods=["GET"])
     @api_endpoint

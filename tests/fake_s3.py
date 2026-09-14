@@ -195,6 +195,9 @@ class FakeS3:
                         return self._error(403, "SignatureDoesNotMatch")
                     if fake.refuse_with:
                         return self._error(403, fake.refuse_with)
+                    if bucket in fake.taken_names and not key and "location" in query:
+                        # A bucket of that name belongs to another account
+                        return self._error(403, "AccessDenied")
                     if bucket not in fake.buckets:
                         return self._error(404, "NoSuchBucket")
                     if not key:
@@ -252,3 +255,31 @@ class FakeS3:
 
     def deleted_anything(self) -> bool:
         return any(m == "DELETE" for m, _, _, _ in self.requests)
+
+
+# The key the fake bucket accepts in the tests that need a bucket to hold a recording
+TEST_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
+TEST_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+TEST_BUCKET = "voice-abc123"
+
+
+def bucket_holding(fake: "FakeS3", db, audio_id: str, path, here: str = None) -> str:
+    """Set up the account's bucket in `fake` and put the recording's object in
+    it, keyed as an upload keys it (FILE-18), so the bucket holds it now.
+    Hashing the file states that `here` holds it: pass the device id the test
+    uses, or the process's local device id is stated, a second device the test
+    did not mean. Returns the object's key."""
+    from pathlib import Path
+
+    from src.core.storage_setup import SetupState, create_bucket, save, take_key
+
+    path = Path(path)
+    state = SetupState(region="us-east-1", bucket=TEST_BUCKET, endpoint=fake.endpoint)
+    assert take_key(state, TEST_KEY_ID, TEST_SECRET) is None
+    if TEST_BUCKET not in fake.buckets:
+        assert create_bucket(state) is None
+    save(state, db)
+    key = f"{db.store_content_hash(audio_id, path.parent, here)}{path.suffix.lower()}"
+    fake.buckets[TEST_BUCKET][key] = path.read_bytes()
+    db.update_audio_file_storage(audio_id, "s3", key)
+    return key

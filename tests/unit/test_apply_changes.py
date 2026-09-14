@@ -1,6 +1,6 @@
 """Applying a batch of changes through the core, driven from Python.
 
-These cover the feed (`get_changes_since`), the apply path, and the rule that a
+These cover the feed (`get_changes_after_seq`), the apply path, and the rule that a
 delete never destroys an edit it did not see (HEAD-6, CONF-10). They use a
 second real database rather than hand-written rows where the rule needs it,
 because the value of a field travels as a version and a bare row is only a hint
@@ -16,7 +16,7 @@ from typing import Generator
 import pytest
 
 from core.database import Database, set_local_device_id
-from tests.sync_support import SyncChange, apply_sync_changes, get_changes_since
+from tests.sync_support import SyncChange, apply_sync_changes, read_feed
 
 LOCAL_DEVICE = uuid.UUID("00000000-0000-7000-8000-000000000001")
 PEER_DEVICE = uuid.UUID("00000000-0000-7000-8000-000000000002")
@@ -55,14 +55,14 @@ def push(
     source_device: uuid.UUID,
     target: Database,
     target_device: uuid.UUID,
-    cursor: object = None,
+    cursor: int = 0,
 ) -> tuple:
     """Send everything the source has learned since `cursor` to the target.
 
     Returns (applied, conflicts, errors, cursor for the next push).
     """
     on_device(source_device)
-    changes, next_cursor = get_changes_since(source, cursor)
+    changes, next_cursor = read_feed(source, cursor)
     on_device(target_device)
     applied, conflicts, errors = apply_sync_changes(
         target, changes, source_device.hex, "Test Peer"
@@ -70,13 +70,13 @@ def push(
     return applied, conflicts, errors, next_cursor
 
 
-class TestGetChangesSince:
+class TestReadingTheFeed:
     """Reading the feed."""
 
     def test_returns_only_the_system_tags_for_empty_db(self, sync_db: Database) -> None:
         """A database with nothing of the user's in it offers nothing of the
         user's, though the tags it was created with are there."""
-        changes, _ = get_changes_since(sync_db, None)
+        changes, _ = read_feed(sync_db)
         assert [c for c in changes if c.entity_type == "note"] == []
         assert all(
             c.entity_type != "tag" or c.data["name"].startswith("_") for c in changes
@@ -85,7 +85,7 @@ class TestGetChangesSince:
     def test_returns_note_changes(self, sync_db: Database) -> None:
         """A created note is in the feed as a create."""
         sync_db.create_note("Test content")
-        changes, _ = get_changes_since(sync_db, None)
+        changes, _ = read_feed(sync_db)
 
         note_change = next((c for c in changes if c.entity_type == "note"), None)
         assert note_change is not None
@@ -284,23 +284,3 @@ class TestApplySyncChangesDeleteConflicts:
         peer_note = peer_db.get_note_raw(note_id)
         assert peer_note is not None
         assert peer_note["deleted_at"] is not None, "The second delete stands"
-
-
-class TestGetFullDataset:
-    """The whole database as one document, kept for tools."""
-
-    def test_returns_all_data(self, sync_db: Database) -> None:
-        note_id = sync_db.create_note("Test note")
-        tag_id = sync_db.create_tag("TestTag")
-
-        data = sync_db.get_full_dataset()
-
-        assert "notes" in data
-        assert "tags" in data
-        assert "note_tags" in data
-        assert len(data["notes"]) == 1
-        # Every database is created with the system tags, so count only the
-        # tag this test made.
-        user_tags = [t for t in data["tags"] if not t["name"].startswith("_")]
-        assert [t["id"] for t in user_tags] == [tag_id]
-        assert data["notes"][0]["id"] == note_id

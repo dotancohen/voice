@@ -64,8 +64,11 @@ def test_a_copy_removed_on_one_device_while_another_uploads_is_known_on_both(pai
     a, b = node_a.device_id_hex, node_b.device_id_hex
     assert held(node_b, audio_id) == {a: True, b: True}, "B states its copy and A's"
 
-    # At once: A removes its copy to save space; B uploads the file
-    node_a.db.remove_local_copy(audio_id, node_a.config_dir / "audio", a)
+    # At once: A removes its copy to save space, once B promises to keep its
+    # own (FILE-26); B uploads the file
+    set_local_device_id(node_a.device_id)
+    removed = SyncClient(str(node_a.config_dir)).remove_local_copy(audio_id)
+    assert removed.endswith(f"{node_b.name} holds it"), removed
     assert not local_path(node_a, audio_id).exists()
     set_local_device_id(node_b.device_id)
     uploaded = upload_pending_audio_files(str(node_b.config_dir))

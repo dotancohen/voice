@@ -163,8 +163,8 @@ class TrashDialog(QDialog):
         if confirm.exec() != QMessageBox.StandardButton.Yes:
             return
 
-        audio_ids = self.db.purge_note(note["id"])
-        removed = remove_audio_files(audio_ids, self.audiofile_directory)
+        purged = self.db.purge_note(note["id"])
+        removed = remove_audio_files(purged, self.audiofile_directory)
         self.changed = True
         self.reload()
         if removed:
@@ -173,20 +173,12 @@ class TrashDialog(QDialog):
             )
 
 
-def remove_audio_files(audio_ids: List[str], directory: Optional[Path]) -> int:
+def remove_audio_files(purged: List[Dict[str, str]], directory: Optional[Path]) -> int:
     """Delete the files of recordings that were purged; return how many went.
 
-    The database says which recordings were removed; where their files live
-    is the application's business, not the core's.
+    Each purged recording carries the name its file has here (FILE-15); a file
+    is never found by the recording's id.
     """
-    if not audio_ids or directory is None:
-        return 0
-    removed = 0
-    for audio_id in audio_ids:
-        for path in Path(directory).glob(f"{audio_id}.*"):
-            try:
-                path.unlink()
-                removed += 1
-            except OSError:
-                pass
-    return removed
+    from src.core.purge import remove_purged_files
+
+    return len(remove_purged_files(purged, directory))

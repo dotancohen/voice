@@ -280,61 +280,6 @@ class TestPeerSyncTimestampAccuracy:
                 assert timestamps[i] >= timestamps[i - 1]
 
 
-class TestPeerHandshakeTimestamps:
-    """Tests for timestamps in handshake responses."""
-
-    def test_handshake_returns_last_sync(
-        self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
-    ):
-        """Handshake response includes last_sync_timestamp."""
-        node_a, node_b = two_nodes_with_servers
-
-        import requests
-
-        # First sync to establish record
-        sync_nodes(node_a, node_b)
-
-        # Now handshake should include last_sync
-        response = requests.post(
-            f"{node_b.url}/sync/handshake",
-            headers=auth_for(node_a),
-            json={
-                "device_id": node_a.device_id_hex,
-                "device_name": "NodeA",
-                "protocol_version": "2.0",
-                "account_id": ACCOUNT_ID,
-            },
-            timeout=5,
-        )
-
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-        data = response.json()
-        # May or may not have last_sync depending on implementation
-        assert "last_sync_timestamp" in data or data.get("device_id") is not None
-
-    def test_handshake_null_last_sync_for_new_peer(self, running_server_a: SyncNode):
-        """Handshake returns null last_sync for new peer."""
-        import requests
-
-        new_peer = "00000000000070008000000099999999"
-        response = requests.post(
-            f"{running_server_a.url}/sync/handshake",
-            headers=admit_test_device(running_server_a, new_peer, "NewPeer"),
-            json={
-                "device_id": new_peer,
-                "device_name": "NewPeer",
-                "protocol_version": "2.0",
-                "account_id": ACCOUNT_ID,
-            },
-            timeout=5,
-        )
-
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-        data = response.json()
-        # New peer should have null last_sync
-        assert data.get("last_sync_timestamp") is None
-
-
 class TestPeerCleanup:
     """Tests for peer record cleanup."""
 

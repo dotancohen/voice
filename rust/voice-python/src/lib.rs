@@ -113,6 +113,8 @@ fn audio_file_row_to_dict<'py>(py: Python<'py>, audio_file: &database::AudioFile
     dict.set_item("disk_name", &audio_file.disk_name)?;
     dict.set_item("content_sha256", &audio_file.content_sha256)?;
     dict.set_item("storage_encrypted", audio_file.storage_encrypted)?;
+    dict.set_item("origin_device_id", &audio_file.origin_device_id)?;
+    dict.set_item("origin_kind", &audio_file.origin_kind)?;
     Ok(dict)
 }
 
@@ -189,22 +191,49 @@ fn json_value_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult
 // Database wrapper
 // ============================================================================
 
-#[pyclass(name = "Database", unsendable)]
+/// The database behind a lock, so the Python object may be used and freed on
+/// any thread. Python's garbage collector runs on whichever thread triggers it,
+/// and an object marked `unsendable` that it freed there raised "is unsendable,
+/// but is being dropped on another thread" and was never closed.
+#[pyclass(name = "Database")]
 pub struct PyDatabase {
-    inner: Option<database::Database>,
+    inner: Mutex<Option<database::Database>>,
+}
+
+/// The open database while its lock is held; released when this is dropped.
+struct DatabaseGuard<'a>(std::sync::MutexGuard<'a, Option<database::Database>>);
+
+impl std::ops::Deref for DatabaseGuard<'_> {
+    type Target = database::Database;
+    fn deref(&self) -> &database::Database {
+        // Checked open in `inner_ref`, and `close` cannot run while the lock is held
+        self.0.as_ref().expect("checked open when the lock was taken")
+    }
+}
+
+impl std::ops::DerefMut for DatabaseGuard<'_> {
+    fn deref_mut(&mut self) -> &mut database::Database {
+        self.0.as_mut().expect("checked open when the lock was taken")
+    }
 }
 
 impl PyDatabase {
-    fn inner_ref(&self) -> PyResult<&database::Database> {
-        self.inner
-            .as_ref()
-            .ok_or_else(|| DatabaseError::new_err("Database has been closed"))
+    /// The lock of a thread that panicked inside a call is taken over: the
+    /// database itself is SQLite's, whose transactions keep it consistent.
+    fn locked(&self) -> std::sync::MutexGuard<'_, Option<database::Database>> {
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn inner_mut(&mut self) -> PyResult<&mut database::Database> {
-        self.inner
-            .as_mut()
-            .ok_or_else(|| DatabaseError::new_err("Database has been closed"))
+    fn inner_ref(&self) -> PyResult<DatabaseGuard<'_>> {
+        let guard = self.locked();
+        if guard.is_none() {
+            return Err(DatabaseError::new_err("Database has been closed"));
+        }
+        Ok(DatabaseGuard(guard))
+    }
+
+    fn inner_mut(&self) -> PyResult<DatabaseGuard<'_>> {
+        self.inner_ref()
     }
 }
 
@@ -221,11 +250,12 @@ impl PyDatabase {
             None => database::Database::new_in_memory(),
         }
         .map_err(voice_error_to_pyerr)?;
-        Ok(Self { inner: Some(db) })
+        Ok(Self { inner: Mutex::new(Some(db)) })
     }
 
-    fn close(&mut self) -> PyResult<()> {
-        if let Some(db) = self.inner.take() {
+    fn close(&self) -> PyResult<()> {
+        let taken = self.locked().take();
+        if let Some(db) = taken {
             db.close().map_err(voice_error_to_pyerr)?;
         }
         Ok(())
@@ -305,8 +335,33 @@ impl PyDatabase {
     ///
     /// Returns the ids of the recordings that went with it, so the caller
     /// can delete the files themselves.
-    fn purge_note(&self, note_id: &str) -> PyResult<Vec<String>> {
-        self.inner_ref()?.purge_note(note_id).map_err(voice_error_to_pyerr)
+    /// The recordings removed with the note: dicts with `id` and `disk_name`,
+    /// the name each file has here (FILE-15).
+    fn purge_note<'py>(&self, py: Python<'py>, note_id: &str) -> PyResult<Vec<PyObject>> {
+        let purged = self.inner_ref()?.purge_note(note_id).map_err(voice_error_to_pyerr)?;
+        purged
+            .into_iter()
+            .map(|r| {
+                let dict = PyDict::new(py);
+                dict.set_item("id", r.id)?;
+                dict.set_item("disk_name", r.disk_name)?;
+                Ok(dict.into_any().unbind())
+            })
+            .collect()
+    }
+
+    /// "recorded" or "imported" when `here` (this device by default) made the
+    /// recording, no place is known to hold it, and its file is not in
+    /// `audio_dir`; None otherwise (FILE-25).
+    #[pyo3(signature = (audio_id, audio_dir, here=None))]
+    fn made_here_but_missing(&self, audio_id: &str, audio_dir: &str, here: Option<String>) -> PyResult<Option<String>> {
+        let here = here.unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        self.inner_ref()?.made_here_but_missing(audio_id, std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
+    }
+
+    /// The live recording imported under this file name with these bytes (D31).
+    fn find_imported_audio_file(&self, filename: &str, content_sha256: &str) -> PyResult<Option<String>> {
+        self.inner_ref()?.find_imported_audio_file(filename, content_sha256).map_err(voice_error_to_pyerr)
     }
 
     #[pyo3(signature = (name, parent_id=None))]
@@ -460,28 +515,6 @@ impl PyDatabase {
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (since=None, limit=1000))]
-    fn get_changes_since<'py>(
-        &self,
-        py: Python<'py>,
-        since: Option<i64>,
-        limit: i64,
-    ) -> PyResult<PyObject> {
-        let (changes, latest) = self
-            .inner_ref()?
-            .get_changes_since(since, limit)
-            .map_err(voice_error_to_pyerr)?;
-
-        let result = PyDict::new(py);
-        let changes_list = PyList::empty(py);
-        for change in &changes {
-            changes_list.append(hashmap_to_pydict(py, change)?)?;
-        }
-        result.set_item("changes", changes_list)?;
-        result.set_item("latest_timestamp", latest)?;
-        Ok(result.into_any().unbind())
-    }
-
     /// Write-order feed: changes with seq > cursor (and <= upto when given).
     /// Returns {"changes": [...], "next_cursor": int, "is_complete": bool}.
     #[pyo3(signature = (cursor=0, upto=None, limit=1000))]
@@ -559,14 +592,6 @@ impl PyDatabase {
         self.inner_ref()?.check_files_here(std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
     }
 
-    /// Remove this device's copy of a recording to save space; refused when
-    /// no other place holds the file (FILE-22).
-    #[pyo3(signature = (audio_id, audio_dir, here=None))]
-    fn remove_local_copy(&self, audio_id: &str, audio_dir: &str, here: Option<&str>) -> PyResult<()> {
-        let here = here.map(str::to_string).unwrap_or_else(|| database::get_local_device_id().simple().to_string());
-        self.inner_ref()?.remove_local_copy(audio_id, std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
-    }
-
     /// The account's upload limit in bytes (FILE-23).
     fn max_upload_bytes(&self) -> PyResult<u64> {
         self.inner_ref()?.max_upload_bytes().map_err(voice_error_to_pyerr)
@@ -584,7 +609,7 @@ impl PyDatabase {
     #[pyo3(signature = (audio_dir=None, here=None))]
     fn issues<'py>(&self, py: Python<'py>, audio_dir: Option<&str>, here: Option<&str>) -> PyResult<PyObject> {
         let here = here.map(str::to_string).unwrap_or_else(|| database::get_local_device_id().simple().to_string());
-        let found = voicecore_lib::issues::issues(self.inner_ref()?, audio_dir.map(std::path::Path::new), &here).map_err(voice_error_to_pyerr)?;
+        let found = voicecore_lib::issues::issues(&*self.inner_ref()?, audio_dir.map(std::path::Path::new), &here).map_err(voice_error_to_pyerr)?;
         let mut value = serde_json::to_value(&found).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         if let Some(list) = value.get_mut("recordings_not_in_cloud").and_then(|v| v.as_array_mut()) {
             for (item, recording) in list.iter_mut().zip(&found.recordings_not_in_cloud) {
@@ -687,22 +712,8 @@ impl PyDatabase {
 
     /// Replace the database's contents with a snapshot's (SNAP-4); the
     /// state replaced is snapshotted first.
-    fn restore_snapshot(&mut self, name: &str) -> PyResult<()> {
+    fn restore_snapshot(&self, name: &str) -> PyResult<()> {
         self.inner_mut()?.restore_snapshot(name).map_err(voice_error_to_pyerr)
-    }
-
-    fn get_full_dataset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
-        let dataset = self.inner_ref()?.get_full_dataset().map_err(voice_error_to_pyerr)?;
-
-        let result = PyDict::new(py);
-        for (key, items) in &dataset {
-            let list = PyList::empty(py);
-            for item in items {
-                list.append(hashmap_to_pydict(py, item)?)?;
-            }
-            result.set_item(key, list)?;
-        }
-        Ok(result.into_any().unbind())
     }
 
     // ========================================================================
@@ -1196,9 +1207,12 @@ impl PyDatabase {
     }
 
     /// Compute and store a recording's content hash (Stage 13) from its file
-    /// under the audio directory, after it is copied there. Returns the hash.
-    fn store_content_hash(&self, audio_id: &str, audio_dir: &str) -> PyResult<String> {
-        self.inner_ref()?.store_content_hash(audio_id, std::path::Path::new(audio_dir)).map_err(voice_error_to_pyerr)
+    /// under the audio directory, after it is copied there; `here` (this
+    /// device by default) states that it holds the file (FILE-22). Returns the hash.
+    #[pyo3(signature = (audio_id, audio_dir, here=None))]
+    fn store_content_hash(&self, audio_id: &str, audio_dir: &str, here: Option<String>) -> PyResult<String> {
+        let here = here.unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        self.inner_ref()?.store_content_hash(audio_id, std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
     }
 
     // ========================================================================
@@ -1338,19 +1352,6 @@ impl PyDatabase {
     // ========================================================================
     // Maintenance methods
     // ========================================================================
-
-    /// Normalize database data for consistency.
-    ///
-    /// This runs various normalization passes:
-    /// - Timestamp normalization (ISO 8601 -> SQLite format)
-    /// - (Future: Unicode normalization, etc.)
-    fn normalize_database(&mut self) -> PyResult<()> {
-        self.inner
-            .as_mut()
-            .ok_or_else(|| DatabaseError::new_err("Database has been closed"))?
-            .normalize_database()
-            .map_err(voice_error_to_pyerr)
-    }
 
     // ========================================================================
     // Note Display Cache methods
@@ -1900,7 +1901,9 @@ impl From<sync_client::SyncResult> for PySyncResult {
 }
 
 /// Sync client for synchronizing with peers
-#[pyclass(name = "SyncClient", unsendable)]
+/// Safe to use and free on any thread: the core's client keeps its database,
+/// configuration and connections behind locks of its own.
+#[pyclass(name = "SyncClient")]
 pub struct PySyncClient {
     inner: sync_client::SyncClient,
     runtime: tokio::runtime::Runtime,
@@ -2023,6 +2026,14 @@ impl PySyncClient {
             list.append(d)?;
         }
         Ok(list.into_any().unbind())
+    }
+
+    /// Remove this device's copy of a recording to save space (FILE-26): only
+    /// when the bucket, or a device that holds the file, confirms now that it
+    /// does. Returns the sentence naming that place; raises with what each
+    /// place answered when none confirmed.
+    fn remove_local_copy(&self, py: Python<'_>, audio_id: &str) -> PyResult<String> {
+        self.run(py, self.inner.remove_local_copy(audio_id)).map_err(voice_error_to_pyerr)
     }
 
     /// Perform full bidirectional sync with a peer
@@ -2250,6 +2261,23 @@ fn pairing_withdraw(config_dir: Option<&str>) -> PyResult<()> {
 #[pyo3(signature = (port, host="0.0.0.0", plain_http=false))]
 fn listen_urls(port: u16, host: &str, plain_http: bool) -> Vec<String> {
     sync_server::listen_urls(host, port, plain_http)
+}
+
+/// Where this device's listener can be reached (LISTEN-4), as
+/// {"detected", "shown", "urls", "sentence"}: the address found through this
+/// machine's route, or every candidate and the sentence saying that only one
+/// of them is correct; `urls` is every address, in the order another device
+/// tries them.
+#[pyfunction]
+#[pyo3(signature = (port, host="0.0.0.0", plain_http=false))]
+fn listen_addresses(py: Python<'_>, port: u16, host: &str, plain_http: bool) -> PyResult<PyObject> {
+    let found = sync_server::listen_addresses(host, port, plain_http);
+    let dict = PyDict::new(py);
+    dict.set_item("detected", found.detected)?;
+    dict.set_item("shown", found.shown)?;
+    dict.set_item("urls", found.urls)?;
+    dict.set_item("sentence", found.sentence)?;
+    Ok(dict.into_any().unbind())
 }
 
 /// The hash a card holds for a device key (hex SHA-256).
@@ -2482,10 +2510,11 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
     })?;
     let audiofile_path = std::path::PathBuf::from(audiofile_dir);
     let key = cfg.recording_key();
+    let here = cfg.device_id_hex().to_string();
 
     // Run the upload without the interpreter lock; the database moves in
     let result: Result<file_storage::UploadPendingResult, file_storage::FileStorageError> =
-        py.allow_threads(move || runtime.block_on(file_storage::upload_pending_audio_files(&db, &audiofile_path, None, None, key.as_ref())));
+        py.allow_threads(move || runtime.block_on(file_storage::upload_pending_audio_files(&db, &audiofile_path, None, None, key.as_ref(), &here)));
 
     match result {
         Ok(r) => Ok(PyUploadPendingResult {
@@ -2557,8 +2586,8 @@ fn audio_file_formats() -> Vec<String> {
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
 fn reupload_encrypted(py: Python<'_>, config_dir: Option<&str>) -> PyResult<PyUploadPendingResult> {
-    let (runtime, db, audiofile_dir, key, _here) = cloud_context(config_dir)?;
-    let result = py.allow_threads(move || runtime.block_on(file_storage::reupload_encrypted(&db, &audiofile_dir, None, None, key.as_ref())));
+    let (runtime, db, audiofile_dir, key, here) = cloud_context(config_dir)?;
+    let result = py.allow_threads(move || runtime.block_on(file_storage::reupload_encrypted(&db, &audiofile_dir, None, None, key.as_ref(), &here)));
     match result {
         Ok(r) => Ok(PyUploadPendingResult { uploaded: r.uploaded, skipped: r.skipped, failed: r.failed, deferred: r.deferred, too_large: r.too_large, errors: r.errors }),
         Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
@@ -2657,7 +2686,7 @@ fn start_sync_server(
     println!("  Device Name: {}", cfg.device_name());
     println!("  Listening:   {}://{}:{}", if plain_http { "http" } else { "https" }, host, server_port);
     println!("  Account:     {}", db.account_id().unwrap_or_default());
-    println!("  Endpoints:   /sync/status, /sync/changes, /sync/full, /sync/apply");
+    println!("  Endpoints:   /sync/status, /sync/changes, /sync/apply");
     if verbose {
         println!("  Logging:     enabled (verbose mode)");
     }
@@ -2827,12 +2856,64 @@ fn bucket_nearest_region(py: Python<'_>, regions: Option<Vec<String>>) -> PyResu
     Ok(bucket_runtime()?.block_on(voicecore_lib::bucket_setup::nearest_region(&refs)))
 }
 
+/// The name of the storage service an endpoint belongs to, for a sentence:
+/// Amazon without an endpoint, a known service by its address, otherwise the
+/// endpoint's host name.
+#[pyfunction]
+#[pyo3(signature = (endpoint=None))]
+fn bucket_provider_name(endpoint: Option<&str>) -> String {
+    voicecore_lib::bucket_setup::provider_name(endpoint)
+}
+
 /// Whether a bucket of this name answers this key; raises with the reason when the answer is neither.
 #[pyfunction]
 #[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None))]
 fn bucket_exists(py: Python<'_>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>) -> PyResult<bool> {
     let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
     py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::bucket_exists(&key, name))))?.map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
+/// What is wrong with a pasted access key ID, or None (Amazon's shape; another service's key only has to be there).
+#[pyfunction]
+#[pyo3(signature = (text, for_endpoint=false))]
+fn bucket_access_key_id_problem(text: &str, for_endpoint: bool) -> Option<String> {
+    voicecore_lib::bucket_setup::access_key_id_problem(text, for_endpoint)
+}
+
+/// What is wrong with a pasted secret access key, or None.
+#[pyfunction]
+#[pyo3(signature = (text, for_endpoint=false))]
+fn bucket_secret_access_key_problem(text: &str, for_endpoint: bool) -> Option<String> {
+    voicecore_lib::bucket_setup::secret_access_key_problem(text, for_endpoint)
+}
+
+/// "free", "ours" or "taken" for a bucket name; raises with the reason when the key is refused.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, name, endpoint=None))]
+fn bucket_name_state(py: Python<'_>, access_key_id: &str, secret_access_key: &str, region: &str, name: &str, endpoint: Option<&str>) -> PyResult<String> {
+    use voicecore_lib::bucket_setup::NameState;
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    let state = py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::bucket_name_state(&key, name))))?.map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+    Ok(match state { NameState::Free => "free", NameState::Ours => "ours", NameState::Taken => "taken" }.to_string())
+}
+
+/// A generated bucket name no bucket has yet, checked with the service.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, region, endpoint=None))]
+fn bucket_free_name(py: Python<'_>, access_key_id: &str, secret_access_key: &str, region: &str, endpoint: Option<&str>) -> PyResult<String> {
+    let key = bucket_key(access_key_id, secret_access_key, region, endpoint);
+    py.allow_threads(|| bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::free_bucket_name(&key))))?.map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
+/// The nearest Amazon region that accepts the key, and the nearer ones that did not.
+#[pyfunction]
+#[pyo3(signature = (access_key_id, secret_access_key, regions=None))]
+fn bucket_nearest_accepting_region(py: Python<'_>, access_key_id: &str, secret_access_key: &str, regions: Option<Vec<String>>) -> PyResult<(Option<String>, Vec<String>)> {
+    let regions: Vec<String> = regions.unwrap_or_else(|| voicecore_lib::bucket_setup::REGIONS.iter().map(|r| r.to_string()).collect());
+    py.allow_threads(|| {
+        let refs: Vec<&str> = regions.iter().map(String::as_str).collect();
+        bucket_runtime().map(|r| r.block_on(voicecore_lib::bucket_setup::nearest_accepting_region(access_key_id, secret_access_key, &refs)))
+    })
 }
 
 /// Make the bucket, private.
@@ -2946,7 +3027,8 @@ fn apply_sync_changes<'py>(
     local_device_id: Option<&str>,
     local_device_name: Option<&str>,
 ) -> PyResult<PyObject> {
-    let db_ref = db.inner_ref()?;
+    let db_guard = db.inner_ref()?;
+    let db_ref: &database::Database = &db_guard;
 
     // Convert Python dicts or dataclass objects to SyncChange structs
     let mut rust_changes = Vec::new();
@@ -3176,7 +3258,8 @@ impl PySearchResult {
 #[pyfunction]
 #[pyo3(name = "execute_search")]
 fn py_execute_search(db: &PyDatabase, search_input: &str) -> PyResult<PySearchResult> {
-    let db_ref = db.inner_ref()?;
+    let db_guard = db.inner_ref()?;
+    let db_ref: &database::Database = &db_guard;
     let result = search::execute_search(db_ref, search_input).map_err(voice_error_to_pyerr)?;
     Ok(PySearchResult {
         notes: result.notes,
@@ -3188,7 +3271,8 @@ fn py_execute_search(db: &PyDatabase, search_input: &str) -> PyResult<PySearchRe
 #[pyfunction]
 #[pyo3(name = "resolve_tag_term")]
 fn py_resolve_tag_term(db: &PyDatabase, tag_term: &str) -> PyResult<(Vec<String>, bool, bool)> {
-    let db_ref = db.inner_ref()?;
+    let db_guard = db.inner_ref()?;
+    let db_ref: &database::Database = &db_guard;
     let (tag_ids, is_ambiguous, not_found) = search::resolve_tag_term(db_ref, tag_term)
         .map_err(voice_error_to_pyerr)?;
     Ok((tag_ids, is_ambiguous, not_found))
@@ -3197,14 +3281,16 @@ fn py_resolve_tag_term(db: &PyDatabase, tag_term: &str) -> PyResult<(Vec<String>
 #[pyfunction]
 #[pyo3(name = "get_tag_full_path")]
 fn py_get_tag_full_path(db: &PyDatabase, tag_id: &str) -> PyResult<String> {
-    let db_ref = db.inner_ref()?;
+    let db_guard = db.inner_ref()?;
+    let db_ref: &database::Database = &db_guard;
     search::get_tag_full_path(db_ref, tag_id).map_err(voice_error_to_pyerr)
 }
 
 #[pyfunction]
 #[pyo3(name = "find_ambiguous_tags")]
 fn py_find_ambiguous_tags(db: &PyDatabase, tag_terms: Vec<String>) -> PyResult<Vec<String>> {
-    let db_ref = db.inner_ref()?;
+    let db_guard = db.inner_ref()?;
+    let db_ref: &database::Database = &db_guard;
     search::find_ambiguous_tags(db_ref, &tag_terms).map_err(voice_error_to_pyerr)
 }
 
@@ -3212,7 +3298,8 @@ fn py_find_ambiguous_tags(db: &PyDatabase, tag_terms: Vec<String>) -> PyResult<V
 #[pyo3(name = "build_tag_search_term")]
 #[pyo3(signature = (db, tag_id, use_full_path=false))]
 fn py_build_tag_search_term(db: &PyDatabase, tag_id: &str, use_full_path: bool) -> PyResult<String> {
-    let db_ref = db.inner_ref()?;
+    let db_guard = db.inner_ref()?;
+    let db_ref: &database::Database = &db_guard;
     search::build_tag_search_term(db_ref, tag_id, use_full_path).map_err(voice_error_to_pyerr)
 }
 
@@ -3294,14 +3381,6 @@ fn py_validate_note_content(content: &str) -> PyResult<()> {
 #[pyo3(signature = (query=None))]
 fn py_validate_search_query(query: Option<&str>) -> PyResult<()> {
     validation::validate_search_query(query).map_err(voice_error_to_pyerr)
-}
-
-#[pyfunction]
-#[pyo3(name = "validate_datetime")]
-#[pyo3(signature = (value, field_name=None))]
-fn py_validate_datetime(value: &str, field_name: Option<&str>) -> PyResult<()> {
-    let field = field_name.unwrap_or("datetime");
-    validation::validate_datetime(value, field).map_err(voice_error_to_pyerr)
 }
 
 #[pyfunction]
@@ -3406,6 +3485,7 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hosting_offer, m)?)?;
     m.add_function(wrap_pyfunction!(pairing_withdraw, m)?)?;
     m.add_function(wrap_pyfunction!(listen_urls, m)?)?;
+    m.add_function(wrap_pyfunction!(listen_addresses, m)?)?;
     m.add_function(wrap_pyfunction!(stop_sync_server, m)?)?;
     m.add_function(wrap_pyfunction!(sync_server_running, m)?)?;
     m.add_function(wrap_pyfunction!(listener_idle_seconds, m)?)?;
@@ -3417,10 +3497,16 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(bucket_clean_secret, m)?,
         wrap_pyfunction!(bucket_suggest_name, m)?,
         wrap_pyfunction!(bucket_name_problem, m)?,
+        wrap_pyfunction!(bucket_provider_name, m)?,
         wrap_pyfunction!(bucket_explain_error, m)?,
         wrap_pyfunction!(bucket_regions, m)?,
         wrap_pyfunction!(bucket_nearest_region, m)?,
         wrap_pyfunction!(bucket_exists, m)?,
+        wrap_pyfunction!(bucket_access_key_id_problem, m)?,
+        wrap_pyfunction!(bucket_secret_access_key_problem, m)?,
+        wrap_pyfunction!(bucket_name_state, m)?,
+        wrap_pyfunction!(bucket_free_name, m)?,
+        wrap_pyfunction!(bucket_nearest_accepting_region, m)?,
         wrap_pyfunction!(bucket_create, m)?,
         wrap_pyfunction!(bucket_harden, m)?,
         wrap_pyfunction!(bucket_set_lifecycle, m)?,
@@ -3471,7 +3557,6 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_validate_tag_name, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_note_content, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_search_query, m)?)?;
-    m.add_function(wrap_pyfunction!(py_validate_datetime, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_audio_file_id, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_attachment_id, m)?)?;
     m.add_function(wrap_pyfunction!(py_validate_audio_extension, m)?)?;

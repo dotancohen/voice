@@ -231,7 +231,7 @@ other part of the suite, select by directory (section 3.2).
 
 | Directory | What it tests |
 |---|---|
-| `tests/unit/` | The Python layer in `src/core/` and the core through its Python bindings, without servers: the database and search, configuration, validation, edge cases (length limits, Unicode, Hebrew), recordings and their file names, the display caches, conflicts between two databases in one process, the trash, cloud storage decisions without the network, missing data, timestamps shown at their recorded offset, transcription flags, the transcription queue and backlog, waveforms |
+| `tests/unit/` | The Python layer in `src/core/` and the core through its Python bindings, without servers: the database and search, configuration, validation, edge cases (length limits, Unicode, Hebrew), recordings and their file names, the display caches, conflicts between two databases in one process, the trash, cloud storage decisions without the network, where the copies of a recording are and removing this device's copy (with `FakeS3`), missing data, timestamps shown at their recorded offset, transcription flags, the transcription queue and backlog, waveforms, this device's address in words |
 | `tests/sync/` | Sync between installations: the Rust sync server started as a child process, the sync client, the command-line sync commands, accounts, pairing, hosting, discovery on the local network, protocol versions, pagination, validation of what a peer sends, conflicts between devices, concurrent syncs, network failures, files between instances, the bucket wizard, the transcription flags contract |
 | `tests/cli/` | The command line (`python -m src.main cli ...`), run as a child process with `VOICE_CONFIG_DIR` set to a temporary directory: listing, showing and searching notes, output formats, accounts, devices, peers, recordings, issues, storage, trash, merging notes |
 | `tests/gui/` | The Qt interface, with real widgets built on the session's `qapp` and clicked or typed into directly: the tags pane, the notes list, search, the note pane (conflicts, copies of a recording, missing media), the sync, trash and issues dialogs |
@@ -265,6 +265,8 @@ other part of the suite, select by directory (section 3.2).
 | `tests/sync/test_sync_over_a_failing_network.py` | Sync and file transfers between two installations through the fault proxy (FILE-14) |
 | `tests/sync/test_storage_setup.py` | The bucket wizard against `FakeS3`, including `storage setup` and `storage check` from the command line |
 | `tests/sync/test_file_locations_sync.py` | FILE-22 between two installations with moto |
+| `tests/unit/test_file_locations.py` | FILE-22, FILE-23 and FILE-26: a copy is removed only when the bucket, asked at that moment, confirms that it holds the file |
+| `tests/unit/test_addresses_text.py` | LISTEN-4: the words for this device's address, and the shape of the core's `listen_addresses` on this machine |
 | `tests/sync/test_sync_server.py` | The Rust sync server's endpoints, with the server started as a real process |
 | `tests/sync/test_sync_concurrent.py` | Concurrent syncs and edits during a sync, using the subprocess helpers of section 8 |
 | `tests/sync/test_transcription_flags_contract.py`, `tests/sync/test_transcription_flags_sync.py` | The contract with the phone, and every field shape in it carried through a real sync (section 9) |
@@ -381,8 +383,11 @@ Users: `tests/integration/test_file_storage.py` and
 
 ### 6.2 `FakeS3`: the wizard's server
 
-`tests/fake_s3.py` is a small S3 server in a thread, used only by
-`tests/sync/test_storage_setup.py`. It checks that every request is signed
+`tests/fake_s3.py` is a small S3 server in a thread, used by
+`tests/sync/test_storage_setup.py`, `tests/gui/test_storage_wizard.py`,
+`tests/unit/test_file_locations.py`, `tests/cli/test_cli_issues.py`,
+`tests/web/test_api_issues.py`, `tests/gui/test_note_pane_copies.py` and
+`tests/tui/test_tui_copies.py`. It checks that every request is signed
 (signature version 4) with its own key id (by default `AKIAIOSFODNN7EXAMPLE`),
 answers every DELETE with `403 AccessDenied` and records that one was attempted
 (`deleted_anything()`), can refuse every request with a chosen error code
@@ -465,14 +470,17 @@ describes the Android tests.
 - Subprocess versions (`run_db_operation`, `create_note_subprocess`,
   `update_note_subprocess`, `delete_note_subprocess`, `get_note_subprocess`,
   `get_note_count_subprocess`, `sync_nodes_subprocess`) run each operation in
-  a separate Python process, because the core's database object cannot be
-  used from more than one thread.
+  a separate Python process. They were written when the core's database object
+  could not be used from more than one thread; it can now (its database is
+  behind a lock, `tests/unit/test_database_threads.py`), and separate
+  processes still make the concurrency real.
 
 ### 8.2 Without a server
 
-- `tests/sync_support.py`: `get_changes_since(db, since, limit)` reads a
-  database's feed; `apply_sync_changes(db, changes, peer_device_id)` applies a
-  batch through the core; `get_peer_last_sync` and `update_peer_last_sync`.
+- `tests/sync_support.py`: `read_feed(db, cursor=0, limit=100000)` reads a
+  database's write-order feed after the cursor and returns the changes with the
+  cursor to continue from; `apply_sync_changes(db, changes, peer_device_id)`
+  applies a batch through the core; `get_peer_last_sync` and `update_peer_last_sync`.
   Used by `tests/unit/test_apply_changes.py` and several files in `tests/sync/`.
 - `tests/unit/test_conflicts.py`: two databases in one process exchanging
   their feeds.

@@ -145,8 +145,10 @@ sudo ufw enable
 
 - The bucket holds recordings only; notes, tags and transcriptions never go
   through it.
-- The key that the wizard asks for may touch buckets named `voice-*` only, and
-  its policy contains no action that deletes.
+- The key that the wizard asks for may touch buckets named `voice-*` only. Its
+  policy allows deleting an object (never a bucket); the application never
+  assumes it may, and `../HARDENING-AGAINST-FAILURE-AND-ATTACKS.md` says how to
+  take the permission away.
 - Recordings are uploaded in clear unless encryption is on:
   `storage encrypt on`, allowed only after the recording key was exported
   (`account recording-key export`). An encrypted object is named

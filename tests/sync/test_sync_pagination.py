@@ -19,7 +19,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.database import set_local_device_id
-from tests.sync_support import get_changes_since
+from tests.sync_support import read_feed
 from voicecore import SyncClient
 
 from .conftest import (
@@ -35,12 +35,12 @@ class TestChangesEndpointPagination:
     """Tests for /sync/changes endpoint pagination."""
 
     def test_changes_respects_limit(self, running_server_a: SyncNode):
-        """Changes endpoint respects limit parameter."""
-        # Create many notes
+        """A page holds at most `limit` changes, every entity type together. No
+        type is starved: the next page continues after the last change of this
+        one, so every note arrives by following next_cursor."""
         for i in range(20):
             create_note_on_node(running_server_a, f"Note {i}")
 
-        # Request with small limit
         response = requests.get(
             f"{running_server_a.url}/sync/changes?limit=5",
             headers=AUTH,
@@ -49,15 +49,21 @@ class TestChangesEndpointPagination:
 
         assert response.status_code == 200
         data = response.json()
+        assert len(data["changes"]) == 5
+        assert data["is_complete"] is False
 
-        # The limit applies PER ENTITY TYPE (see CLAUDE.md): a busy type must
-        # not starve the others, so the system tags still come through.
         notes = [c for c in data["changes"] if c["entity_type"] == "note"]
-        tags = [c for c in data["changes"] if c["entity_type"] == "tag"]
-        assert len(notes) == 5
-        assert len(tags) > 0, "tags must not be starved by the note limit"
-        for entity_type in {c["entity_type"] for c in data["changes"]}:
-            assert len([c for c in data["changes"] if c["entity_type"] == entity_type]) <= 5
+        cursor = data["next_cursor"]
+        while not data["is_complete"]:
+            data = requests.get(
+                f"{running_server_a.url}/sync/changes?limit=5&cursor={cursor}",
+                headers=AUTH,
+                timeout=5,
+            ).json()
+            assert len(data["changes"]) <= 5
+            notes.extend(c for c in data["changes"] if c["entity_type"] == "note")
+            cursor = data["next_cursor"]
+        assert len(notes) == 20
 
     def test_changes_is_complete_false(self, running_server_a: SyncNode):
         """Changes returns is_complete=False when more available."""
@@ -97,141 +103,78 @@ class TestChangesEndpointPagination:
         # Should be complete
         assert data["is_complete"] is True
 
-    def test_changes_since_filters_correctly(self, running_server_a: SyncNode):
-        """Changes since timestamp filters correctly."""
-        import time
-
-        # Create first batch
+    def test_a_cursor_returns_only_what_came_after_it(self, running_server_a: SyncNode):
+        """The next_cursor of one read, passed back, returns only the changes written after it."""
         for i in range(3):
-            create_note_on_node(running_server_a, f"Old note {i}")
+            create_note_on_node(running_server_a, f"פתק ישן {i}")
+        response = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH, timeout=5)
+        cursor = response.json()["next_cursor"]
 
-        # Wait a full second (timestamps are second-precision)
-        time.sleep(1.1)
-
-        # Get current timestamp
-        response = requests.get(
-            f"{running_server_a.url}/sync/changes",
-            headers=AUTH,
-            timeout=5,
-        )
-        data = response.json()
-        cutoff_time = data.get("to_timestamp")  # Now an integer (Unix timestamp)
-
-        # Create second batch (wait another second for timestamp difference)
-        time.sleep(1.1)
-        for i in range(3):
-            create_note_on_node(running_server_a, f"New note {i}")
-
-        # Get changes since cutoff
-        if cutoff_time is not None:
-            response = requests.get(
-                f"{running_server_a.url}/sync/changes?since={cutoff_time}",
-                headers=AUTH,
-                timeout=5,
-            )
-            data = response.json()
-
-            # Should only have new notes
-            assert len(data["changes"]) >= 3
-
-    def test_changes_to_timestamp_updates(self, running_server_a: SyncNode):
-        """to_timestamp reflects the latest change."""
-        create_note_on_node(running_server_a, "Test note")
-
-        response = requests.get(
-            f"{running_server_a.url}/sync/changes",
-            headers=AUTH,
-            timeout=5,
-        )
-        data = response.json()
-
-        # Should have a to_timestamp
-        assert data.get("to_timestamp") is not None
+        new_ids = [create_note_on_node(running_server_a, f"פתק חדש {i}") for i in range(3)]
+        response = requests.get(f"{running_server_a.url}/sync/changes?cursor={cursor}", headers=AUTH, timeout=5)
+        notes = {c["entity_id"] for c in response.json()["changes"] if c["entity_type"] == "note"}
+        assert notes == set(new_ids)
 
 
-class TestGetChangesSinceFunction:
-    """Tests for get_changes_since function directly."""
+class TestReadingTheFeed:
+    """The core's feed, read directly."""
 
     def test_get_changes_no_limit(self, sync_node_a: SyncNode):
-        """Get all changes without limit."""
-        # Create notes
+        """Every change, when the limit is larger than the feed."""
         for i in range(10):
             create_note_on_node(sync_node_a, f"Note {i}")
 
         set_local_device_id(sync_node_a.device_id)
-        changes, latest = get_changes_since(sync_node_a.db, None, limit=1000)
+        changes, _ = read_feed(sync_node_a.db, 0, limit=1000)
 
-        # Should return all
-        assert len(changes) >= 10
+        assert len([c for c in changes if c.entity_type == "note"]) == 10
 
-    def test_get_changes_with_limit(self, sync_node_a: SyncNode):
-        """Get changes with limit."""
-        # Create notes
+    def test_the_limit_is_the_page_s_and_the_cursor_continues_after_it(self, sync_node_a: SyncNode):
+        """A limit counts every type together; the next page starts where the last ended."""
         for i in range(20):
             create_note_on_node(sync_node_a, f"Note {i}")
 
         set_local_device_id(sync_node_a.device_id)
-        changes, latest = get_changes_since(sync_node_a.db, None, limit=5)
+        page, cursor = read_feed(sync_node_a.db, 0, limit=5)
+        assert len(page) == 5
+        rest, _ = read_feed(sync_node_a.db, cursor)
+        assert len([c for c in page + rest if c.entity_type == "note"]) == 20
 
-        # Limit is per entity type: at most 5 notes, and tags are still returned
-        assert len([c for c in changes if c.entity_type == "note"]) == 5
-        assert len([c for c in changes if c.entity_type == "tag"]) > 0
-        for entity_type in {c.entity_type for c in changes}:
-            assert len([c for c in changes if c.entity_type == entity_type]) <= 5
-
-    def test_get_changes_since_timestamp(self, sync_node_a: SyncNode):
-        """Get changes since a timestamp."""
-        import time
-
-        # Create first note
+    def test_a_cursor_reads_only_what_was_written_after_it(self, sync_node_a: SyncNode):
+        """What was written after a cursor, and nothing before it."""
         create_note_on_node(sync_node_a, "Old note")
-
-        # Wait a full second to ensure timestamp difference
-        time.sleep(1.1)
-
-        # Get a cutoff timestamp as Unix timestamp
-        cutoff = int(time.time())
-
-        # Wait a full second to ensure new notes are after cutoff
-        time.sleep(1.1)
-
-        # Create more notes
         set_local_device_id(sync_node_a.device_id)
+        _, cursor = read_feed(sync_node_a.db, 0)
+
         for i in range(3):
             create_note_on_node(sync_node_a, f"New note {i}")
+        changes, _ = read_feed(sync_node_a.db, cursor)
 
-        # Get only new changes
-        changes, _ = get_changes_since(sync_node_a.db, cutoff)
+        assert len([c for c in changes if c.entity_type == "note"]) == 3
 
-        # Should get at least the 3 new notes
-        assert len(changes) >= 3
-
-    def test_get_changes_returns_latest_timestamp(self, sync_node_a: SyncNode):
-        """get_changes_since returns latest timestamp."""
+    def test_the_cursor_moves_past_what_was_read(self, sync_node_a: SyncNode):
+        """The cursor returned after a read is past every change the read returned."""
         create_note_on_node(sync_node_a, "Test note")
 
         set_local_device_id(sync_node_a.device_id)
-        changes, latest = get_changes_since(sync_node_a.db, None)
+        changes, cursor = read_feed(sync_node_a.db, 0)
 
-        assert latest is not None
-        assert latest > 0  # Unix timestamp should be positive
+        assert changes and cursor > 0
+        again, _ = read_feed(sync_node_a.db, cursor)
+        assert again == []
 
     def test_get_changes_includes_all_types(self, sync_node_a: SyncNode):
-        """get_changes_since includes notes, tags, and note_tags."""
+        """The feed carries notes, tags, and note_tags."""
         from .conftest import create_tag_on_node
 
-        # Create note and tag
         note_id = create_note_on_node(sync_node_a, "Test note")
         tag_id = create_tag_on_node(sync_node_a, "TestTag")
 
-        # Add tag to note
         set_local_device_id(sync_node_a.device_id)
         sync_node_a.db.add_tag_to_note(note_id, tag_id)
 
-        # Get changes
-        changes, _ = get_changes_since(sync_node_a.db, None)
+        changes, _ = read_feed(sync_node_a.db, 0)
 
-        # Should have all three types
         entity_types = {c.entity_type for c in changes}
         assert "note" in entity_types
         assert "tag" in entity_types
@@ -239,91 +182,30 @@ class TestGetChangesSinceFunction:
 
 
 class TestFollowingPaginatedResults:
-    """Tests for following multiple pages of changes."""
+    """Following the pages of the feed through the endpoint."""
 
-    def test_follow_pagination_manually(self, running_server_a: SyncNode):
-        """Manually follow paginated results."""
-        import time
+    @pytest.mark.parametrize("page_size", [3, 5])
+    def test_following_next_cursor_collects_every_note_exactly_once(self, running_server_a: SyncNode, page_size: int):
+        """Page by page with next_cursor: no note is missed and none comes twice."""
+        note_ids = {create_note_on_node(running_server_a, f"פתק {i}") for i in range(15)}
 
-        # Create notes with distinct timestamps to ensure proper pagination.
-        # With second-precision timestamps, we need sleeps between batches.
-        num_notes = 15
-        for i in range(num_notes):
-            create_note_on_node(running_server_a, f"Note {i}")
-            # Sleep after every 4th note to ensure timestamp differences
-            if i % 4 == 3:
-                time.sleep(1.1)
-
-        all_changes = []
-        since = None
-        iterations = 0
-        max_iterations = 20
-
-        while iterations < max_iterations:
-            url = f"{running_server_a.url}/sync/changes?limit=5"
-            if since:
-                url += f"&since={since}"
-
-            response = requests.get(url, headers=AUTH, timeout=5)
+        notes = []
+        cursor = 0
+        for _ in range(200):
+            response = requests.get(
+                f"{running_server_a.url}/sync/changes?limit={page_size}&cursor={cursor}",
+                headers=AUTH,
+                timeout=5,
+            )
             data = response.json()
-
-            new_changes = data["changes"]
-            if not new_changes:
-                break
-
-            all_changes.extend(new_changes)
-            since = data.get("to_timestamp")
-
+            assert len(data["changes"]) <= page_size
+            notes.extend(c["entity_id"] for c in data["changes"] if c["entity_type"] == "note")
+            cursor = data["next_cursor"]
             if data["is_complete"]:
                 break
 
-            iterations += 1
-
-        # Should have collected most changes (some duplicates/gaps possible at timestamp boundaries)
-        unique_ids = {c["entity_id"] for c in all_changes}
-        # Pagination with second-precision timestamps can miss entities at boundaries
-        # Accept 60% as sufficient to demonstrate pagination works
-        assert len(unique_ids) >= num_notes * 0.6, f"Expected at least {num_notes * 0.6} unique, got {len(unique_ids)}"
-
-    def test_pagination_allows_duplicates(self, running_server_a: SyncNode):
-        """Following pagination may return duplicates (handled by apply logic)."""
-        import time
-
-        # With >= comparison, entities at the boundary timestamp are re-returned.
-        # This is intentional - duplicates are harmless as apply logic skips them.
-        # Add sleeps to ensure different timestamps across pages.
-        num_notes = 10
-        for i in range(num_notes):
-            create_note_on_node(running_server_a, f"Note {i}")
-            if i % 3 == 2:  # Sleep more frequently to spread out timestamps
-                time.sleep(1.1)
-
-        all_entity_ids = []
-        since = None
-        iterations = 0
-
-        while iterations < 10:
-            url = f"{running_server_a.url}/sync/changes?limit=3"
-            if since:
-                url += f"&since={since}"
-
-            response = requests.get(url, headers=AUTH, timeout=5)
-            data = response.json()
-
-            for change in data["changes"]:
-                all_entity_ids.append(change["entity_id"])
-
-            since = data.get("to_timestamp")
-
-            if data["is_complete"]:
-                break
-
-            iterations += 1
-
-        # With >=, we may see some entities multiple times at page boundaries.
-        # Verify we got most unique entities (duplicates are acceptable, some gaps possible).
-        unique_ids = set(all_entity_ids)
-        assert len(unique_ids) >= num_notes * 0.7, f"Expected at least {num_notes * 0.7} unique, got {len(unique_ids)}"
+        assert data["is_complete"], "the feed was not finished in 200 pages"
+        assert sorted(notes) == sorted(note_ids)
 
 
 class TestLargeDatasetPagination:
@@ -396,7 +278,7 @@ class TestLimitBoundaries:
         assert len(data["changes"]) == 0
 
     def test_limit_one(self, running_server_a: SyncNode):
-        """Limit of 1 returns single change."""
+        """Limit of 1 returns a single change, and says that more remains."""
         for i in range(5):
             create_note_on_node(running_server_a, f"Note {i}")
 
@@ -407,10 +289,8 @@ class TestLimitBoundaries:
         )
 
         data = response.json()
-        # One change per entity type (limit is per type); exactly one note
-        assert len([c for c in data["changes"] if c["entity_type"] == "note"]) == 1
-        for entity_type in {c["entity_type"] for c in data["changes"]}:
-            assert len([c for c in data["changes"] if c["entity_type"] == entity_type]) == 1
+        assert len(data["changes"]) == 1
+        assert data["is_complete"] is False
 
     def test_limit_very_large(self, running_server_a: SyncNode):
         """Very large limit is capped."""

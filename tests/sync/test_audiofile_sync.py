@@ -552,18 +552,18 @@ class TestSyncEdgeCases:
         assert audio_file["filename"] == "recording.mp3"
 
 
-class TestGetChangesSince:
-    """Test getting changes for sync."""
+class TestTheFeed:
+    """The feed carries recordings and their attachments."""
 
     def test_get_audio_file_changes(self, device_a_db: Database) -> None:
-        """Test that audio file changes appear in get_changes_since."""
+        """Test that audio file changes appear in the feed."""
         set_local_device_id(DEVICE_A)
 
         # Create audio file
         audio_id = device_a_db.create_audio_file("recording.mp3")
 
         # Get changes
-        changes = device_a_db.get_changes_since(None, 1000)
+        changes = device_a_db.get_changes_after_seq(0, None, 1000)
 
         # Should include the audio file
         audio_changes = [
@@ -573,14 +573,14 @@ class TestGetChangesSince:
         assert len(audio_changes) >= 1
 
     def test_get_note_attachment_changes(self, device_a_db: Database) -> None:
-        """Test that note attachment changes appear in get_changes_since."""
+        """Test that note attachment changes appear in the feed."""
         set_local_device_id(DEVICE_A)
 
         note_id = device_a_db.create_note("Test note")
         audio_id = device_a_db.create_audio_file("recording.mp3")
         device_a_db.attach_to_note(note_id, audio_id, "audio_file")
 
-        changes = device_a_db.get_changes_since(None, 1000)
+        changes = device_a_db.get_changes_after_seq(0, None, 1000)
 
         attachment_changes = [
             c for c in changes.get("changes", [])

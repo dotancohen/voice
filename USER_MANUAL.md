@@ -125,9 +125,9 @@ python -m src.main gui --theme dark   # Force dark theme
 
 The window has three panes (Tags, the Notes list, the Note) and three menus:
 
-- **File**: `New Note` (Ctrl+N), `Sync…` (Ctrl+Shift+S), `Set up the bucket…`, `Replace the bucket's key…`, `Listen for peers` (a switch), `Manage Tags...`, `Trash...`, `Issues...`, `Calculate missing data...`, `Transcription queue...`, `Quit` (Ctrl+Q)
+- **File**: `New Note` (Ctrl+N), `Sync…` (Ctrl+Shift+S), `Set up the bucket…`, `Replace the bucket's key…`, `Test all syncing paths…`, `Listen for peers` (a switch), `Manage Tags...`, `Trash...`, `Issues...`, `Calculate missing data...`, `Transcription queue...`, `Quit` (Ctrl+Q)
 - **Note**: `Delete Note` (the Delete key); the Note goes to the trash
-- **Help**: `Message Log` (this session's messages from the main window), `Application Log` (the end of `voice.log`), `About` (the version, and this device's account, device id, addresses and certificate fingerprint)
+- **Help**: `Message Log` (this session's messages from the main window), `Application Log` (the end of `voice.log`), `About` (the version, and this device's account, device id, address and certificate fingerprint; see [This device's address](#this-devices-address))
 
 A click on a Tag adds `tag:<name>` to the search field and searches; Shift+click adds the Tag to the selected Note. A click on the star at the start of a row in the Notes list stars or unstars that Note.
 
@@ -214,6 +214,12 @@ python -m src.main cli audiofiles-import /path/to/files/ --tags <tag-id>  # Add 
 python -m src.main cli audiofiles-import /path/to/files/ --tags <id1> <id2>  # Several Tags
 ```
 
+A file the account already holds is not imported again: a Recording that is not
+deleted, with the same file name and the same bytes, whichever device imported
+it. Importing a folder a second time imports only the files that are new, prints
+`Already imported: <file>` for the others, and ends with `Skipped <n> file(s)
+already imported`. The same bytes under another name are a Recording of their own.
+
 #### Recordings on this device and in the cloud
 
 A sync never moves a Recording's file. A file reaches the bucket by upload (`storage upload-pending`) and comes back from it by download; it reaches a peer by send, fetch, deliver or exchange ([The five operations](#the-five-operations)). To download on this device, and to see where the copies are:
@@ -221,7 +227,7 @@ A sync never moves a Recording's file. A file reaches the bucket by upload (`sto
 python -m src.main cli audiofile-download <audiofile-id>         # One file
 python -m src.main cli note-audiofiles-download <note-id>        # All files of a Note
 python -m src.main cli audiofile-show <audiofile-id>             # Where the copies are: the bucket and each device
-python -m src.main cli audiofile-remove-local <audiofile-id>     # Remove this device's copy (refused when it is the only one)
+python -m src.main cli audiofile-remove-local <audiofile-id>     # Remove this device's copy, once the bucket or a device that holds it confirms now that it does
 python -m src.main cli issues                                    # What needs attention (add --format json for a program)
 python -m src.main cli note-audiofiles-list --note-id <note-id>  # The Recordings of a Note, with their copies
 python -m src.main cli audiofiles-waveforms                      # Decode and keep the waveform levels of every Recording on this device that has none
@@ -340,15 +346,6 @@ Example configuration for the CLI:
 
 #### Database maintenance
 
-**Normalize timestamps:**
-
-- Rewrites timestamps stored in ISO 8601 form (2025-12-29T23:22:13.462391) in SQLite form (2025-12-29 23:22:13)
-- Changes only the rows that are still in ISO 8601 form, so running it again changes nothing
-
-```bash
-python -m src.main cli db-maintenance database-normalize
-```
-
 **Rebuild the display caches:**
 
 The display cache stores data calculated in advance for the Note pane and the Notes list (Tags, conflicts, attachments with Transcriptions). It is rebuilt when Notes, Tags or attachments change.
@@ -364,10 +361,10 @@ python -m src.main cli db-maintenance note-rebuild-caches
 
 # Rebuild every cache field in the database (--verbose lists the caches first)
 python -m src.main cli db-maintenance rebuild-all-caches
-
-# Read the length of Recordings that have none from their files (--dry-run: only list them)
-python -m src.main cli db-maintenance audio-rebuild-durations --dry-run
 ```
+
+The length of Recordings that have none is read from their files by
+`calculate-missing-data --no-dates --no-caches` ([Calculating missing data](#calculating-missing-data)).
 
 #### Output formatting
 
@@ -402,7 +399,7 @@ python -m src.main web --debug                    # Debug mode
 | GET | `/api/notes/<id>/attachments` | List the attachments of a Note |
 | GET | `/api/audiofiles/<id>` | Get a Recording's details |
 | GET | `/api/audiofiles/<id>/locations` | Where the Recording's copies are: the bucket and each device, as last stated |
-| POST | `/api/audiofiles/<id>/remove-local` | Remove this device's copy to save space; 409 when no other place holds it, or when it is not on this device |
+| POST | `/api/audiofiles/<id>/remove-local` | Remove this device's copy to save space, once the bucket or a device that holds it confirms now that it does: `{"removed": true, "sentence": "...", "locations": [...]}`; 409 with `error` saying what each place answered when none confirmed, or when the file is not on this device |
 | GET | `/api/issues` | What needs your attention: Recordings not in cloud storage and why, orphaned Transcriptions, attachments and Recordings, Tags whose names contain spaces |
 | GET | `/api/storage/upload-limit` | The account's upload limit in MB |
 | PUT | `/api/storage/upload-limit` | Set the account's upload limit: `{"megabytes": 250}` |
@@ -460,6 +457,18 @@ curl http://127.0.0.1:5000/api/notes/<note-id>/attachments  # List a Note's atta
 curl http://127.0.0.1:5000/api/audiofiles/<audio-id>        # Get a Recording's details
 ```
 
+**Remove this device's copy of a Recording:**
+```bash
+curl -X POST http://127.0.0.1:5000/api/audiofiles/<audio-id>/remove-local
+```
+```json
+{
+  "removed": true,
+  "sentence": "Removed 2026_09_21_14_30_59-abcdefgh.ogg from this device; the bucket holds it",
+  "locations": [...]
+}
+```
+
 #### API Response Format
 
 **Success responses** return the requested data directly:
@@ -484,7 +493,7 @@ curl http://127.0.0.1:5000/api/audiofiles/<audio-id>        # Get a Recording's 
 - `201` - Created (for POST requests)
 - `400` - Bad request (validation error, or an id that is not 32 hex characters)
 - `404` - Not found
-- `409` - Refused: `remove-local` when no other place holds the file, or the file is not on this device
+- `409` - Refused: `remove-local` when no other place confirmed that it holds the file, or the file is not on this device
 - `500` - Internal server error
 
 ## What a transcription says about itself
@@ -617,7 +626,7 @@ good.
 
 Removing a Note for good removes, from the database of this device and of every
 device it syncs with, the Note, its history, its Tag links, its attachments and
-the Recordings that belonged to that Note alone. It cannot be undone, and a
+the Recordings that belonged to that Note alone, and deletes those Recordings' files from this device's audio folder, each found by the name its row stores. It cannot be undone, and a
 device that has not synced yet cannot bring the Note back: the removal is
 written down and travels, and anything that arrives about a removed Note is
 dropped. A Recording that another Note still holds is never removed. A copy
@@ -836,8 +845,10 @@ The words below have one meaning each, in this manual and on screen:
   operations.
 - **Finding each other**: a listening device announces itself on the local
   network with a hash of the account id, never the id. An operation tries
-  the address it remembers first; if nothing answers there, it asks the
-  network where the peer is for three seconds and remembers the answer.
+  the address it remembers first; if nothing answers there, it tries each
+  address the peer's device card names, with the peer's pinned certificate,
+  and remembers the one that answers; if none answers, it asks the network
+  where the peer is for three seconds and remembers the answer.
   `sync discover` and the dialogue's "Find on this network" list the devices of
   the account nearby. A listener without a configured `public_url` serves its
   own network only; a phone on hotel wifi is not a server for the hotel.
@@ -856,13 +867,18 @@ when the listener's certificate is found, the certificate's fingerprint
 
 ```bash
 python -m src.main cli sync serve                  # the showing device must be listening
-python -m src.main cli account show-code           # a QR code and the setup text (add --url if the address is wrong; --text-only for no QR code)
+python -m src.main cli account show-code           # a QR code, the setup text and "This device's address: …" (add --url if the address is wrong; --text-only for no QR code)
 python -m src.main cli account hide-code           # withdraw the code before it expires
 python -m src.main cli account join "voice://pair?..."   # on the new device: paste the setup text
 ```
 
-In the GUI, File → Sync… → `Show my code` shows the QR code and the setup text in
-a window titled `My code`. If the listener is off, it is switched on for the
+The code carries every address this device may be reached at, and the reading
+device tries each in turn and remembers the one that answered. `show-code`
+prints `This device's address: …` under the text, or `The addresses given: …`
+when `--url` was given ([This device's address](#this-devices-address)).
+
+In the GUI, File → Sync… → `Show my code` shows the QR code, the setup text and
+`This device's address: …` in a window titled `My code`. If the listener is off, it is switched on for the
 code and off again when the window closes. **Closing the window withdraws the
 code**, so the other device must read it while the window is open. The desktop
 reads another device's code only with `account join`; the GUI and the TUI have
@@ -919,6 +935,32 @@ first time it listens and kept in `certs/` in the root. Its fingerprint
 File → Sync…, in `device list`, and in the log line `Certificate fingerprint`
 of `sync serve --verbose`; `sync serve` does not print it otherwise.
 
+#### This device's address
+
+The address another device reaches this one at is shown in Help → About
+(`Address:`), at the bottom of File → Sync… (`Address: … (port 8384)`), in the
+`My code` window and under `account show-code` (`This device's address: …`),
+and under `account host` (`This machine's address: …`). It is found this way:
+
+- The candidates are this machine's private IPv4 addresses on network
+  interfaces that can carry a local network. Interfaces of containers, virtual
+  machines, tunnels and VPNs are left out (names starting with `docker`,
+  `br-`, `veth`, `virbr`, `vmnet`, `vboxnet`, `tun`, `tap`, `wg`, `zt`,
+  `tailscale`, `lxc`, `lxdbr`, `cni`, `flannel`, `podman`, `kube`, `dummy`,
+  `rmnet`, `ccmni`, `p2p`, `utun`, `ipsec`); a link-local address counts only
+  when there is nothing else.
+- The address this machine's route to the network leaves from is the address
+  found, and is shown alone. A single candidate is also the address found.
+- Otherwise every candidate is shown, followed by `Only one of these addresses
+  is correct; this device could not tell which. Another device tries each of
+  them in turn.`
+- With no candidate: `No address on a local network was found. Is this device
+  on a network?` `show-code` and `account host` then stop and ask for the
+  address with `--url`.
+
+The code, and this device's card, carry every candidate and then the host
+name, so the other device tries them all.
+
 There is **no trust on first use**. A peer with a pinned fingerprint is accepted
 only if its certificate matches the pin; a peer without one is checked against
 the system's root certificates, which a self-signed listener does not pass. A
@@ -946,7 +988,7 @@ python -m src.main cli sync status                         # this device, the pe
 python -m src.main cli sync list-peers                     # every peer, with its address, fingerprint and last operation
 python -m src.main cli sync discover                       # the devices of this account announcing on this network
 python -m src.main cli sync check <peer-id>                # reachable, certificate, protocol, account, key, clock, free space
-python -m src.main cli sync check --all                    # every peer and the bucket, as one table
+python -m src.main cli sync check --all                    # every other device of the account and the bucket, as one table (the GUI's Test all syncing paths…)
 python -m src.main cli sync rename-peer <peer-id> "Desk"   # a name shown on this device only
 python -m src.main cli sync remove-peer <full-peer-id>     # forget a peer on this device (the full id)
 python -m src.main cli sync add-peer <peer-id> "Desk" https://<address>:8384 --fingerprint SHA256:...
@@ -961,9 +1003,19 @@ again.
 
 In File → Sync…, the peers table shows each peer's address, when it was last
 reached and its last operation. The buttons below it: `Rename…`, `Forget`,
-`Add by address…`, `Find on this network`, `Check connection` and `Test
-everything` (every peer and the bucket). `Rename…` and `Forget` act on the
-selected row.
+`Add by address…`, `Find on this network`, `Check connection` and `Test all
+syncing paths…`. `Rename…` and `Forget` act on the selected row.
+
+`Test all syncing paths…` (also in the File menu) opens the window **Test all
+syncing paths**. It runs the connection check against every other device of
+the account and against the bucket in the background, with a spinner and
+`Testing each device and the bucket…`, then shows one row per check: `✓` or
+`✗`, **Path** (the device's name, or `Bucket`), **Check** (what was checked)
+and **Found** (what was found, with its code). Above the table is
+`All N checks passed.`, `N of M checks failed.`, or
+`No device and no bucket to test yet.` `Test again` runs the checks again;
+`Close` closes the window. `sync check --all` runs the same checks on the
+command line.
 
 ### The five operations
 
@@ -998,6 +1050,11 @@ operation the Notes list and the open Note are read again.
 
 A Recording travels streamed, so an eight-hour file needs no memory to speak
 of, and a transfer that stops continues from where it stopped the next time.
+A file is tried three times: the second try straight after the first, the third a
+minute after the second. A file that failed every try is reported, and the
+operation goes on with the next file; after three files failed every try, the
+operation stops and says how many it did not attempt. Start it again when the
+connection works.
 The receiver checks the file's hash before it accepts it, and refuses a file
 that would not fit on its disk.
 
@@ -1142,9 +1199,24 @@ device that holds the file, as that device last said.
   device` (asks first). In the TUI, `x` twice (`Remove from this computer`). On
   the command line, `audiofile-remove-local <id>`; in the Web API,
   `POST /api/audiofiles/<id>/remove-local`; on the phone, "Remove from this
-  phone". It is refused while this device holds the only known copy: `<file> is
-  on this device only; it can be removed from here once the bucket or another
-  device holds it`.
+  phone".
+
+  **The copy goes only when another place confirms, at that moment, that it
+  holds the file.** The bucket is asked first: it confirms when the object is
+  there and is not tagged as purged. Then each device said to hold the file is
+  asked, in turn; a device that holds the file whole promises to keep its copy
+  for ten minutes while this one goes. A device that is removing its own copy
+  refuses such a request, and a device that has promised to keep a copy refuses
+  to remove it, so two devices that each count on the other never both remove
+  the file. On success: `Removed <file> from this device; <place> holds it`,
+  where the place is `the bucket` or a device's name. Otherwise the copy stays
+  and the refusal names what each place answered, for example `<file> was not
+  removed: no other place confirmed that it holds the file now (the bucket does
+  not hold it; Desk could not be reached: …)`, `no other place is known to hold
+  it`, or `no bucket is set up on this device`.
+
+  So when the bucket does not hold the file, the device that holds it must be
+  listening and reachable when you remove the copy.
 
 In the TUI, `w` and `x` act on the Recording that is playing, else on the first
 Recording of the Note.
@@ -1152,6 +1224,21 @@ Recording of the Note.
 This device compares its folder with what it last said before every sync,
 before `Where are the copies?` in the GUI, and when Issues are read, so a file
 deleted from the folder by hand becomes known to every device.
+
+Importing a file and recording one each state at once that this device holds
+it. Every Recording also names the device that made it and how (imported or
+recorded), set once by that device and synced.
+
+When no place is known to hold a Recording that this device made, and its
+file is not in the audio folder under the name its row stores, a second line
+follows `No place is known to hold it`: `Imported on this device, but its file
+was not found in the audio folder after the import`, or `Recorded on this
+device, but its file was not found in the audio folder after the recording`.
+Issues give the same Recording the reason `no device and no bucket is known to
+hold it; imported on this device, but its file was not found in the audio
+folder after the import` (or `…; recorded on this device, but its file was not
+found in the audio folder after the recording`). In JSON the reasons are
+`imported_here_file_missing` and `recorded_here_file_missing`.
 
 ### Is everything somewhere else too?
 
@@ -1177,7 +1264,8 @@ time and never pushed:
 - Recordings that are not in the bucket, and why: no bucket is set up for the
   account, the file is larger than the account's upload limit, it is waiting
   for the named devices that hold it to upload it, or no device and no bucket is
-  known to hold it;
+  known to hold it (and, when this device imported or recorded it, that its
+  file was not found in the audio folder);
 - Transcriptions whose Recording is not there, and attachments whose Note or
   Recording is not there;
 - Recordings that no Note holds (a Note in the trash still holds its own);
@@ -1370,16 +1458,89 @@ travel between your devices by sync, never through the bucket.
 ### The bucket, set up by the wizard
 
 File → Set up the bucket… (or `storage setup`) takes a person who has never
-seen the Amazon console from nothing to a tested bucket: where to click, the
-policy text to paste (it lets the key make and use buckets named `voice-…`
-and nothing else; it cannot delete a Recording), the pasted key cleaned of
-spaces, the nearest region proposed, a generated bucket name, the bucket
-made private and hardened (public access blocked, encrypted at rest, TLS only),
-its lifecycle rules set (cheaper storage after thirty days, purged objects
-deleted a day later, abandoned uploads after two), a small object written and
-read back, and the whole saved as part of the account so every device receives
-it at its next sync. In the GUI, `Next` stays disabled until the round trip
-has passed.
+seen the Amazon console from nothing to a tested bucket, for a policy named
+`Voice-Recordings-NNNN` and a user named `voice-NNNN` (the same four random
+digits in both, drawn for each run). The policy lets the key make and use
+buckets named `voice-…` and nothing else, and delete an object but never a
+bucket. The bucket is made private and hardened (public access blocked,
+encrypted at rest, TLS only), its lifecycle rules are set (cheaper storage
+after thirty days, purged objects deleted a day later, abandoned uploads after
+two), a small object is written and read back, and the whole is saved as part
+of the account so every device receives it at its next sync.
+
+The GUI shows one step on each page. Pages 1 to 4 have the subtitle `In the
+Amazon console. Nothing here costs money.` Every value to type into the
+console is shown in bold with a copy button right beside it; the button puts
+that value on the clipboard and says `Copied`.
+
+1. **Open the Amazon console.** `Open https://console.aws.amazon.com/iam/
+   and sign in.`
+2. **Make the policy.** Where to click to create a policy, the policy name
+   `Voice-Recordings-NNNN` to type, and `The policy text:` with its own copy
+   button above the policy text to paste.
+3. **Make the user.** Where to click to create a user, the user name
+   `voice-NNNN` to type, and the policy name to search for and tick.
+4. **Make the access key.** The user name to click, and where to click to
+   create its access key.
+5. **Enter the key.** `On the screen that shows the new key, click Show
+   beside Secret access key.` and `Enter the Access key and the Secret access
+   key below before you leave that screen: the secret is shown only once.`
+   Under them are the boxes for the `Access key ID` and the `Secret access
+   key`, each checked as it is typed, with a line under it:
+   `✓ The access key has the right form.` or `✗` and what is wrong (for
+   example `The access key ID has 19 characters; an Amazon access key ID has
+   20.`). An Amazon access key ID is 20 capital letters and digits starting
+   with `AKIA`; a secret access key is 40 characters of letters, digits, `/`
+   and `+`. Spaces and labels pasted with a key are removed. The eye button
+   inside the secret box shows and hides it. `Next` stays disabled until both
+   have the right form. `A service other than Amazon (DigitalOcean, Backblaze,
+   Hetzner, MinIO)` shows a box for the service's `https` address and checks
+   only that neither key is empty or has a space. For Amazon, `Next` asks
+   Amazon which region is the nearest that accepts the key; for another
+   service it moves on without asking.
+6. **Choose the region.** The nearest region that accepts the key is
+   proposed: `eu-central-1 is the nearest region that accepts this key.` Any
+   region in the list can be chosen instead. Only when the chosen region
+   refused the key does the page say so (`me-central-1 does not accept this
+   key: the region is not switched on for the Amazon account.`), and `Next`
+   stays disabled for that region. With another service the region is
+   `us-east-1`: `With <service>, the region is the one its console shows;
+   us-east-1 is accepted by most.` `Next` finds a bucket name that no other
+   bucket has.
+7. **Make the bucket.** Subtitle `Next makes a private bucket and tests
+   it.`, and `Bucket name: voice-xxxxxx`. `Custom bucket name and folder`
+   shows the `Bucket name` box and the box for a folder inside the bucket
+   instead. `Next` makes the bucket private, hardens it, sets its lifecycle
+   rules and writes and reads back a small object. When another account made
+   a bucket with the generated name in the meantime, a free name is used
+   instead: `Another account already has a bucket named X, so this bucket is
+   named Y.` A custom name that is taken is refused: `Not made: The bucket
+   name X is taken by another account; choose another under
+   Custom bucket name and folder.`
+8. **The bucket is ready.** Subtitle `Next saves it for every device of the
+   account.`, and one `✓` or `✗` line for what making the bucket found:
+   private, public access blocked, encrypted at rest, TLS only, the lifecycle
+   rules, the small object. `Next` saves.
+9. **Sync between devices.** `Amazon stores files only, not notes' content.
+   For full note syncing, be sure to configure sync between devices. Set up
+   sync now?` (the service's name in place of Amazon), with the check box
+   `Set up sync now`, ticked. `Finish` with it ticked opens File → Sync….
+   When the wizard is opened from the Sync window's `Set up the bucket…`, the
+   page has the sentence only, without the question and the check box.
+
+Whenever `Next` asks the storage service (pages 5, 6 and 7), the page shows a
+spinner and `Waiting for a response from Amazon…` (or `DigitalOcean`,
+`Backblaze`, `Hetzner`, `Wasabi`, `Cloudflare`, or the host name of another
+service's address), and `Back` and `Next` are disabled. A good answer moves to
+the next page; a problem is said on the page in a sentence, and the page
+stays.
+
+"Replace the bucket's key…" (File menu) has the same two checked boxes and the
+eye button, under `In the Amazon console: IAM Users → the bucket's user
+(voice-NNNN) → Security credentials → Create access key. Enter the new key
+here; after it is saved, deactivate the old key on the same console page.`
+Its `Finish` tests the key on the bucket with the same spinner and waiting
+sentence, and saves the key when the test passed.
 
 ```bash
 python -m src.main cli storage setup                          # asks each question
@@ -1388,10 +1549,16 @@ python -m src.main cli storage replace-key <new-access-key-id>  # a new key for 
 python -m src.main cli storage check                          # the bucket as it is: key, round trip, public access, encryption, TLS, lifecycle
 ```
 
-"Replace the bucket's key…" (File menu) tests a new key the same way and saves
-it for every device. `Test everything` in the Sync dialogue, or
-`sync check --all`, checks every peer and the bucket as one table;
-`storage check` checks the bucket alone.
+`storage setup` ends, after the saved bucket, with `Amazon stores files only,
+not notes' content. For full note syncing, be sure to configure sync between
+devices.` (the service's name in place of Amazon) and `Set up sync between
+devices with 'account show-code' here and the other device's pairing screen.`
+
+"Replace the bucket's key…" tests a new key the same way and saves
+it for every device. `Test all syncing paths…` (File menu, or the button in
+the Sync dialogue), or `sync check --all`, checks every other device of the
+account and the bucket as one table (see [Peers](#peers)); `storage check`
+checks the bucket alone.
 
 ### Configuration
 
@@ -1483,6 +1650,7 @@ a narrower policy.
 
 - A sync never moves a Recording's file. The bucket is reached only by upload and download.
 - The desktop uploads when you ask: `cli storage upload-pending` (the GUI and the TUI have no upload control); the phone uploads with the Upload button. Recordings whose file is not on this device are skipped; the device that holds them uploads them.
+- An upload and a download try each file three times, the third a minute after the second, and stop after three files failed every try; the rest wait for the next upload or download. A file whose content hash cannot be calculated is not uploaded and is reported.
 - Other devices download a file **only on demand**: the GUI and TUI show a "Media missing" notice with a Download button (the TUI also uses the `d` key), the CLI has `audiofile-download`, `note-audiofiles-download` and `storage download-missing`, and the Android app shows a Download button on the Note. The CLI's transcribe commands download a missing file first.
 - Until a device that holds a file has uploaded it, other devices show it as "not uploaded by their device yet" and cannot download it; a peer that holds it can still send it (`sync deliver`, `sync exchange`, `sync send`, or `sync fetch` from the other side).
 - The storage configuration (including the credentials) syncs to all connected devices. Configure it once, on any installation.
@@ -1793,3 +1961,8 @@ A one-account directory's `config.json`, which holds the machine's and the accou
   `-a` (or `VOICE_ACCOUNT_ID`) chooses the account.
 - A root that holds one database and no `accounts.db` is the account itself:
   `<root>/notes.db`.
+- A database carries the number of the schema it was written with. A database
+  written by another version of Voice is not opened and is never converted:
+  `This database was written by another version of Voice (schema N; this
+  version reads schema 1) and is not opened. Start with an empty data
+  directory.`

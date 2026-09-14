@@ -5,7 +5,6 @@ Run against the Rust server, started as a real process:
 - POST /sync/handshake
 - GET /sync/changes
 - POST /sync/apply
-- GET /sync/full
 """
 
 from __future__ import annotations
@@ -207,40 +206,28 @@ class TestSyncChanges:
         assert tag_changes[0]["operation"] == "create"
         assert tag_changes[0]["data"]["name"] == "TestTag"
 
-    def test_changes_since_timestamp(self, running_server_a: SyncNode):
-        """Changes endpoint filters by since parameter."""
-        # Create first note
-        note_id_1 = create_note_on_node(running_server_a, "First note")
-
-        # Get changes to get timestamp
+    def test_changes_after_a_cursor(self, running_server_a: SyncNode):
+        """The changes endpoint returns what was written after the cursor it is given."""
+        create_note_on_node(running_server_a, "הפתק הראשון")
         resp1 = requests.get(f"{running_server_a.url}/sync/changes", headers=AUTH)
-        timestamp = resp1.json()["to_timestamp"]
+        cursor = resp1.json()["next_cursor"]
 
-        # Wait a full second (timestamps are second-precision)
-        time.sleep(1.1)
-        note_id_2 = create_note_on_node(running_server_a, "Second note")
-
-        # Get changes since first note
+        note_id_2 = create_note_on_node(running_server_a, "הפתק השני")
         resp2 = requests.get(
             f"{running_server_a.url}/sync/changes",
             headers=AUTH,
-            params={"since": timestamp},
+            params={"cursor": cursor},
         )
 
         assert resp2.status_code == 200
-        data = resp2.json()
-
-        # With >= comparison, boundary note may be included. Second note must be present.
-        note_changes = [c for c in data["changes"] if c["entity_type"] == "note"]
-        assert len(note_changes) >= 1
-        note_ids = [c["entity_id"] for c in note_changes]
-        assert note_id_2 in note_ids
+        note_ids = [c["entity_id"] for c in resp2.json()["changes"] if c["entity_type"] == "note"]
+        assert note_ids == [note_id_2]
 
     def test_changes_respects_limit(self, running_server_a: SyncNode):
-        """Changes endpoint respects limit parameter."""
-        # Create multiple notes
+        """The limit bounds a page, every entity type together; the page says
+        that more remains, and following next_cursor delivers every note."""
         for i in range(5):
-            create_note_on_node(running_server_a, f"Note {i}")
+            create_note_on_node(running_server_a, f"פתק {i}")
 
         resp = requests.get(
             f"{running_server_a.url}/sync/changes",
@@ -250,15 +237,16 @@ class TestSyncChanges:
 
         assert resp.status_code == 200
         data = resp.json()
-        # The limit applies per entity type (see CLAUDE.md): 2 notes at most,
-        # while the tags are still returned rather than starved.
-        by_type = {}
-        for change in data["changes"]:
-            by_type.setdefault(change["entity_type"], []).append(change)
-        assert len(by_type["note"]) == 2
-        assert "tag" in by_type
-        assert all(len(changes) <= 2 for changes in by_type.values())
+        assert len(data["changes"]) == 2
         assert data["is_complete"] is False
+        rest = requests.get(
+            f"{running_server_a.url}/sync/changes",
+            headers=AUTH,
+            params={"cursor": data["next_cursor"], "limit": 10000},
+        ).json()
+        assert rest["is_complete"] is True
+        notes = [c for c in data["changes"] + rest["changes"] if c["entity_type"] == "note"]
+        assert len(notes) == 5
 
     def test_changes_include_a_deleted_note(self, running_server_a: SyncNode):
         """A deleted note travels in the feed with its deleted_at (VER-7)."""
@@ -578,75 +566,6 @@ class TestSyncApply:
         assert resp.status_code == 200
         data = resp.json()
         assert data["applied"] == 2
-
-
-class TestSyncFull:
-    """Tests for GET /sync/full endpoint."""
-
-    def test_full_empty_database(self, running_server_a: SyncNode):
-        """Full endpoint returns empty lists for empty database (except system tags)."""
-        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["notes"] == []
-        # Filter out system tags (names starting with underscore)
-        non_system_tags = [t for t in data["tags"] if not t["name"].startswith("_")]
-        assert non_system_tags == []
-        assert data["note_tags"] == []
-        assert data["device_id"] == running_server_a.device_id_hex
-        assert "timestamp" in data
-
-    def test_full_returns_all_notes(self, running_server_a: SyncNode):
-        """Full endpoint returns all notes."""
-        # Create notes
-        note_ids = []
-        for i in range(3):
-            note_id = create_note_on_node(running_server_a, f"Note {i}")
-            note_ids.append(note_id)
-
-        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data["notes"]) == 3
-
-        returned_ids = {n["id"] for n in data["notes"]}
-        assert returned_ids == set(note_ids)
-
-    def test_full_returns_all_tags(self, running_server_a: SyncNode):
-        """Full endpoint returns all tags with hierarchy."""
-        # Create tag hierarchy
-        parent_id = create_tag_on_node(running_server_a, "Parent")
-        child_id = create_tag_on_node(running_server_a, "Child", parent_id)
-
-        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
-
-        assert resp.status_code == 200
-        data = resp.json()
-        # Filter out system tags (names starting with underscore)
-        user_tags = [t for t in data["tags"] if not t["name"].startswith("_")]
-        assert len(user_tags) == 2
-
-        # Verify hierarchy
-        child_tag = next(t for t in data["tags"] if t["id"] == child_id)
-        assert child_tag["parent_id"] == parent_id
-
-    def test_full_includes_deleted_notes(self, running_server_a: SyncNode):
-        """Full endpoint includes soft-deleted notes for sync."""
-        # Create and delete a note
-        note_id = create_note_on_node(running_server_a, "To be deleted")
-        running_server_a.db.delete_note(note_id)
-
-        resp = requests.get(f"{running_server_a.url}/sync/full", headers=AUTH)
-
-        assert resp.status_code == 200
-        data = resp.json()
-
-        # Should include the deleted note
-        deleted_note = next((n for n in data["notes"] if n["id"] == note_id), None)
-        assert deleted_note is not None
-        assert deleted_note["deleted_at"] is not None
 
 
 class TestSyncErrorHandling:

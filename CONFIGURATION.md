@@ -244,9 +244,13 @@ A `peer_url` beginning with `http://` is refused unless its host is
 `localhost`, `127.*` or `::1`:
 `… is plain http; a device key must not cross a network in clear (TLS_REQUIRED)`.
 
-When a peer does not answer at its `peer_url`, the operations `sync deliver`,
-`exchange`, `send`, `fetch` and `sync now --peer` look for it on the local
-network for 3 seconds. An address found there is written to `peer_url`, with
+When a peer does not answer at its `peer_url` (a network error, not a
+refusal), a sync (also the sync that starts a deliver or an exchange), a pull, a
+push and an initial sync first try each address on the peer's device card, with
+the peer's pinned certificate, and write the one that answers to `peer_url`
+(LISTEN-4). When none answers, the operations `sync deliver`, `exchange`,
+`send`, `fetch` and `sync now --peer` look for it on the local network for 3
+seconds. An address found there is written to `peer_url`, with
 the announced fingerprint.
 
 ##### Certificate fingerprint
@@ -378,15 +382,6 @@ private, link-local or loopback:
 When it is not empty, callers from every address are served. There is no
 command for it: edit `<root>/config.json`, then restart the listener.
 
-### file_storage
-
-**Type**: `object`
-**Default**: `{"provider": "none", "config": null}`
-
-Left over from an earlier version. The bucket configuration is kept in the
-account's database and reaches every device of the account by sync; see
-[CLOUD-STORAGE-SETUP.md](CLOUD-STORAGE-SETUP.md) and `cli storage status`.
-
 ## Synced settings (stored in the database, not in config.json)
 
 A few settings are about the user rather than the machine and are shared with every device through sync:
@@ -405,7 +400,9 @@ python -m src.main cli settings set transcription.preferred_languages '["he", "e
 When two devices change the same setting before syncing, the later value is kept and a conflict is recorded (`sync conflicts`).
 
 The bucket configuration and its upload limit are also kept in the database and
-synced; they are changed with the `storage` commands.
+synced, and only there: `config.json` has no bucket settings. They are changed
+with the `storage` commands; see [CLOUD-STORAGE-SETUP.md](CLOUD-STORAGE-SETUP.md)
+and `cli storage status`.
 
 ## Transcribing long recordings (this machine only)
 
@@ -472,11 +469,7 @@ two-hour meeting is a fact about that computer. See
     "directory": "",
     "keep": 30
   },
-  "public_url": "",
-  "file_storage": {
-    "provider": "none",
-    "config": null
-  }
+  "public_url": ""
 }
 ```
 

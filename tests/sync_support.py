@@ -29,11 +29,10 @@ class SyncChange:
     device_name: Optional[str] = None
 
 
-def get_changes_since(
-    db: Database, since: Optional[int], limit: int = 1000
-) -> Tuple[List[SyncChange], Optional[int]]:
-    """Read the feed after `since` (None for everything), oldest first."""
-    result = db.get_changes_since(since, limit)
+def read_feed(db: Database, cursor: int = 0, limit: int = 100000) -> Tuple[List[SyncChange], int]:
+    """Read the write-order feed after `cursor` (0 for everything), oldest
+    first; returns the changes and the cursor to continue from."""
+    result = db.get_changes_after_seq(cursor, None, limit)
     changes = [
         SyncChange(
             entity_type=c["entity_type"],
@@ -45,8 +44,7 @@ def get_changes_since(
         )
         for c in result["changes"]
     ]
-    changes.sort(key=lambda c: c.timestamp)
-    return changes, result.get("latest_timestamp")
+    return changes, result["next_cursor"]
 
 
 def apply_sync_changes(

@@ -73,7 +73,10 @@ class TestTrash:
         empty_db.attach_to_note(note_id, audio_id, "audio_file")
         empty_db.delete_note(note_id)
 
-        removed_audio = empty_db.purge_note(note_id)
+        purged = empty_db.purge_note(note_id)
+        # Each recording with the name its file has here (FILE-15)
+        assert all(r["disk_name"] for r in purged), purged
+        removed_audio = [r["id"] for r in purged]
 
         assert removed_audio == [audio_id], "the caller is told which files to delete"
         assert empty_db.get_note_raw(note_id) is None
@@ -104,7 +107,10 @@ class TestTrash:
         empty_db.attach_to_note(doomed, audio_id, "audio_file")
         empty_db.delete_note(doomed)
 
-        removed_audio = empty_db.purge_note(doomed)
+        purged = empty_db.purge_note(doomed)
+        # Each recording with the name its file has here (FILE-15)
+        assert all(r["disk_name"] for r in purged), purged
+        removed_audio = [r["id"] for r in purged]
 
         assert removed_audio == [], "nothing to delete from disk"
         assert empty_db.get_audio_file(audio_id) is not None

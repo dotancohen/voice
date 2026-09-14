@@ -221,14 +221,6 @@ class TestProtocolCompatibility:
         )
         assert changes.status_code == 200
 
-        # Full
-        full = requests.get(
-            f"{running_server_a.url}/sync/full",
-            headers=AUTH,
-            timeout=5,
-        )
-        assert full.status_code == 200
-
         # Apply
         apply_resp = requests.post(
             f"{running_server_a.url}/sync/apply",

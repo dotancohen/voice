@@ -30,6 +30,27 @@ def status(node: SyncNode) -> dict:
 
 
 class TestProof:
+    def test_a_note_a_peer_pulled_from_this_listener_counts_as_duplicated(self, tmp_path: Path) -> None:
+        """D29: B pulls A's new note from A's listener; A counts it as duplicated,
+        by the cursor B confirms, without A starting any operation."""
+        a = create_sync_node("a", DEVICE_A_ID, tmp_path)
+        b = create_sync_node("b", DEVICE_B_ID, tmp_path)
+        create_note_on_node(a, "נמשך מהמאזין")
+        a.db.close()
+        assert status(a)["not_duplicated"]["notes"] == 1
+
+        start_sync_server(a)
+        try:
+            assert a.wait_for_server()
+            b.db.close()
+            added = cli(b, "sync", "add-peer", a.device_id_hex, "A", a.url)
+            assert added.returncode == 0, added.stderr
+            pulled = cli(b, "sync", "now", "--peer", a.device_id_hex)
+            assert pulled.returncode == 0, pulled.stderr
+            assert status(a)["not_duplicated"]["notes"] == 0, "the note B holds is duplicated off A"
+        finally:
+            a.stop_server()
+
     def test_the_line_counts_what_is_here_only_until_a_sync_sends_it(self, tmp_path: Path) -> None:
         a = create_sync_node("a", DEVICE_A_ID, tmp_path)
         b = create_sync_node("b", DEVICE_B_ID, tmp_path)

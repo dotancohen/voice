@@ -524,8 +524,8 @@ class TestServerSideSyncTimeUpdate:
             )
             assert response.status_code == 200
 
-            # Get initial last_sync_timestamp (should be None for new peer)
-            initial_sync_time = response.json().get("last_sync_timestamp")
+            # When this device last synced with the peer, as its database records it
+            initial_sync_time = node.db.get_peer_last_sync(peer_device_id)
 
             # Do a successful apply to set the sync time
             response = requests.post(
@@ -565,7 +565,7 @@ class TestServerSideSyncTimeUpdate:
                 },
                 timeout=10,
             )
-            after_success_sync_time = response.json().get("last_sync_timestamp")
+            after_success_sync_time = node.db.get_peer_last_sync(peer_device_id)
             assert after_success_sync_time is not None, (
                 "Sync time should be set after successful sync"
             )
@@ -607,7 +607,7 @@ class TestServerSideSyncTimeUpdate:
                 },
                 timeout=10,
             )
-            after_error_sync_time = response.json().get("last_sync_timestamp")
+            after_error_sync_time = node.db.get_peer_last_sync(peer_device_id)
 
             # Current behavior: sync time IS updated even with errors
             # This is because the apply endpoint always calls update_peer_last_sync

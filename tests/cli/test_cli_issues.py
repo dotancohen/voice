@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from core.database import Database
+from tests.fake_s3 import TEST_KEY_ID, TEST_SECRET, FakeS3, bucket_holding
 
 PROJECT = Path(__file__).parent.parent.parent
 
@@ -66,7 +67,16 @@ def test_issues_lists_each_kind_in_words_and_as_json(device) -> None:
     assert data["recordings_not_in_cloud"][0]["audio_id"] == audio_id
 
 
-def test_a_copy_is_removed_from_this_device_only_when_another_place_holds_it(device) -> None:
+@pytest.fixture
+def s3():
+    fake = FakeS3(TEST_KEY_ID, TEST_SECRET).start()
+    yield fake
+    fake.stop()
+
+
+def test_a_copy_is_removed_from_this_device_only_when_another_place_confirms_it(device, s3: FakeS3) -> None:
+    """FILE-22, FILE-26: refused while no other place is known to hold the file;
+    removed once the bucket, asked, holds it."""
     config_dir, audio_dir = device
 
     def make(db: Database):
@@ -77,16 +87,16 @@ def test_a_copy_is_removed_from_this_device_only_when_another_place_holds_it(dev
     audio_id, disk_name = with_db(config_dir, make)
     refused = cli(config_dir, "audiofile-remove-local", audio_id)
     assert refused.returncode == 1
-    assert "on this device only" in refused.stderr
+    assert "no other place is known to hold it" in refused.stderr
     assert (audio_dir / disk_name).exists()
 
-    with_db(config_dir, lambda db: db.update_audio_file_storage(audio_id, "s3", "k.ogg"))
+    with_db(config_dir, lambda db: bucket_holding(s3, db, audio_id, audio_dir / disk_name))
     shown = cli(config_dir, "audiofile-show", audio_id)
     assert "Copies:" in shown.stdout and "the bucket: holds it" in shown.stdout
 
     removed = cli(config_dir, "audiofile-remove-local", audio_id)
     assert removed.returncode == 0, removed.stderr
-    assert "it is still in the bucket" in removed.stdout
+    assert f"Removed {disk_name} from this device; the bucket holds it" in removed.stdout
     assert not (audio_dir / disk_name).exists()
     shown = cli(config_dir, "audiofile-show", audio_id)
     assert "this device: does not hold it" in shown.stdout

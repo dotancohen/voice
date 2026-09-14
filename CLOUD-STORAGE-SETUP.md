@@ -3,7 +3,12 @@
 **There is a wizard for Amazon S3.** On the desktop, File → Set up the bucket…
 (the same button is in the Sync dialogue), or
 `python -m src.main cli storage setup`, shows the key-making steps in the
-Amazon console and the policy text to paste, then makes the bucket, blocks
+Amazon console with a copy button beside every text to type there (the
+console's address, the policy name, the user name, the policy text), checks
+the two halves of the key as you type them (a ✓ or a ✗ line under each box,
+and an eye button to show the secret), proposes the nearest region that
+accepts the key, gives the bucket a free generated name (under "Advanced" you
+may choose the name and a folder inside the bucket), then makes the bucket, blocks
 public access, switches on encryption at rest, sets a policy that refuses
 connections without TLS and the lifecycle rules, tests the bucket by writing
 and reading a small object, and saves the result for every device of the
@@ -138,18 +143,18 @@ lives in Amazon Web Services, which uses the same sign-in.
 ### 3. Make a key that can only touch Voice's buckets
 
 Do not use your main account password for this. You are making a narrow key that
-can open buckets whose names start with `voice-` and nothing else, and that
-cannot delete anything, so that it can do little harm if it leaks. This is the
-same policy the wizard shows; Voice needs every action in it (object tags for
-removed recordings, the bucket's settings for `storage check`).
+can open buckets whose names start with `voice-` and nothing else. It may delete
+an object but never a bucket; to make a leaked key unable to delete, take
+`s3:DeleteObject` off the policy afterwards (`../HARDENING-AGAINST-FAILURE-AND-ATTACKS.md`).
+This is the same policy the wizard shows; Voice needs every other action in it
+(object tags for removed recordings, the bucket's settings for `storage check`).
 
 1. In the search box at the top, type **IAM** and press Enter, then click **IAM**.
-2. On the left, click **Users**. Click **Create user**.
-3. **User name**: `voice`. Do not tick console access. Click **Next**.
-4. On the permissions page, choose **Attach policies directly**, then click
-   **Create policy**. A new tab opens.
-5. In the new tab, click the **JSON** tab. Delete everything in the box and paste
-   this in, unchanged:
+2. Choose four digits of your own, for example `4817`. The policy and the user
+   below both carry them, so you can tell Voice's policy and user from anything
+   else in the account.
+3. In the left column click **Policies**, then click **Create policy**.
+4. Click **JSON**. Delete everything in the box and paste this in, unchanged:
 
 ```json
 {
@@ -180,6 +185,7 @@ removed recordings, the bucket's settings for `storage check`).
       "Action": [
         "s3:PutObject",
         "s3:GetObject",
+        "s3:DeleteObject",
         "s3:PutObjectTagging",
         "s3:GetObjectTagging",
         "s3:AbortMultipartUpload",
@@ -191,19 +197,23 @@ removed recordings, the bucket's settings for `storage check`).
 }
 ```
 
-6. Click **Next**. **Policy name**: `voice-bucket`. Click **Create policy**.
-7. Close that tab and go back to the tab where you were creating the user. Click
-   the refresh arrow next to the list of policies, type `voice-bucket` in the
-   search box, and tick it.
-8. Click **Next**, then **Create user**.
+5. Click **Next**. In **Policy name** type `Voice-Recordings-` and your four digits
+   (`Voice-Recordings-4817`). Click **Create policy**.
+6. In the left column click **IAM Users**, then click **Create user**.
+7. In **User name** type `voice-` and the same four digits (`voice-4817`). Leave
+   **Provide user access to the AWS Management Console** unticked. Click **Next**.
+8. Click **Attach policies directly**. In the search box under **Permissions
+   policies** type `Voice-Recordings-4817`, tick the box beside it, and click
+   **Next**.
+9. Click **Create user**.
 
 ### 4. Get the two halves of the key
 
-1. Click the user **voice** in the list.
+1. In the list of users click your user (`voice-4817`).
 2. Click the **Security credentials** tab.
-3. Scroll to **Access keys** and click **Create access key**.
-4. It asks what it is for. Choose **Application running outside AWS**, click
-   **Next**, then **Create access key**.
+3. Under **Access keys** click **Create access key**.
+4. It asks what it is for. Click **Application running outside AWS**, click
+   **Next**, then click **Create access key**.
 5. You are now on the only screen that will ever show you the secret.
    - **Access key** is your **Access key ID**.
    - **Secret access key** — click **Show** — is your **Secret access key**.
@@ -215,8 +225,10 @@ You have all five values. **Endpoint is left empty for Amazon.**
 
 The simplest way on from here is the wizard, with this key and this bucket
 name: `python -m src.main cli storage setup`, or File → Set up the bucket….
-It finds the bucket you made, sets encryption at rest, the TLS-only policy and
-the lifecycle rules, tests the bucket and saves it. Otherwise go to
+In the GUI, tick "Custom bucket name and folder" on page 7, "Make the bucket",
+and type the name of the bucket you made. Next finds that bucket, sets
+encryption at rest, the TLS-only policy and the lifecycle rules and tests the
+bucket; Next on page 8 saves it. Otherwise go to
 [Telling Voice about it](#telling-voice-about-it).
 
 ---
@@ -399,7 +411,10 @@ DigitalOcean API token used instead of a Spaces key.
 ```
 
 It asks for the new secret, tests the key on the bucket, and keeps the rest
-of the configuration (the GUI: File → Replace the bucket's key…). Every
+of the configuration. In the GUI, File → Replace the bucket's key… says where
+the new key is made (IAM Users → the bucket's user, `voice-NNNN` → Security
+credentials → Create access key) and checks both boxes as you type, like the
+wizard. Every
 device receives the new key at its next sync. Nothing is lost: the
 recordings stay where they are.
 - Sync copies the key to every device of the account. A device you revoke

@@ -94,19 +94,21 @@ class TestTrashInTheMenu:
 class TestRemoveAudioFiles:
     """Deleting the files of recordings that were removed for good."""
 
-    def test_the_recordings_files_are_deleted(self, tmp_path: Path) -> None:
+    def test_the_recordings_files_are_deleted_by_their_stored_names(self, tmp_path: Path) -> None:
         audio_id = "0123456789abcdef0123456789abcdef"
-        kept_id = "fedcba9876543210fedcba9876543210"
-        (tmp_path / f"{audio_id}.ogg").write_bytes(b"audio")
-        (tmp_path / f"{kept_id}.ogg").write_bytes(b"audio")
+        (tmp_path / "פגישה-89abcdef.ogg").write_bytes(b"audio")
+        (tmp_path / "נשאר.ogg").write_bytes(b"audio")
+        (tmp_path / f"{audio_id}.ogg").write_bytes(b"a file named by the id is not the recording's")
 
-        removed = remove_audio_files([audio_id], tmp_path)
+        removed = remove_audio_files([{"id": audio_id, "disk_name": "פגישה-89abcdef.ogg"}], tmp_path)
 
         assert removed == 1
-        assert not (tmp_path / f"{audio_id}.ogg").exists()
-        assert (tmp_path / f"{kept_id}.ogg").exists(), "another recording is untouched"
+        assert not (tmp_path / "פגישה-89abcdef.ogg").exists()
+        assert (tmp_path / "נשאר.ogg").exists(), "another recording is untouched"
+        assert (tmp_path / f"{audio_id}.ogg").exists(), "a file is never found by the id (FILE-15)"
 
     def test_nothing_to_delete_is_not_an_error(self, tmp_path: Path) -> None:
         assert remove_audio_files([], tmp_path) == 0
-        assert remove_audio_files(["0123456789abcdef0123456789abcdef"], tmp_path) == 0
-        assert remove_audio_files(["0123456789abcdef0123456789abcdef"], None) == 0
+        assert remove_audio_files([{"id": "0123456789abcdef0123456789abcdef", "disk_name": "absent.ogg"}], tmp_path) == 0
+        assert remove_audio_files([{"id": "0123456789abcdef0123456789abcdef", "disk_name": ""}], tmp_path) == 0
+        assert remove_audio_files([{"id": "0123456789abcdef0123456789abcdef", "disk_name": "x.ogg"}], None) == 0

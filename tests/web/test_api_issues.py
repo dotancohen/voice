@@ -11,6 +11,14 @@ import pytest
 from core.config import Config
 from core.database import Database
 from src.web import create_app
+from tests.fake_s3 import TEST_KEY_ID, TEST_SECRET, FakeS3, bucket_holding
+
+
+@pytest.fixture
+def s3():
+    fake = FakeS3(TEST_KEY_ID, TEST_SECRET).start()
+    yield fake
+    fake.stop()
 
 
 @pytest.fixture
@@ -28,7 +36,7 @@ def setup(tmp_path: Path):
     db.close()
 
 
-def test_issues_locations_removal_and_the_upload_limit(setup) -> None:
+def test_issues_locations_removal_and_the_upload_limit(setup, s3: FakeS3) -> None:
     client, db, audio_dir = setup
     audio_id = db.create_audio_file("הקלטה.ogg", 1735689600)
     db.attach_to_note(db.create_note("פתק"), audio_id, "audio_file")
@@ -42,12 +50,14 @@ def test_issues_locations_removal_and_the_upload_limit(setup) -> None:
     assert client.get(f"/api/audiofiles/{'0' * 12}7{'0' * 19}/locations").status_code == 404
     refused = client.post(f"/api/audiofiles/{audio_id}/remove-local")
     assert refused.status_code == 409
-    assert "on this device only" in refused.get_json()["error"]
+    assert "no other place is known to hold it" in refused.get_json()["error"]
     assert (audio_dir / disk_name).exists()
 
-    db.update_audio_file_storage(audio_id, "s3", "k.ogg")
+    # The bucket holds it now, and says so when asked (FILE-26)
+    bucket_holding(s3, db, audio_id, audio_dir / disk_name)
     removed = client.post(f"/api/audiofiles/{audio_id}/remove-local")
     assert removed.status_code == 200, removed.get_json()
+    assert removed.get_json()["sentence"].endswith("the bucket holds it")
     assert not (audio_dir / disk_name).exists()
     located = client.get(f"/api/audiofiles/{audio_id}/locations").get_json()["locations"]
     assert {(l["place"], l["present"]) for l in located} >= {("cloud", True)}

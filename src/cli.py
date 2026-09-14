@@ -466,6 +466,7 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
 
     imported = 0
     errors = 0
+    already = 0
 
     for audio_path in audio_files:
         try:
@@ -473,6 +474,13 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
             ext = manager.get_extension_from_filename(audio_path.name)
             if not ext:
                 print(f"  Skipping (no valid extension): {audio_path.name}")
+                continue
+
+            # A file the account already holds, by its name and its bytes, is not
+            # imported again (D31); the same bytes under another name are
+            if db.find_imported_audio_file(audio_path.name, _sha256_of(audio_path)):
+                print(f"  Already imported: {audio_path.name}")
+                already += 1
                 continue
 
             # Get file creation time as Unix timestamp
@@ -485,7 +493,7 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
 
             # Copy file to audiofile_directory
             manager.import_file(audio_path, row["disk_name"])
-            db.store_content_hash(audio_file_id, manager.audiofile_directory)
+            db.store_content_hash(audio_file_id, manager.audiofile_directory, config.get_device_id_hex())
 
             # Create Note with audio reference
             # Use file_created_at for note's created_at for chronological sorting
@@ -521,7 +529,20 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
             errors += 1
 
     print(f"\nImported {imported} file(s), {errors} error(s)")
+    if already:
+        print(f"Skipped {already} file(s) already imported")
     return 0 if errors == 0 else 1
+
+
+def _sha256_of(path: Path) -> str:
+    """The SHA-256 of a file's bytes, lowercase hex, as the core stores it (FILE-18)."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _describe_copies(db: Database, config: Config, af: Dict[str, Any], audiofile_dir: Optional[Path]) -> str:
@@ -529,7 +550,8 @@ def _describe_copies(db: Database, config: Config, af: Dict[str, Any], audiofile
     from src.core.issues_text import place_label, place_names
 
     names = place_names(db, config)
-    places = [place_label(loc["place"], names) for loc in db.file_locations(af["id"]) if loc["present"]]
+    here = config.get_device_id_hex()
+    places = [place_label(loc["place"], names, here) for loc in db.file_locations(af["id"]) if loc["present"]]
     return ", ".join(places) if places else "nowhere known"
 
 
@@ -542,11 +564,12 @@ def cmd_issues(db: Database, config: Config, args: argparse.Namespace) -> int:
     from src.core.issues_text import issue_sections, place_names
 
     audiofile_dir = config.get_audiofile_directory()
-    issues = db.issues(audiofile_dir)
+    here = config.get_device_id_hex()
+    issues = db.issues(audiofile_dir, here)
     if args.format == "json":
         print(json.dumps(issues, indent=2, ensure_ascii=False))
         return 0
-    sections = issue_sections(issues, place_names(db, config))
+    sections = issue_sections(issues, place_names(db, config), here)
     if not sections:
         print("Nothing needs your attention.")
         return 0
@@ -558,7 +581,8 @@ def cmd_issues(db: Database, config: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_remove_local_audiofile(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Remove this device's copy of a recording to save space (FILE-22).
+    """Remove this device's copy of a recording to save space (FILE-22), once the
+    bucket or a device that holds the file confirms now that it does (FILE-26).
 
     Returns:
         Exit code (0 when removed, 1 when refused or not found)
@@ -571,12 +595,14 @@ def cmd_remove_local_audiofile(db: Database, config: Config, args: argparse.Name
     if not audiofile_dir:
         print("Error: audiofile_directory not configured.", file=sys.stderr)
         return 1
+    from voicecore import SyncClient
+
     try:
-        db.remove_local_copy(audio_file["id"], audiofile_dir)
+        sentence = SyncClient(str(config.get_config_dir())).remove_local_copy(audio_file["id"])
     except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
         print(f"Not removed: {e}", file=sys.stderr)
         return 1
-    print(f"Removed {audio_file['filename']} from this device; it is still in {_describe_copies(db, config, audio_file, None)}")
+    print(sentence)
     return 0
 
 
@@ -1315,6 +1341,9 @@ def cmd_transcription_queue(db: Database, config: Config, args: argparse.Namespa
 
     view = queue_module.view(db, config, getattr(args, "service", None))
 
+    if getattr(args, "format", "text") == "csv":
+        print("Error: transcription-queue writes text or json, not csv", file=sys.stderr)
+        return 1
     if getattr(args, "format", "text") == "json":
         print(json.dumps(queue_module.as_json(view), ensure_ascii=False, indent=2))
         return 0
@@ -1686,14 +1715,18 @@ def cmd_storage_reupload_encrypted(config: Config, args: argparse.Namespace) -> 
 
 def cmd_account_show_code(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Show the code another device reads to join this account (PAIR-1)."""
-    from voicecore import listen_urls, pairing_offer
+    from voicecore import listen_addresses, pairing_offer
 
-    urls = getattr(args, "urls", None) or listen_urls(config.get_sync_server_port())
+    from src.core.addresses_text import address_words
+
+    addresses = listen_addresses(config.get_sync_server_port())
+    urls = getattr(args, "urls", None) or addresses["urls"]
     if not urls:
-        print("Error: This machine's address is not known; give it with --url.", file=sys.stderr)
+        print(f"Error: {addresses['sentence']} Give the address with --url.", file=sys.stderr)
         return 1
     text = pairing_offer(urls, str(config.get_config_dir()))
     return _print_setup_text(text, args, urls, [
+        f"This device's address: {address_words(addresses)}" if not getattr(args, "urls", None) else f"The addresses given: {', '.join(urls)}",
         "Treat this like a password. It is valid for ten minutes and for one device;",
         "the listener must be running ('sync serve') for the other device to reach it.",
     ])
@@ -1719,18 +1752,22 @@ def _print_setup_text(text: str, args: argparse.Namespace, urls: List[str], last
 
 def cmd_account_host(root: Path, args: argparse.Namespace) -> int:
     """Show the grant text with which a holder gives this server an account to host (PAIR-5)."""
-    from voicecore import hosting_offer, listen_urls
+    from voicecore import hosting_offer, listen_addresses
+
+    from src.core.addresses_text import address_words
 
     if _index_root_of(root) is None:
         print(f"Error: {root} holds one account in its own directory and cannot host others; "
               "set VOICE_CONFIG_DIR to an empty directory for a server.", file=sys.stderr)
         return 1
-    urls = getattr(args, "urls", None) or listen_urls(_machine_port(root))
+    addresses = listen_addresses(_machine_port(root))
+    urls = getattr(args, "urls", None) or addresses["urls"]
     if not urls:
-        print("Error: This machine's address is not known; give it with --url.", file=sys.stderr)
+        print(f"Error: {addresses['sentence']} Give the address with --url.", file=sys.stderr)
         return 1
     text = hosting_offer(str(root), urls, getattr(args, "label", None))
     return _print_setup_text(text, args, urls, [
+        f"This machine's address: {address_words(addresses)}" if not getattr(args, "urls", None) else f"The addresses given: {', '.join(urls)}",
         "Treat this like a password. It is valid for ten minutes and for one account;",
         "the listener must be running ('sync serve') for the holder to reach it.",
         "On the device that holds the account: account grant-host <this text>.",
@@ -1891,8 +1928,8 @@ def _peer_by_prefix(config: Config, prefix: str) -> Optional[Dict[str, Any]]:
 def cmd_sync_check(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Check the connection to a peer, or with --all every peer and the bucket as one table (Stage 12, Stage 8)."""
     if getattr(args, "all", False):
-        from src.core.storage_setup import check_everything
-        rows = check_everything(str(config.get_config_dir()), config, db)
+        from src.core.storage_setup import check_all_paths, devices_of
+        rows = check_all_paths(str(config.get_config_dir()), devices_of(config))
         passed = all(r["passed"] for r in rows)
         if args.format == "json":
             print(json.dumps({"passed": passed, "rows": rows}, indent=2))
@@ -2791,30 +2828,6 @@ def cmd_sync_discover(db: Database, config: Config, args: argparse.Namespace) ->
     return 0
 
 
-def cmd_maintenance_database_normalize(db: Database, args: argparse.Namespace) -> int:
-    """Normalize database data for consistency.
-
-    This includes:
-    - Timestamp normalization (ISO 8601 to SQLite format)
-    - Future: Unicode normalization
-
-    Args:
-        db: Database instance
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code (0 for success, 1 for error)
-    """
-    try:
-        print("Normalizing database...")
-        db.normalize_database()
-        print("Database normalization complete.")
-        return 0
-    except Exception as e:
-        print(f"Error normalizing database: {e}", file=sys.stderr)
-        return 1
-
-
 def cmd_maintenance_rebuild_cache(db: Database, args: argparse.Namespace) -> int:
     """Rebuild all cache fields for notes.
 
@@ -2894,7 +2907,7 @@ def cmd_maintenance_rebuild_all_caches(db: Database, args: argparse.Namespace) -
 
 
 def cmd_calculate_missing_data(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Calculate data that was never calculated: lengths, dates, caches.
+    """Calculate data that was never calculated: Recording lengths and creation dates.
 
     One operation covering every gap that can be closed, with a survey first so
     the user can see what is missing before anything changes. See
@@ -2924,7 +2937,6 @@ def cmd_calculate_missing_data(db: Database, config: Config, args: argparse.Name
         db, config,
         durations=not getattr(args, "no_durations", False),
         file_dates=not getattr(args, "no_dates", False),
-        caches=not getattr(args, "no_caches", False),
         limit=getattr(args, "limit", None),
         progress=lambda line: print(f"  {line}"),
     )
@@ -2935,61 +2947,6 @@ def cmd_calculate_missing_data(db: Database, config: Config, args: argparse.Name
         print(detail)
     return 0
 
-
-def cmd_maintenance_audio_rebuild_durations(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Calculate the length of Recordings that have none.
-
-    The durations half of ``calculate-missing-data``, kept under its old name.
-    The work itself is in ``src/core/missing_data.py``, which every interface
-    uses, so there is one rule for what a length is read from rather than two.
-
-    Args:
-        db: Database instance
-        config: Configuration object
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code (0 for success, 1 for error)
-    """
-    from src.core import missing_data
-
-    try:
-        dry_run = getattr(args, 'dry_run', False)
-
-        if not config.get_audiofile_directory():
-            print("Error: audiofile_directory not configured.", file=sys.stderr)
-            print("Run: voice config set audiofile_directory /path/to/audio/files", file=sys.stderr)
-            return 1
-
-        survey = missing_data.survey(db, config)
-        missing = next((g.count for g in survey.gaps if g.key == "duration"), 0)
-        if not missing:
-            print("All audio files have duration set.")
-            return 0
-
-        print(f"Found {missing} audio files with missing duration.")
-        if dry_run:
-            print("Dry run - no changes will be made.")
-            return 0
-
-        report = missing_data.calculate_missing_data(
-            db, config,
-            durations=True, file_dates=False, caches=False,
-            limit=getattr(args, 'limit', None),
-            progress=lambda line: print(f"  {line}"),
-        )
-        updated = report.calculated.get("duration", 0)
-        errors = report.failed.get("duration", 0) + report.failed.get("absent_file", 0)
-        print(f"\nSummary: {updated} updated, {errors} errors, {missing - updated - errors} skipped")
-        return 0 if errors == 0 else 1
-    except Exception as e:
-        print(f"Error rebuilding audio durations: {e}", file=sys.stderr)
-        return 1
-
-
-# ============================================================================
-# Storage commands
-# ============================================================================
 
 def cmd_storage_status(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Show current cloud storage configuration.
@@ -3133,24 +3090,50 @@ def cmd_storage_setup(db: Database, config: Config, args: argparse.Namespace) ->
 
     if not quiet:
         print("Make the key in the Amazon console, one step at a time:")
-        for n, step in enumerate(storage_setup.CONSOLE_STEPS, 1):
+        user_name, policy_name = storage_setup.console_names()
+        for n, step in enumerate(storage_setup.console_steps(user_name, policy_name), 1):
             print(f"  {n}. {step}")
-        print("\nThe policy text to paste in step 3:\n")
+        print(f"\nThe policy text to paste in step {storage_setup.POLICY_STEP}:\n")
         print(storage_setup.policy_text())
         print()
-    key_id = getattr(args, "access_key_id", None) or ask("Access key ID")
-    secret = getattr(args, "secret_access_key", None) or ask("Secret access key: ", secret=True)
-    state.endpoint = (getattr(args, "endpoint", None) or ("" if quiet else ask("Endpoint (empty for Amazon)"))).strip()
-    problem = storage_setup.take_key(state, key_id, secret)
-    if problem:
-        print(f"Error: {problem}", file=sys.stderr)
-        return 1
+    # Another S3 service is an advanced choice: given with --endpoint only
+    state.endpoint = (getattr(args, "endpoint", None) or "").strip()
+    key_id = getattr(args, "access_key_id", None)
+    secret = getattr(args, "secret_access_key", None)
+    if quiet:
+        problem = storage_setup.take_key(state, key_id or "", secret or "")
+        if problem:
+            print(f"Error: {problem}", file=sys.stderr)
+            return 1
+    else:
+        # Asked again until each has the shape of a key, so a mistyped or cut
+        # value is caught here and not as a refusal later
+        while True:
+            key_id = key_id or ask("Access key ID (20 capital letters and digits, starting with AKIA)")
+            problem = storage_setup.key_id_problem(key_id, state.endpoint)
+            if not problem:
+                break
+            print(f"  {problem}")
+            key_id = None
+        while True:
+            secret = secret or ask("Secret access key (40 characters): ", secret=True)
+            problem = storage_setup.secret_problem(secret, state.endpoint)
+            if not problem:
+                break
+            print(f"  {problem}")
+            secret = None
+        storage_setup.take_key(state, key_id, secret)
     region = getattr(args, "region", None)
     if not region:
-        nearest = storage_setup.nearest_region() or "us-east-1"
+        nearest = storage_setup.nearest_region(state) or "us-east-1"
+        if state.regions_refused and not quiet:
+            print(f"  Nearer regions that do not accept this key (switched off for the account): {', '.join(state.regions_refused)}")
         region = nearest if quiet else ask("Region", nearest)
     state.region = region
-    state.bucket = getattr(args, "bucket", None) or (storage_setup.suggest_bucket_name() if quiet else ask("Bucket name", storage_setup.suggest_bucket_name()))
+    # The bucket's name and folder are advanced choices: given with --bucket and
+    # --prefix; otherwise a free name is generated and checked with the service
+    state.bucket = (getattr(args, "bucket", None) or "").strip()
+    state.bucket_chosen = bool(state.bucket)
     state.prefix = (getattr(args, "prefix", None) or "").strip()
 
     report: Dict[str, Any] = {"bucket": state.bucket, "region": state.region, "saved": False}
@@ -3172,13 +3155,16 @@ def cmd_storage_setup(db: Database, config: Config, args: argparse.Namespace) ->
     if args.format == "json":
         print(json.dumps(report, indent=2))
         return 0
+    if state.renamed_from:
+        print(f"The name {state.renamed_from} was taken; the bucket is named {state.bucket}.")
     print(f"Bucket {state.bucket} in {state.region}: made, private.")
     for row in report["hardened"]:
         print(f"  {'ok  ' if row['passed'] else 'FAIL'} {row['name']}: {row['detail']}")
     print(f"  {'ok  ' if not lifecycle_problem else 'FAIL'} Lifecycle rules: {report['lifecycle']}")
     print("  ok   Round trip: a small object was written, read back and compared.")
     print("Saved. Every device of the account receives the bucket at its next sync; the phone can upload after that.")
-    print(storage_setup.WHAT_THE_BUCKET_HOLDS)
+    print(storage_setup.stores_files_sentence(state.endpoint))
+    print("Set up sync between devices with 'account show-code' here and the other device's pairing screen.")
     return 0
 
 
@@ -3197,7 +3183,7 @@ def cmd_storage_replace_key(db: Database, args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps({"replaced": True}))
     else:
-        print("Saved. Every device gets the new key at its next sync; deactivate the old key in the console (Users → voice → Security credentials).")
+        print("Saved. Every device gets the new key at its next sync; deactivate the old key in the console (IAM Users → the key's user → Security credentials).")
     return 0
 
 
@@ -3327,7 +3313,7 @@ def cmd_note_recover(db: Database, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_note_purge(db: Database, args: argparse.Namespace) -> int:
+def cmd_note_purge(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Remove a note in the trash for good, here and on every device."""
     notes = {n["id"]: n for n in db.get_deleted_notes()}
     match = None
@@ -3351,8 +3337,13 @@ def cmd_note_purge(db: Database, args: argparse.Namespace) -> int:
             print("Nothing was removed.")
             return 1
 
-    audio_ids = db.purge_note(match["id"])
-    removed_files = _remove_audio_files(audio_ids)
+    from src.core.purge import remove_purged_files
+
+    purged = db.purge_note(match["id"])
+    audio_ids = [r["id"] for r in purged]
+    # The folder of this installation's configuration (VOICE_CONFIG_DIR), the
+    # one the command opened, and the name each file has there (FILE-15)
+    removed_files = [str(p) for p in remove_purged_files(purged, config.get_audiofile_directory())]
 
     if args.format == "json":
         print(json.dumps({"id": match["id"], "purged": True, "audio_files": audio_ids,
@@ -3361,30 +3352,6 @@ def cmd_note_purge(db: Database, args: argparse.Namespace) -> int:
         print(f"Removed note {match['id'][:UUID_SHORT_LEN]} for good"
               + (f", with {len(audio_ids)} recording(s)" if audio_ids else ""))
     return 0
-
-
-def _remove_audio_files(audio_ids: List[str]) -> List[str]:
-    """Delete the files of recordings that were purged, and say which went.
-
-    The database says which recordings were removed; where their files live
-    is the application's business, not the core's.
-    """
-    removed: List[str] = []
-    if not audio_ids:
-        return removed
-    config = Config()
-    directory = config.get_audiofile_directory()
-    if not directory:
-        return removed
-    folder = Path(directory)
-    for audio_id in audio_ids:
-        for path in folder.glob(f"{audio_id}.*"):
-            try:
-                path.unlink()
-                removed.append(str(path))
-            except OSError as e:
-                print(f"Warning: could not delete {path}: {e}", file=sys.stderr)
-    return removed
 
 
 def cmd_rename_tag(db: Database, args: argparse.Namespace) -> int:
@@ -3795,7 +3762,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # audiofile-remove-local command
     remove_local_parser = cli_subparsers.add_parser(
         "audiofile-remove-local",
-        help="Remove this device's copy of a recording to save space; refused when no other place holds it"
+        help="Remove this device's copy of a recording to save space, once the bucket or a device that holds it confirms now that it does"
     )
     remove_local_parser.add_argument("audio_id", type=str, help="Audio file ID (or prefix)")
 
@@ -3856,8 +3823,10 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     queue_parser.add_argument(
         "--format",
         choices=["text", "json"],
-        default="text",
-        help="Output format (default: text)"
+        # No default of its own: a default here would replace the `cli --format`
+        # given before the command, which then printed text for json (D32)
+        default=argparse.SUPPRESS,
+        help="Output format (default: text; `cli --format json` before the command works as well)"
     )
 
     # transcribe-backlog command
@@ -4174,7 +4143,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # calculate-missing-data command
     fill_parser = cli_subparsers.add_parser(
         "calculate-missing-data",
-        help="Calculate what was never calculated: Recording lengths, creation dates, display caches"
+        help="Calculate what was never calculated: Recording lengths and creation dates"
     )
     fill_parser.add_argument(
         "--dry-run",
@@ -4198,12 +4167,6 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         dest="no_dates",
         action="store_true",
         help="Leave creation dates alone"
-    )
-    fill_parser.add_argument(
-        "--no-caches",
-        dest="no_caches",
-        action="store_true",
-        help="Leave display caches alone"
     )
 
     # db-maintenance command with subcommands
@@ -4239,12 +4202,6 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         dest="maintenance_command", help="Maintenance commands"
     )
 
-    # maintenance database-normalize
-    maintenance_subparsers.add_parser(
-        "database-normalize",
-        help="Normalize database data (timestamps, unicode, etc.)"
-    )
-
     # maintenance note-rebuild-caches (rebuild all caches for a single note or all notes)
     rebuild_cache_parser = maintenance_subparsers.add_parser(
         "note-rebuild-caches",
@@ -4265,17 +4222,6 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "--verbose", "-v",
         action="store_true",
         help="Show cache registry info before rebuilding"
-    )
-
-    # maintenance audio-rebuild-durations (find and set duration for audio files)
-    audio_duration_parser = maintenance_subparsers.add_parser(
-        "audio-rebuild-durations",
-        help="Find audio files with missing duration and populate from file metadata"
-    )
-    audio_duration_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be done without making changes"
     )
 
     # ========================================================================
@@ -4524,7 +4470,7 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
         elif args.cli_command == "note-recover":
             return cmd_note_recover(db, args)
         elif args.cli_command == "note-purge":
-            return cmd_note_purge(db, args)
+            return cmd_note_purge(db, config, args)
         elif args.cli_command == "notes-merge":
             return cmd_merge_notes(db, args)
         elif args.cli_command == "tags-list":
@@ -4670,14 +4616,10 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             if not maint_cmd:
                 print("Error: No maintenance command specified. Use 'db-maintenance --help'.", file=sys.stderr)
                 return 1
-            if maint_cmd == "database-normalize":
-                return cmd_maintenance_database_normalize(db, args)
-            elif maint_cmd == "note-rebuild-caches":
+            if maint_cmd == "note-rebuild-caches":
                 return cmd_maintenance_rebuild_cache(db, args)
             elif maint_cmd == "rebuild-all-caches":
                 return cmd_maintenance_rebuild_all_caches(db, args)
-            elif maint_cmd == "audio-rebuild-durations":
-                return cmd_maintenance_audio_rebuild_durations(db, config, args)
             else:
                 print(f"Error: Unknown maintenance command '{maint_cmd}'", file=sys.stderr)
                 return 1

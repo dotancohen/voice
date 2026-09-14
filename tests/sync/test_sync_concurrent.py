@@ -6,8 +6,8 @@ Tests concurrent scenarios:
 - Multiple clients syncing to same server
 - Race conditions
 
-These tests use subprocess-based helpers to avoid thread-safety issues
-with the Rust PyDatabase (marked as 'unsendable').
+These tests use subprocess-based helpers, so the concurrent operations run in
+separate processes as they do on separate devices.
 """
 
 from __future__ import annotations

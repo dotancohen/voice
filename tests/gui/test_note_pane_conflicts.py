@@ -16,13 +16,13 @@ def make_conflict(db: Database) -> str:
     """A note edited here and, concurrently, on a peer; returns the note id."""
     peer = Database(":memory:")
     note_id = db.create_note("שורה משותפת")
-    changes = db.get_changes_since(None, 100000)["changes"]
+    changes = db.get_changes_after_seq(0, None, 100000)["changes"]
     for c in changes:
         c.setdefault("device_id", "0000000000007000800000000000000a")
     apply_sync_changes(peer._rust_db, changes, "0000000000007000800000000000000a", "Desktop")
     db.update_note(note_id, "שורה משותפת מהמחשב")
     peer.update_note(note_id, "שורה משותפת מהטלפון")
-    changes = peer.get_changes_since(None, 100000)["changes"]
+    changes = peer.get_changes_after_seq(0, None, 100000)["changes"]
     for c in changes:
         c.setdefault("device_id", PEER)
     apply_sync_changes(db._rust_db, changes, PEER, "Phone")

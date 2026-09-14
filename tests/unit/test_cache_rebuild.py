@@ -294,7 +294,7 @@ class TestCacheRebuildOnConflictResolution:
     @staticmethod
     def _push_all(src: Database, dst: Database, device_id: str) -> None:
         from voicecore import apply_sync_changes
-        changes = src.get_changes_since(None, 100000)["changes"]
+        changes = src.get_changes_after_seq(0, None, 100000)["changes"]
         for c in changes:
             c.setdefault("device_id", device_id)
         apply_sync_changes(dst._rust_db, changes, device_id, "Device " + device_id[-1])

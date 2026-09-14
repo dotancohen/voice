@@ -153,9 +153,9 @@ def run_gui(config_dir: Optional[Path], args: argparse.Namespace) -> int:
             theme = "dark" if is_dark else "light"
             logger.info(f"Detected theme from palette: {theme}")
 
-    # Apply theme using qdarktheme
-    theme_stylesheet = qdarktheme.load_stylesheet(theme=theme)
-    app.setStyleSheet(theme_stylesheet)
+    # The stylesheet and the palette together, so what is drawn by hand matches
+    from src.ui.theme import apply_theme
+    apply_theme(app, theme)
 
     # Create and show main window
     window = MainWindow(config, db, theme=theme)

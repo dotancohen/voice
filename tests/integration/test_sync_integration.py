@@ -64,13 +64,13 @@ class TestConflictResolution:
         set_local_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
         remote = Database(":memory:")
         note_id = db.create_note("גרסה מקורית")
-        changes = db.get_changes_since(None, 100000)["changes"]
+        changes = db.get_changes_after_seq(0, None, 100000)["changes"]
         for c in changes:
             c.setdefault("device_id", "0000000000007000800000000000000a")
         apply_sync_changes(remote._rust_db, changes, "0000000000007000800000000000000a", "Local")
         db.update_note(note_id, "גרסה מקומית")
         remote.update_note(note_id, "גרסה מרוחקת")
-        changes = remote.get_changes_since(None, 100000)["changes"]
+        changes = remote.get_changes_after_seq(0, None, 100000)["changes"]
         for c in changes:
             c.setdefault("device_id", self.REMOTE)
         result = apply_sync_changes(db._rust_db, changes, self.REMOTE, "Remote")
@@ -121,13 +121,13 @@ class TestConflictResolution:
         set_local_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
         remote = Database(":memory:")
         note_id = db.create_note("תוכן")
-        changes = db.get_changes_since(None, 100000)["changes"]
+        changes = db.get_changes_after_seq(0, None, 100000)["changes"]
         for c in changes:
             c.setdefault("device_id", "0000000000007000800000000000000a")
         apply_sync_changes(remote._rust_db, changes, "0000000000007000800000000000000a", "Local")
         db.delete_note(note_id)
         remote.update_note(note_id, "תוכן לשחזור")
-        changes = remote.get_changes_since(None, 100000)["changes"]
+        changes = remote.get_changes_after_seq(0, None, 100000)["changes"]
         for c in changes:
             c.setdefault("device_id", self.REMOTE)
         apply_sync_changes(db._rust_db, changes, self.REMOTE, "Remote")

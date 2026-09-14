@@ -680,8 +680,9 @@ class IssuesScreen(ModalScreen[None]):
     def action_reload(self) -> None:
         from src.core.issues_text import issue_sections, place_names
 
-        issues = self.db.issues(self.config.get("audiofile_directory"))
-        sections = issue_sections(issues, place_names(self.db, self.config))
+        here = self.config.get_device_id_hex()
+        issues = self.db.issues(self.config.get("audiofile_directory"), here)
+        sections = issue_sections(issues, place_names(self.db, self.config), here)
         if not sections:
             text = "Nothing needs your attention."
         else:
@@ -819,8 +820,10 @@ class TrashScreen(ModalScreen[bool]):
                 severity="warning",
             )
             return
-        audio_ids = self.db.purge_note(note["id"])
-        removed = purge_audio_files(audio_ids, self.audiofile_directory)
+        from src.core.purge import remove_purged_files
+
+        purged = self.db.purge_note(note["id"])
+        removed = len(remove_purged_files(purged, self.audiofile_directory))
         self.changed = True
         self.app.notify(
             f"Removed note {note['id'][:UUID_SHORT_LEN]} for good"
@@ -1040,25 +1043,6 @@ class TranscriptionQueueScreen(ModalScreen[bool]):
 
     def action_close(self) -> None:
         self.dismiss(self.changed)
-
-
-def purge_audio_files(audio_ids: List[str], directory: Optional[Path]) -> int:
-    """Delete the files of recordings that were purged; return how many went.
-
-    The database says which recordings were removed; where their files live
-    is the application's business, not the core's.
-    """
-    if not audio_ids or directory is None:
-        return 0
-    removed = 0
-    for audio_id in audio_ids:
-        for path in Path(directory).glob(f"{audio_id}.*"):
-            try:
-                path.unlink()
-                removed += 1
-            except OSError:
-                pass
-    return removed
 
 
 class ResolveConflictScreen(ModalScreen[bool]):
@@ -1766,12 +1750,13 @@ class NoteDetail(Container, NoteEditorMixin):
             self.app.notify("Select a note with a recording first", severity="warning")
             return
         if self.audiofile_directory:
-            self.db.check_files_here(self.audiofile_directory)
-        self.app.notify("\n".join(location_lines(self.db, audio_file["id"])), title=f"Where the copies of {audio_file['filename']} are", timeout=15)
+            self.db.check_files_here(self.audiofile_directory, self.app.config.get_device_id_hex())
+        self.app.notify("\n".join(location_lines(self.db, audio_file["id"], self.app.config)), title=f"Where the copies of {audio_file['filename']} are", timeout=15)
 
     def action_remove_local_copy(self) -> None:
         """Remove this computer's copy of the recording the player is on, on the
-        second press (FILE-22); refused when no other place holds the file."""
+        second press (FILE-22); the copy goes once the bucket or a device that
+        holds the file confirms now that it does (FILE-26)."""
         audio_file = self._audio_player.current_audio_file() if self._audio_player is not None else None
         if audio_file is None or not self.audiofile_directory:
             self.app.notify("Select a note with a recording first", severity="warning")
@@ -1781,12 +1766,14 @@ class NoteDetail(Container, NoteEditorMixin):
             self.app.notify(f"Press x again to remove {audio_file['filename']} from this computer; the recording stays")
             return
         self._removal_asked_for = None
+        from voicecore import SyncClient
+
         try:
-            self.db.remove_local_copy(audio_file["id"], self.audiofile_directory)
+            sentence = SyncClient(str(self.config_dir) if self.config_dir else None).remove_local_copy(audio_file["id"])
         except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
             self.app.notify(f"Not removed: {e}", severity="error")
             return
-        self.app.notify(f"Removed {audio_file['filename']} from this computer")
+        self.app.notify(sentence)
         if self.current_note_id:
             self.load_note(self.current_note_id)
 
@@ -2367,7 +2354,7 @@ class VoiceTUI(App):
         self.query_one("#note-detail", NoteDetail).action_remove_local_copy()
 
     def action_calculate_missing_data(self) -> None:
-        """Calculate what was never calculated: lengths, dates, display caches.
+        """Calculate what was never calculated: Recording lengths and creation dates.
 
         Reads the audio files, so it runs in a worker thread and reports what it
         found when it is done. See `core.missing_data`.

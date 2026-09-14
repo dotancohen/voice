@@ -36,13 +36,15 @@ def state_for(s3: FakeS3, bucket: str = "voice-abc123") -> SetupState:
 
 
 class TestTheWizardSteps:
-    def test_the_policy_never_deletes_and_the_pasted_key_is_cleaned(self) -> None:
-        assert "Delete" not in policy_text()
+    def test_the_policy_may_delete_objects_and_the_entered_key_is_checked(self) -> None:
+        assert '"s3:DeleteObject"' in policy_text() and "DeleteBucket" not in policy_text()
         state = SetupState(endpoint="http://127.0.0.1:1")
-        assert take_key(state, "", SECRET) == "The access key id is empty."
+        assert take_key(state, "", SECRET) == "The access key ID is empty."
         assert take_key(state, KEY_ID, "") == "The secret access key is empty."
         amazon = SetupState()
-        assert "AKIA" in take_key(amazon, "short", SECRET)
+        assert "5 characters" in take_key(amazon, "short", SECRET)
+        assert "small letters" in take_key(amazon, KEY_ID.lower(), SECRET)
+        assert "39 characters" in take_key(amazon, KEY_ID, SECRET[:-1])
         assert take_key(amazon, f"Access key ID: {KEY_ID}", SECRET) is None
         assert amazon.access_key_id == KEY_ID
 
@@ -60,19 +62,26 @@ class TestTheWizardSteps:
         assert "STANDARD_IA" in lifecycle and "voice-purged" in lifecycle and "DaysAfterInitiation" in lifecycle
         assert round_trip(state) is None
         assert state.round_trip_key.startswith("voice-setup-check-")
-        assert s3.tags["voice-abc123"][state.round_trip_key] == {"voice-purged": "1"}, "the check object is tagged, since the key cannot delete"
+        assert s3.tags["voice-abc123"][state.round_trip_key] == {"voice-purged": "1"}, "the check object is tagged: nothing assumes the key may delete"
         assert not s3.deleted_anything()
 
         save(state, empty_db)
         saved = saved_state(empty_db)
         assert saved is not None and saved.bucket == "voice-abc123" and saved.access_key_id == KEY_ID and saved.endpoint == s3.endpoint
 
-    def test_a_taken_name_gets_a_suggestion_and_a_wrong_secret_is_explained(self, s3: FakeS3) -> None:
+    def test_a_taken_generated_name_is_replaced_and_a_chosen_one_is_not_and_a_wrong_secret_is_explained(self, s3: FakeS3) -> None:
         s3.taken_names.add("voice-taken1")
-        state = state_for(s3, "voice-taken1")
-        problem = create_bucket(state)
-        assert problem is not None and "taken" in problem and "Try voice-" in problem
+        generated = state_for(s3, "voice-taken1")
+        assert create_bucket(generated) is None, "a generated name that is taken is replaced by a free one"
+        assert generated.renamed_from == "voice-taken1" and generated.bucket != "voice-taken1" and generated.bucket.startswith("voice-")
+        assert generated.bucket in s3.buckets
+        chosen = state_for(s3, "voice-taken1")
+        chosen.bucket_chosen = True
+        problem = create_bucket(chosen)
+        assert problem is not None and "taken" in problem and "Custom bucket name and folder" in problem, problem
         assert create_bucket(state_for(s3, "notes")) is not None, "a name outside voice- is refused before any request"
+        fresh = state_for(s3, "")
+        assert create_bucket(fresh) is None and fresh.bucket.startswith("voice-") and fresh.bucket in s3.buckets, "no name: a free one is generated"
 
         wrong = state_for(s3)
         wrong.secret_access_key = "not-the-secret"
@@ -97,9 +106,10 @@ class TestTheWizardSteps:
 
     def test_a_large_recording_goes_up_in_parts_and_a_dropped_part_is_the_only_one_sent_again(self, s3: FakeS3, test_config, test_config_dir: Path) -> None:
         """FILE-19: a file larger than one part is uploaded in parts through
-        the bucket's three requests; the part that failed is sent again at the
-        next upload and the parts already there are not; the object is the
-        whole file, keyed by its content hash (FILE-18)."""
+        the bucket's three requests; a part the bucket refuses once is sent
+        again by the next try of the same upload (FILE-14) and the parts
+        already there are not; the object is the whole file, keyed by its
+        content hash (FILE-18)."""
         from voicecore import upload_pending_audio_files
 
         empty_db = Database(Path(test_config._rust_config.get_database_file()))  # the one the upload opens by the configuration
@@ -116,21 +126,19 @@ class TestTheWizardSteps:
         (audio_dir / row["disk_name"]).write_bytes(content)
         content_hash = empty_db.store_content_hash(audio_id, audio_dir)
 
-        s3.fail_part = 2
+        s3.fail_part = 2  # answers 503 once
         first = upload_pending_audio_files(str(test_config_dir))
-        assert (first.uploaded, first.failed) == (0, 1), first.errors
-        assert "voice-abc123" in s3.buckets and not s3.buckets["voice-abc123"], "no object until every part is there"
-        assert empty_db.get_audio_file(audio_id)["storage_key"] is None
-
-        second = upload_pending_audio_files(str(test_config_dir))
-        assert (second.uploaded, second.failed) == (1, 0), second.errors
+        assert (first.uploaded, first.failed) == (1, 0), first.errors
         key = f"{content_hash}.ogg"
         assert s3.buckets["voice-abc123"][key] == content
         assert empty_db.get_audio_file(audio_id)["storage_key"] == key
         part_puts = [q for m, _, k, q in s3.requests if m == "PUT" and k == key and "partNumber" in q]
-        assert len(part_puts) == 3, "part 1 once, part 2 twice (the dropped one and its retry); never part 1 again"
-        assert [m for m, _, _, q in s3.requests if m == "POST" and "uploads" in q].count("POST") == 1, "one upload begun, continued at the second run"
+        assert len(part_puts) == 3, "part 1 once, part 2 twice (the refused try and the next); never part 1 again"
+        assert [m for m, _, _, q in s3.requests if m == "POST" and "uploads" in q].count("POST") == 1, "one upload begun and continued by the next try"
         assert not s3.deleted_anything()
+
+        second = upload_pending_audio_files(str(test_config_dir))
+        assert (second.uploaded, second.failed) == (0, 0), "nothing is left to upload"
         empty_db.close()
 
     def test_encrypted_uploads_are_enc_objects_that_open_only_with_the_key(self, s3: FakeS3, test_config, test_config_dir: Path) -> None:

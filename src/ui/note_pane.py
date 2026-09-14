@@ -108,6 +108,7 @@ class NotePane(QWidget, NoteEditorMixin):
         audiofile_directory: Optional[Path | str] = None,
         parent: Optional[QWidget] = None,
         config_dir: Optional[Path | str] = None,
+        config: Optional[Any] = None,
     ) -> None:
         """Initialize the note pane.
 
@@ -116,11 +117,13 @@ class NotePane(QWidget, NoteEditorMixin):
             audiofile_directory: Path to audiofile directory for playback
             parent: Parent widget (default None)
             config_dir: Config directory, needed for on-demand cloud downloads
+            config: The configuration, whose device id is "this device" (FILE-22)
         """
         super().__init__(parent)
         self.db = db
         self.audiofile_directory = Path(audiofile_directory) if audiofile_directory else None
         self.config_dir = config_dir
+        self.config = config
         self._download_worker: Optional[_MediaDownloadWorker] = None
         self.init_editor_state()  # Initialize mixin state
 
@@ -734,11 +737,13 @@ class NotePane(QWidget, NoteEditorMixin):
         from src.core.issues_text import location_lines
 
         if self.audiofile_directory:
-            self.db.check_files_here(self.audiofile_directory)
-        QMessageBox.information(self, "Where the copies are", "\n".join(location_lines(self.db, audio_id)))
+            self.db.check_files_here(self.audiofile_directory, self.config.get_device_id_hex() if self.config is not None else None)
+        QMessageBox.information(self, "Where the copies are", "\n".join(location_lines(self.db, audio_id, self.config)))
 
     def _remove_local_copy(self, audio_id: str) -> None:
-        """Remove this computer's copy of a recording, after asking (FILE-22)."""
+        """Remove this computer's copy of a recording, after asking (FILE-22): the
+        copy goes once the bucket or a device that holds the file confirms now
+        that it does (FILE-26)."""
         from PySide6.QtWidgets import QMessageBox
 
         audio_file = self.db.get_audio_file(audio_id)
@@ -747,14 +752,16 @@ class NotePane(QWidget, NoteEditorMixin):
         answer = QMessageBox.question(
             self,
             "Remove from this device",
-            f"Remove {audio_file['filename']} from this computer? The recording stays, "
-            "and it can be fetched again from wherever else it is kept.",
+            f"Remove {audio_file['filename']} from this computer? The recording stays. "
+            "The bucket, or another device that holds the file, is asked first to confirm that it does.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        from voicecore import SyncClient
+
         try:
-            self.db.remove_local_copy(audio_id, self.audiofile_directory)
+            SyncClient(str(self.config_dir) if self.config_dir else None).remove_local_copy(audio_id)
         except Exception as e:  # noqa: BLE001 - the core's sentence is the answer
             QMessageBox.warning(self, "Not removed", str(e))
             return
