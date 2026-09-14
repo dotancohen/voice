@@ -3,12 +3,17 @@
 A map of the desktop application `Voice/`: what each part of the code is for,
 how the parts call each other, and what is in the database. It is written for
 a developer who is new to the project. A term in **bold** at its first use is
-defined in the [glossary](#13-glossary) at the end.
+defined in the [glossary](#14-glossary) at the end.
 
-Written on 2026-09-13 from the code itself, on branch `accounts-pairing-sync`
-(Voice commit `9086989`, core commit `987f769`). Where an older document says
-something different from the code, the code was taken as the truth, and the
-disagreements are listed in [section 12](#12-where-older-documents-disagree-with-the-code).
+Written on 2026-09-13 from the code itself (Voice commit `9086989`, core commit
+`987f769`). Checked against the code on 2026-09-14, on branch
+`accounts-pairing-sync`: Voice commit `10365ef`, VoiceCore commit `fe788d1`.
+Voice's `submodules/voicecore` points at core commit `abedc04`; the three
+VoiceCore commits after it change only `CLAUDE.md` and `README.md`. Where a
+document says something different from the code, the code was taken as the
+truth. The disagreements that remain are listed in
+[section 12](#12-where-older-documents-disagree-with-the-code), and defects
+found in the code in [section 13](#13-defects-found-in-the-code).
 
 ## Contents
 
@@ -24,7 +29,8 @@ disagreements are listed in [section 12](#12-where-older-documents-disagree-with
 10. [Rules to follow when changing the code](#10-rules-to-follow-when-changing-the-code)
 11. [Where to look first](#11-where-to-look-first)
 12. [Where older documents disagree with the code](#12-where-older-documents-disagree-with-the-code)
-13. [Glossary](#13-glossary)
+13. [Defects found in the code](#13-defects-found-in-the-code)
+14. [Glossary](#14-glossary)
 
 ---
 
@@ -63,20 +69,28 @@ calls the core. When you ask "where is X implemented?", the answer is usually
 The core is checked out three times: `Voice/submodules/voicecore`,
 `VoiceAndroid/submodules/voicecore` and the standalone `VoiceCore/`. They are
 git **submodules** and must point at the same commit
-(`TECHNICAL-DECISIONS.md` 7.2).
+(`TECHNICAL-DECISIONS.md` 7.2; `VoiceFamily/CLAUDE.md`, "One core, three
+binding layers").
 
 ### Where the rules are written
+
+On 2026-09-14 the documents about more than one project moved from `Voice/` to
+`VoiceFamily/`, and `CLAUDE.md` was split into one file for every project and
+one per project.
 
 | Document | What it holds |
 |---|---|
 | `VoiceFamily/TECHNICAL-DECISIONS.md` | Decisions shared by all projects, numbered (for example "3.1a"). Read it before changing any shared behaviour |
-| `Voice/SYNC_SPECIFICATION.md` | Numbered rules of the data model and the sync protocol. An id such as `FILE-15`, `VER-9` or `PURGE-5` in a code comment refers to a rule here |
-| `Voice/PLAN-ACCOUNTS-PAIRING-SYNC.md` | The plan for accounts, pairing and file transfer, in 16 stages. "Stage 13" in a comment refers to a stage here |
-| `Voice/CLAUDE.md` | Working instructions: building, the three binding layers, sync design notes |
+| `VoiceFamily/SYNC_SPECIFICATION.md` | Numbered rules of the data model and the sync protocol. An id such as `FILE-22`, `VER-9` or `PURGE-5` in a code comment refers to a rule here. Section 7.1 lists every route of the listener |
+| `VoiceFamily/PLAN-ACCOUNTS-PAIRING-SYNC.md` | The plan for accounts, pairing and file transfer, in 16 stages. "Stage 13" in a comment refers to a stage here |
+| `VoiceFamily/CLAUDE.md` | Working instructions for every project: tests, naming, the owner's data, the three binding layers, where each document belongs |
+| `Voice/CLAUDE.md` | Working instructions for the desktop only: building the Python binding, the interface frameworks, common commands, which document a change belongs in |
+| `VoiceCore/CLAUDE.md` | Working instructions for the core: logging, the database, sync, adding a syncable entity type or field, recordings, versioned fields |
 | `Voice/USER_MANUAL.md` | How the application is used, interface by interface |
-| `Voice/DEVELOPMENT.md` | Installing, deploying the server, running tests |
-| `Voice/BUGS-THE-TESTS-MISSED.md` | Bugs that shipped although tests existed, and why the tests missed them |
-| `Voice/CONFIGURATION.md`, `Voice/CLOUD-STORAGE-SETUP.md` | The configuration file and the cloud bucket |
+| `Voice/DEVELOPMENT.md`, `Voice/TESTING.md` | Installing, deploying the server, running tests; the test suite |
+| `Voice/CONFIGURATION.md`, `Voice/CLOUD-STORAGE-SETUP.md`, `Voice/SECURITY-CONSIDERATIONS.md` | The configuration file; the cloud bucket set up by hand; exposing a server |
+| `VoiceFamily/BUGS-THE-TESTS-MISSED.md` | Bugs that shipped although tests existed, and why the tests missed them |
+| `VoiceFamily/test-plans/` | Manual test plans for the desktop, the server and the phones together; they drive the phone with voice-adb |
 
 ---
 
@@ -121,9 +135,10 @@ the web API run on a server where PySide6 is not installed. Qt code belongs in
 
 ### Adding a new database function
 
-Three places, in this order (`Voice/CLAUDE.md`, "Exposing New Functionality"):
+Three places, in this order (`VoiceFamily/CLAUDE.md`, "One core, three binding
+layers"):
 
-1. The function itself: `submodules/voicecore/src/database.rs` (or the module it belongs to).
+1. The function itself: `submodules/voicecore/src/database.rs` (or the module it belongs to). The change is made and committed in `VoiceCore/`; the submodule checkouts are then moved to that commit.
 2. The Python binding: a method in `rust/voice-python/src/lib.rs`.
 3. The Android binding: a method in `submodules/voicecore/src/android.rs`.
 
@@ -138,27 +153,29 @@ function that is missing from a binding does not exist on that platform.
 Voice/
 ├── src/                     the application (section 4)
 │   ├── main.py              entry point: chooses the account and the interface
-│   ├── cli.py               command-line interface (argparse), 4,633 lines
-│   ├── tui.py               terminal interface (Textual), 2,504 lines
-│   ├── web.py               web API (Flask), 549 lines
+│   ├── cli.py               command-line interface (argparse), 4,724 lines
+│   ├── tui.py               terminal interface (Textual), 2,624 lines
+│   ├── web.py               web API (Flask), 604 lines
 │   ├── ui/                  graphical interface (PySide6 / Qt)
 │   └── core/                logic shared by the four interfaces, no Qt
 ├── rust/
 │   ├── Cargo.toml           Rust workspace holding the binding crate
-│   └── voice-python/        PyO3 binding: src/lib.rs, 3,420 lines
+│   └── voice-python/        PyO3 binding: src/lib.rs, 3,487 lines
 ├── submodules/
 │   ├── voicecore/           the Rust core (git submodule)
 │   └── voicetranscription/  transcription library; Python binding in bindings/python,
 │                            imported as `voice_transcription`
-├── tests/                   pytest suite (section 9)
-├── test-plans/              manual test plans; they drive the phone with voice-adb
+├── tests/                   pytest suite (section 9.4)
 ├── tools/                   batch_transcribe.py, migrate_from_classic.py
 ├── bin/voice                shell launcher: runs .venv/bin/python -m src.main
 ├── requirements.txt         desktop dependencies (Qt, Textual, Flask, zeroconf ...)
 ├── requirements-server.txt  server dependencies (no Qt)
-├── requirements-dev.txt     mypy, black, pytest, pytest-qt ...
+├── requirements-dev.txt     mypy, black, pytest, pytest-qt, moto[server] ...
 ├── pyproject.toml           mypy (strict) and black (line length 100) settings
-└── pytest.ini               test discovery, markers, coverage options
+├── pytest.ini               test discovery, markers, coverage options
+├── MAINTAINER-GUIDE.md      this file
+└── CLAUDE.md, README.md, USER_MANUAL.md, DEVELOPMENT.md, TESTING.md,
+    CONFIGURATION.md, CLOUD-STORAGE-SETUP.md, SECURITY-CONSIDERATIONS.md
 ```
 
 Build output that can be deleted and generated again (`TECHNICAL-DECISIONS.md`
@@ -166,10 +183,11 @@ Build output that can be deleted and generated again (`TECHNICAL-DECISIONS.md`
 directory can also be created again, but then every dependency and the Rust
 binding must be installed again.
 
-Older design documents are kept on purpose and describe earlier stages of the
-design: `SYNC_PLANNING.md`, `SYNC_PLANNING-questions.md`,
-`SYNC_IMPLEMENTATION_PLAN.md`, `TODO_SYNC_CONFLICTS.md`, `PLAN-ANDROID.md`.
-Where they disagree with `SYNC_SPECIFICATION.md`, the specification is current.
+The older design documents describe earlier stages of the design and are kept
+on purpose. Since 2026-09-14 they are in `VoiceFamily/`: `SYNC_PLANNING.md`,
+`SYNC_PLANNING-questions.md`, `SYNC_IMPLEMENTATION_PLAN.md`,
+`TODO_SYNC_CONFLICTS.md`. `PLAN-ANDROID.md` is in `VoiceAndroid/`. Where they
+disagree with `SYNC_SPECIFICATION.md`, the specification is current.
 
 ---
 
@@ -187,12 +205,17 @@ Where they disagree with `SYNC_SPECIFICATION.md`, the specification is current.
    and `cli account list|create|default|remove|host`.
 4. Start the log file `voice.log` (rotated at 5 MiB, two old files kept).
 5. `ensure_own_device_card(...)`: make this installation's device key for the
-   account and its **device card**, once.
+   account and write its **device card**.
 6. Print `Using CONFIG_DIR: ...` as the first line. For `--format json` or
    `csv` this line goes to standard error, so the output stays machine-readable.
    A test that counts output lines must skip this line.
 7. With no interface given: the `default_interface` configuration value, else
-   the GUI when PySide6 and qdarktheme can be imported, else the TUI.
+   the GUI when PySide6 and qdarktheme can be imported, else the TUI. The
+   arguments are then parsed a second time with that interface inserted, and
+   every value the first parse and step 3 set (the account's directory, the
+   root, the label) is copied onto the new result. Without that copy the
+   interface started without its account
+   (`tests/unit/test_main_without_an_interface.py`).
 8. Run the interface: `run_gui` (in `main.py`), `tui.run`, `cli.run` or `web.run`.
 
 `run_gui` opens `Config`, opens `Database(database_file)`, calls
@@ -208,11 +231,11 @@ recording files on disk when a sync changed their names (FILE-15).
 
 | File | Purpose |
 |---|---|
-| `main_window.py` | The window, its menu bar, and the connections between the three panes |
+| `main_window.py` | The window, its menu bar (File → Issues... opens `IssuesDialog`), and the connections between the three panes |
 | `tags_pane.py` | The Tag tree; selecting a Tag filters the Note list |
 | `notes_list_pane.py` | The Note list and search box; draws rows from `notes.di_cache_note_list_pane_display` |
-| `note_pane.py` | One Note: text, Tags, Recordings, Transcriptions, the conflict banner; reads `notes.di_cache_note_pane_display` |
-| `audio_player_widget.py` | Waveform drawing (`WaveformWidget`) and the player |
+| `note_pane.py` | One Note: text, Tags, Recordings, Transcriptions, the conflict banner; reads `notes.di_cache_note_pane_display`. Shows where a Recording's copies are (after `check_files_here`, section 8.7) and removes this computer's copy after a Yes/No question |
+| `audio_player_widget.py` | Waveform drawing (`WaveformWidget`) and the player. The Recording list has a context menu, "Where are the copies?" and "Remove from this device", which emits `locations_requested` or `remove_local_requested` |
 | `transcription_widget.py` | A Transcription's text and its five flags |
 | `transcription_dialog.py` | Choosing a transcription service and its options |
 | `transcription_queue_dialog.py` | The queue of Recordings waiting to be transcribed |
@@ -220,6 +243,7 @@ recording files on disk when a sync changed their names (FILE-15).
 | `tag_hierarchy_dialog.py` | Creating, renaming and moving Tags |
 | `trash_dialog.py` | Deleted Notes: recover, or purge for good |
 | `version_dialogs.py` | A field's history, and resolving a conflict |
+| `issues_dialog.py` | `IssuesDialog`: the Issues list (section 8.8) as a tree, read again by the Refresh button |
 | `sync_dialog.py` | Sync, deliver, exchange, send and fetch with a peer, in a `QThread` so the window stays responsive |
 | `storage_wizard.py` | Step-by-step creation of the S3 bucket |
 | `styles.py` | Shared style sheet fragments |
@@ -228,14 +252,19 @@ recording files on disk when a sync changed their names (FILE-15).
 
 One file. `VoiceTUI(App)` is the application. Its screens are
 `TagManagementScreen`, `HistoryScreen`, `TrashScreen`,
-`TranscriptionQueueScreen` and `ResolveConflictScreen`; its widgets are
-`TagsTree`, `NotesList`, `NoteDetail`, `TUIAudioPlayer` and
+`TranscriptionQueueScreen`, `ResolveConflictScreen` and `IssuesScreen`; its
+widgets are `TagsTree`, `NotesList`, `NoteDetail`, `TUIAudioPlayer` and
 `TUITranscriptionBox`. `detect_rtl` and `make_rtl_text` lay out Hebrew text
 right to left. It runs over SSH on a server.
 
+Keys added on 2026-09-14: **F8** opens `IssuesScreen` (F5 reads the list again,
+Escape closes it); **w** shows, as a notification, where the copies of the
+Recording the player is on are; **x** removes this computer's copy of that
+Recording on the second press.
+
 ### 4.4 The command line: `src/cli.py` (argparse)
 
-`add_cli_subparser` (from about line 3470) declares every command; each
+`add_cli_subparser` (from about line 3530) declares every command; each
 command is carried out by a `cmd_...` function earlier in the file. Groups
 with subcommands:
 
@@ -243,21 +272,28 @@ with subcommands:
 |---|---|
 | `sync` | `status`, `discover`, `check`, `list-peers`, `add-peer`, `remove-peer`, `rename-peer`, `now`, `conflicts`, `resolve`, `serve`, and one command per operation (deliver, exchange, send, fetch) |
 | `account` | `show`, `list`, `create`, `default`, `remove`, `show-code`, `hide-code`, `recording-key export/import`, `host`, `grant`, `join`, `snapshots`, `snapshot`, `backup`, `restore`, `move` |
-| `storage` | `status`, `setup`, `replace-key`, `check`, `upload-pending`, `download-missing`, `mirror`, `encrypt`, `reupload-encrypted`, `disable`, and the S3 settings |
+| `storage` | `status`, `setup`, `replace-key`, `check`, `upload-pending`, `download-missing`, `mirror`, `encrypt`, `reupload-encrypted`, `disable`, `upload-limit [megabytes]` (the account's upload limit, section 8.8), and the S3 settings |
 | `device` | `list`, `revoke` |
 | `config` | `show`, `get`, `set` (the local `config.json`) |
 | `settings` | `list`, `get`, `set` (the synced settings) |
 
 There are also single commands for Notes, Tags (`tag-rename`, `tag-move`),
-Recordings, transcription, the trash and maintenance. Run
-`bin/voice cli --help` and `bin/voice cli <command> --help` for the complete,
-current list; the help text is the maintained reference.
+Recordings, transcription, the trash and maintenance. Among them:
+`audiofile-show <id>` prints a `Copies:` section (where each copy is),
+`audiofile-remove-local <id>` removes this device's copy (exit status 1 when
+refused), and `issues` prints the Issues list (`--format json` prints the
+core's dictionary). Run `bin/voice cli --help` and
+`bin/voice cli <command> --help` for the complete, current list; the help text
+is the maintained reference.
 
 ### 4.5 The web API: `src/web.py` (Flask)
 
 A JSON API with these routes: `/api/notes` (GET, POST),
 `/api/notes/<note_id>` (GET, PUT, DELETE), `/api/notes/<note_id>/attachments`,
-`/api/audiofiles/<audio_id>`, `/api/tags`, `/api/search`, `/api/trash`,
+`/api/audiofiles/<audio_id>`, `/api/audiofiles/<audio_id>/locations` (GET),
+`/api/audiofiles/<audio_id>/remove-local` (POST; 409 when no other place holds
+the file), `/api/issues` (GET), `/api/storage/upload-limit` (GET, and PUT with
+`{"megabytes": n}`), `/api/tags`, `/api/search`, `/api/trash`,
 `/api/trash/<note_id>/recover`, `/api/trash/<note_id>` (DELETE),
 `/api/transcription-queue` (GET, POST) with `/next`, `/remove`, `/clear`,
 `/api/maintenance/missing-data` (GET, POST), `/api/health`.
@@ -268,7 +304,7 @@ This is not the sync server. The sync server is Rust (section 5).
 
 | File | Purpose |
 |---|---|
-| `database.py` | Wrapper around `voicecore.Database`. Accepts ids as `bytes` or hex, reports this computer's timezone to the core when a database is opened |
+| `database.py` | Wrapper around `voicecore.Database`. Accepts ids as `bytes` or hex, reports this computer's timezone to the core when a database is opened. Since 2026-09-14 also `file_locations`, `check_files_here`, `remove_local_copy`, `max_upload_bytes`, `set_max_upload_mb`, `issues` |
 | `config.py` | Wrapper around `voicecore.Config` (`config.json`) |
 | `models.py` | Frozen dataclasses `Note`, `Tag`, `NoteAttachment`, `AudioFile`; `AUDIO_FILE_FORMATS`, read from the core |
 | `audiofile_manager.py` | Copies an imported file into the audio directory under its `disk_name`, never overwriting; reads a file's creation date from the filesystem or its name |
@@ -283,7 +319,8 @@ This is not the sync server. The sync server is Rust (section 5).
 | `conflicts.py` | Python view of conflicts and field versions |
 | `note_editor.py` | `NoteEditorMixin`, shared by the GUI and TUI Note views |
 | `cloud_storage.py` | Download from the bucket, and the "missing, in cloud" status |
-| `storage_setup.py` | The steps of the bucket wizard, shared by the CLI and the GUI |
+| `storage_setup.py` | The steps of the bucket wizard, shared by the CLI and the GUI. A refused bucket creation suggests another name only when the service's sentence says the name is taken |
+| `issues_text.py` | The sentences of the Issues list and of where a Recording's copies are, used by the CLI, the GUI and the TUI: `size_words`, `place_names`, `place_label`, `issue_sections`, `location_lines`. The web API returns the core's dictionaries instead |
 | `discovery.py` | Finding peers on the local network with **zeroconf** (`_voicesync._tcp`) |
 | `missing_data.py` | Survey and calculation of facts that were never recorded (lengths, dates, caches) |
 | `timestamp_utils.py` | Formatting a timestamp at its own offset; this computer's timezone |
@@ -293,31 +330,32 @@ This is not the sync server. The sync server is Rust (section 5).
 
 ## 5. The Rust core, as the desktop uses it
 
-Files in `submodules/voicecore/src/`, largest first:
+Files in `submodules/voicecore/src/`, largest first (line counts of 2026-09-14):
 
 | File | Lines | Purpose |
 |---|---|---|
-| `database.rs` | 8,835 | Opening the database, creating and migrating tables, every query, the display caches, the change feed, snapshots |
-| `sync_server.rs` | 4,811 | The HTTP server peers connect to (`/sync/...`, `/pair/...`), built on **axum** |
-| `android.rs` | 2,688 | The Android binding (not used by the desktop) |
+| `database.rs` | 9,382 | Opening the database, creating and migrating tables, every query, the display caches, the change feed, snapshots, where each copy of a Recording is (`file_locations`), the account's upload limit |
+| `sync_server.rs` | 4,879 | The HTTP server peers connect to (`/sync/...`, `/pair/...`), built on **axum** |
+| `android.rs` | 2,820 | The Android binding (not used by the desktop) |
 | `versions.rs` | 2,615 | Versioned fields: history, heads, merges, conflicts (section 7.4) |
-| `sync_client.rs` | 2,211 | The side that connects: sync, deliver, exchange, send, fetch, join |
-| `file_storage.rs` | 1,493 | Upload to and download from the bucket |
+| `sync_client.rs` | 2,286 | The side that connects: sync, deliver, exchange, send, fetch, join |
+| `file_storage.rs` | 1,561 | Upload to and download from the bucket; skips files over the upload limit; states the bucket's and this device's copies |
 | `config.rs` | 1,335 | `config.json`: device id and name, peers, keys, backup, audio directory |
 | `validation.rs` | 806 | Checks on ids, names, timestamps |
 | `models.rs` | 781 | Entity structs, attachment types, the audio format list, recording file names |
-| `bucket_setup.rs` | 637 | Creating and hardening an S3 bucket |
-| `file_storage_s3.rs` | 522 | Signed S3 requests, upload in parts |
+| `bucket_setup.rs` | 755 | Creating and hardening an S3 bucket; the core's own signed requests (`signed`, `send_signed_watched`, `get_signed_stream`); `explain_error` and `explain_refusal` |
+| `file_storage_s3.rs` | 485 | Bucket upload of a small file or of parts, download, and the existence check, each as a signed request of `bucket_setup.rs` |
+| `sync_apply.rs` | 419 | Applying one batch of changes from a peer |
 | `accounts.rs` | 413 | The index of accounts on one installation (`accounts.db`) |
 | `crypto.rs` | 405 | Encryption of Recordings in the bucket (AES-256-GCM) |
-| `sync_apply.rs` | 397 | Applying one batch of changes from a peer |
 | `search.rs` | 394 | Search |
+| `issues.rs` | 387 | The Issues list (ISSUE-1), calculated at every call and never stored |
 | `merge.rs` | 382 | Merging Notes |
 | `pairing.rs` | 342 | Pairing codes and setup texts |
 | `sync_protocol.rs` | 309 | Request and response types, error codes |
 | `tls.rs` | 296 | Self-signed certificates for the server |
 | `auth.rs` | 248 | Device keys and device cards |
-| `transfer.rs` | 171 | Streaming a file between peers |
+| `transfer.rs` | 210 | Streaming a file between peers; `stall_of_upload`, which ends an upload that stops moving (section 8.9) |
 | `timezone.rs` | 127 | The local timezone reported by the application |
 | `error.rs` | 126 | `VoiceError` |
 | `waveform.rs` | 78 | Waveform levels kept with a Recording |
@@ -326,6 +364,7 @@ Files in `submodules/voicecore/src/`, largest first:
 
 **Cargo features** (`Cargo.toml`) choose what is compiled: `server`, `desktop`
 and `file-storage` are on by default; `uniffi` is added for Android.
+`file-storage` also brings in `tokio-util`, for the watched upload bodies.
 
 **Shared build directory.** `VoiceFamily/.cargo/config.toml` makes every Rust
 crate in the family build into `VoiceFamily/.cargo-target/`
@@ -361,9 +400,9 @@ account's `config.json`.
 
 | Where | Synced? | Examples |
 |---|---|---|
-| `config.json` (local file) | Never | Paths, Whisper model, port, colours, `sync.mirror_audio_files`, the device key |
+| `config.json` (local file) | Never | Paths, Whisper model, port, colours, `sync.mirror_audio_files`, `sync.max_sync_file_size_mb` (the listener's body limit for its JSON routes), the device key |
 | Table `synced_settings` (through versions) | Yes | `transcription.preferred_languages`, `transcription.providers.<provider>.api_key`, `tag_color.<name>` |
-| Table `file_storage_config` | Yes | The bucket's provider, name, region and credentials |
+| Table `file_storage_config` | Yes | The bucket's provider, name, region and credentials, `encrypt`, and `max_upload_mb` (the account's upload limit) |
 
 ---
 
@@ -387,12 +426,13 @@ migrate_add_file_storage_config_table
 migrate_drop_legacy_conflict_tables  the six old conflicts_* tables
 create_version_tables                field_versions, field_heads ... (versions.rs)
 migrate_create_root_versions
-migrate_add_sync_sequence            seq columns, triggers, most newer tables and columns
+migrate_add_sync_sequence            seq columns, triggers, most newer tables and columns,
+                                     including file_locations and audio_files.size_bytes
 migrate_add_timezone_columns
 ```
 
 - **There is no schema version number.** Each migration checks whether its
-  table or column already exists and does nothing when it does. Opening a
+  table or column already exists and skips that step when it exists. Opening a
   database twice is therefore harmless. To add a column, add a
   "check, then `ALTER TABLE`" step to a migration function.
 - **Ids** are **UUID7** values stored as 16-byte **BLOB**s. The applications
@@ -403,7 +443,8 @@ migrate_add_timezone_columns
   UTC where it happened) and `x_zone` (the IANA name, such as
   `Asia/Jerusalem`). A Note made at 15:20 in Jerusalem shows 15:20 anywhere.
   Sync bookkeeping (`sync_received_at`, `seq`, `last_sync_at`) and
-  `storage_uploaded_at` have no zone columns.
+  `storage_uploaded_at` have no zone columns. `file_locations.changed_at` is in
+  milliseconds.
 - **Nothing is deleted by an ordinary delete.** Deleting sets `deleted_at` (a
   **soft delete**): the row, its history and its files stay, and the Note waits
   in the trash. Only a **purge**, asked for from the trash, removes rows.
@@ -422,7 +463,7 @@ notes ──────────────────┘
   │
   └── note_attachments ──(attachment_id, attachment_type = 'audio_file')──► audio_files
                                                                                │
-                                                                     transcriptions
+                                                              transcriptions, file_locations
 ```
 
 - A Note has any number of Tags, through `note_tags`.
@@ -431,7 +472,9 @@ notes ──────────────────┘
   `attachment_id` points into. Today the only type in use is `audio_file`
   (`summary` is reserved in `models.rs`). There is no foreign key from
   `attachment_id`, because it may point into different tables.
-- A Recording (`audio_files` row) has any number of Transcriptions.
+- A Recording (`audio_files` row) has any number of Transcriptions, and one
+  `file_locations` row per place that has stated whether it holds the file
+  (section 8.7).
 - `notes.primary_attachment_id` names the Attachment that stands for the Note,
   and `audio_files.primary_transcription_id` the Transcription that stands for
   the Recording. Empty means "the oldest one" (PRIMARY-1 to PRIMARY-3).
@@ -472,6 +515,7 @@ three timestamps. Removing a Tag from a Note sets `deleted_at`; the row stays.
 | `summary` | Versioned text |
 | `device_id` | The device that created the row |
 | `content_sha256` | SHA-256 of the file's bytes; also the bucket object's name |
+| `size_bytes` | The file's size, written together with the content hash, synced, and never changed once known (FILE-23). NULL until a device has measured the file |
 | `storage_provider`, `storage_key`, `storage_uploaded_at` | Set after an upload to the bucket; NULL means not uploaded |
 | `storage_encrypted` | 1 when the bucket object is encrypted |
 | `waveform_levels` | The levels a waveform is drawn from, kept by the first device that decoded the file (FILE-20) |
@@ -558,24 +602,28 @@ old value back, or sends a wrong row to every peer.
 Values that are written by the machine rather than typed by the user
 (`filename`, `duration_seconds`, `service_response` and similar) are not
 versioned. When a row arrives from a peer they are merged column by column:
-the row with the newer `modified_at` wins a column (DM-4).
+the row with the newer `modified_at` wins a column (DM-4). `file_locations`
+rows are not versioned either; they have a rule of their own (section 8.7).
 
 ### 7.5 Tables for sync
 
 | Table | Purpose |
 |---|---|
 | `sync_sequence` | One row holding a counter for the whole database |
-| `seq` column | On `field_versions`, `notes`, `tags`, `note_tags`, `note_attachments`, `audio_files`, `transcriptions`, `file_storage_config`, `purges`. **Triggers** set it from the counter when a row is inserted, or when a synced column really changed. Cache columns never change it |
+| `seq` column | On `field_versions`, `notes`, `tags`, `note_tags`, `note_attachments`, `audio_files`, `transcriptions`, `file_storage_config`, `purges`, `file_locations`. **Triggers** set it from the counter when a row is inserted, or when a synced column really changed. Cache columns never change it |
 | `sync_meta` | Key/value: `database_id` (a random id; a new one means the database was replaced) and `account_id` |
 | `sync_peers` | One row per peer: `peer_id`, `peer_name`, `peer_url`, `certificate_fingerprint`, `last_sync_at`, `last_received_cursor`, `last_sent_seq`, `peer_database_id`, `peer_account_id`, `last_operation`, `peer_entity_types`, and older timestamp columns |
 | `sync_failures` | Changes from a peer that could not be applied, kept and tried again at the next batch |
 | `purges` | Everything ever purged: `entity_type`, `entity_id`, `purged_at`, `device_id`. Kept for ever, so a peer that has not heard of the purge cannot bring the item back |
-| `file_storage_config` | One row (`id = 'default'`): the bucket settings |
+| `file_storage_config` | One row (`id = 'default'`): the bucket settings, as JSON in `config` |
+| `file_locations` | Where each copy of a Recording is: `audio_id`, `place` (a device id or `cloud`), `present`, `changed_at` (milliseconds), `changed_by`, `sync_received_at`; primary key `(audio_id, place)` (section 8.7) |
 
 **What a sync sends** is every row and version whose `seq` is above what the
 peer has already received: the entity types `note`, `tag`, `note_tag`,
 `note_attachment`, `audio_file`, `transcription`, `file_storage_config`,
-`field_version` and `purge`. Synced settings and device cards travel as
+`field_version`, `purge` and `file_location` (`ALL_SYNC_ENTITY_TYPES` in
+`sync_apply.rs`; SYNC_SPECIFICATION PROTO-1). A `file_location` change has the
+entity id `<audio id>:<place>`. Synced settings and device cards travel as
 `field_version` changes.
 
 ### 7.6 Tables that never leave this device
@@ -583,7 +631,7 @@ peer has already received: the entity types `note`, `tag`, `note_tag`,
 | Table | Purpose |
 |---|---|
 | `pairing_offers` | The hash of a pairing code while it is valid, its expiry, failed attempts |
-| `audio_file_copies` | Which peer is known to hold which Recording, and since when |
+| `audio_file_copies` | Which peer was known to hold which Recording. Replaced by `file_locations`: nothing writes it any more, and it is read once, by the migration that first creates `file_locations` |
 | `upload_parts` | Journal of an upload in parts, so an interrupted upload continues |
 | `pending_file_renames` | A Recording whose file must still be renamed on disk |
 | `purged_objects` | Bucket objects deleted by a purge |
@@ -634,6 +682,11 @@ ORDER BY created_at;
 SELECT entity_type, entity_id, field, kind, device_a_name, device_b_name
 FROM field_conflicts
 WHERE resolved_at IS NULL;
+
+-- Where the copies of one Recording are, as last stated
+SELECT place, present, datetime(changed_at / 1000, 'unixepoch'), lower(hex(changed_by))
+FROM file_locations
+WHERE audio_id = X'0190a1b2c3d47e5f8a9b0c1d2e3f4a5b';
 ```
 
 ---
@@ -660,7 +713,8 @@ WHERE resolved_at IS NULL;
    name that is already taken gets a suffix from the Recording's id.
 2. `AudioFileManager.import_file(path, disk_name)` copies the file into the
    audio directory. It refuses to overwrite a file.
-3. `db.store_content_hash(audio_file_id, audio_dir)` stores the SHA-256.
+3. `db.store_content_hash(audio_file_id, audio_dir)` stores the SHA-256 and the
+   file's size (`size_bytes`).
 4. A Note is created, and `db.attach_to_note(note_id, audio_file_id, "audio_file")` links the two.
 
 ### 8.3 Transcribing
@@ -696,12 +750,15 @@ the periodic database backup.
 
 **A sync, step by step** (`sync_with_peer` in `sync_client.rs`, SYNC_SPECIFICATION FLOW-1):
 
-1. `POST /sync/handshake`: identities, protocol version `2.0`, the account, the key.
-2. If the peer's `database_id` differs from the stored one, both cursors restart from zero.
-3. **Pull:** `GET /sync/changes?cursor=N` page by page (at most about 4 MB each).
+1. Compare this device's audio directory with what it has stated about its
+   copies (`check_files_here`, section 8.7), so the push carries a file that
+   was deleted by hand.
+2. `POST /sync/handshake`: identities, protocol version `2.0`, the account, the key.
+3. If the peer's `database_id` differs from the stored one, both cursors restart from zero.
+4. **Pull:** `GET /sync/changes?cursor=N` page by page (at most about 4 MB each).
    Each page is applied in one transaction (`sync_apply.rs`), then the cursor is saved.
-4. **Push:** this device's changes since `last_sent_seq`, page by page, through `POST /sync/apply`.
-5. Record the time and the operation in `sync_peers`.
+5. **Push:** this device's changes since `last_sent_seq`, page by page, through `POST /sync/apply`.
+6. Record the time and the operation in `sync_peers`.
 
 An interrupted sync continues from the last saved cursor. Applying the same
 page twice changes nothing (it is **idempotent**).
@@ -711,14 +768,19 @@ for peers" in the GUI. It starts the Rust server in `sync_server.rs` over
 HTTPS with a self-signed certificate, which a peer remembers at its first
 connection (**TOFU**). Peers on the same network find each other by zeroconf.
 
-**Files between installations:** `POST /sync/audio/missing` tells the sender
-which Recordings the receiver lacks; `GET` and `POST /sync/audio/:id/file`
-stream the bytes, resume after an interruption, and verify the SHA-256.
+**Files between installations** (FILE-12, FILE-13): `POST /sync/audio/missing`
+tells the sender which Recordings the receiver lacks and how many bytes of each
+it already holds; `GET` and `POST /sync/audio/:id/file` stream the bytes,
+resume after an interruption, and verify the SHA-256. The receiver of a whole
+file states that it holds the file and that the sender holds it; a fetcher
+states the same (section 8.7).
 
 **Files and the bucket:** the object is named by the content hash, so two
-devices that import the same file share one object. Files over 8 MiB are
-uploaded in parts, journalled in `upload_parts`. Objects may be encrypted
-(`crypto.rs`, TECHNICAL-DECISIONS 3.1c).
+devices that import the same file share one object. Files over 8 MiB
+(`PART_SIZE`) are uploaded in parts, journalled in `upload_parts`; a smaller
+file is read into memory and sent in one request. Objects may be encrypted
+(`crypto.rs`, TECHNICAL-DECISIONS 3.1c). How long each request may take is in
+section 8.9.
 
 ### 8.5 Pairing
 
@@ -727,7 +789,8 @@ carries a single-use token valid for ten minutes (`pairing_offers`). The new
 device claims it (`/pair/claim`, `/pair/grant`) and receives the account id,
 its own device key and one peer. A device keeps its own key in its
 `config.json`; every other device knows only the key's hash, from the synced
-device card.
+device card. The setup text carries the listener's certificate fingerprint as
+`&f=`, when the offer finds the certificate (see section 13.1, item 1).
 
 ### 8.6 Snapshots and backups
 
@@ -739,6 +802,108 @@ device card.
   off) into `backup.directory` (default `<root>/backups/<account id>/`),
   keeping `backup.keep` copies (default 30). It runs inside the listener and
   inside the open desktop application; `account backup` runs it at once.
+
+### 8.7 Where each copy of a Recording is (FILE-22)
+
+Each row of `file_locations` is a statement: "this place holds this
+Recording's file" or "no longer holds it". A place is a device of the account
+(its id, 32 hexadecimal characters) or `cloud` (`PLACE_CLOUD`, the bucket).
+
+- **Which statement wins.** `apply_sync_file_location` keeps the statement with
+  the newer `changed_at`; at equal times the larger `changed_by`; then the one
+  that says present. Every device therefore keeps the same rows, whatever order
+  they arrive in. Statements about different places never conflict, so a
+  device that removes its copy while another uploads the file keeps both facts.
+- **Who writes a statement** (`set_file_location(audio_id, place, present)`,
+  which writes nothing when the statement repeats the current one):
+  - this device, after it receives a file whole (`receive_audio_file` in
+    `sync_server.rs`), fetches one, or downloads one from the bucket;
+  - the sender or fetcher, about the peer (`record_copy`); the peer's own
+    newer statement replaces it;
+  - `check_files_here(audio_dir, here)`, which compares the audio directory
+    with this device's statements and returns (now here, now gone). It runs
+    before each sync, at every Issues list, and when "Where are the copies?"
+    is asked for. A directory that does not exist states nothing;
+  - the bucket's row: an upload (`update_audio_file_storage`) states present,
+    clearing an upload states absent, and a download that finds no object
+    states absent.
+- **Removing this device's copy**: `remove_local_copy(audio_id, audio_dir, here)`
+  deletes the file and states it gone. It is refused when no other place holds
+  the file. GUI: the Recording's context menu; TUI: `x` twice; CLI:
+  `audiofile-remove-local`; web: `POST /api/audiofiles/<id>/remove-local`.
+- **A purge** deletes the Recording's `file_locations` rows.
+- **An older database**: when the migration first creates the table, it writes
+  `cloud` rows for uploaded Recordings and peer rows from `audio_file_copies`.
+  Nothing on disk is read.
+- `copies_of(audio_id, here)` and `not_duplicated(audio_dir, here)` read these
+  rows. The `here` argument is this device's id; the Python binding takes it
+  from the process when it is not given.
+
+### 8.8 The account's upload limit, and Issues (FILE-23, ISSUE-1)
+
+**The upload limit** is `max_upload_mb` inside the synced storage
+configuration (`file_storage_config.config`), so it is the same on every device
+of the account. `max_upload_bytes` returns 100 MB (`DEFAULT_MAX_UPLOAD_MB`)
+when it is not set. `set_max_upload_mb` refuses 0, and refuses when no bucket
+is configured. `upload_files_with` in `file_storage.rs` compares each file's
+size on disk with the limit, leaves a larger file where it is, and counts it in
+`too_large`. The per-device `sync.max_sync_file_size_mb` is only the
+listener's body limit for its JSON routes. The limit is shown and set by
+`cli storage upload-limit [megabytes]` and `GET`/`PUT /api/storage/upload-limit`;
+the GUI and the TUI have no control for it.
+
+**Issues** is `issues::issues(db, audio_dir, here)` in `issues.rs`. It is
+calculated at every call and never stored. With an audio directory it first
+runs `check_files_here`. It returns:
+
+| Key | What is in it |
+|---|---|
+| `recordings_not_in_cloud` | Recordings not deleted and not stated present in the bucket, each with `size_bytes`, `held_by` and a `reason`: `no_bucket` (no bucket configured), else `too_large` (size known and over the limit), else `waiting_for_upload` (a device holds the file), else `no_copy_known`. A row with a `storage_key` and no `cloud` statement at all counts as in the bucket |
+| `max_upload_bytes` | The limit the reasons were judged by |
+| `orphaned_transcriptions` | Transcriptions whose Recording row is not there |
+| `orphaned_attachments` | Attachments whose Note or Recording row is not there |
+| `orphaned_recordings` | Recordings no Note holds (a Note in the trash still holds its Recordings) |
+| `tags_with_whitespace` | Tags whose names contain whitespace, with their paths |
+
+The Python binding adds `count` and gives `reason` as a string.
+`src/core/issues_text.py` turns the dictionary into titled sections of
+sentences. Opened from: GUI File → Issues...; TUI F8; `cli issues`;
+`GET /api/issues`.
+
+### 8.9 Network timeouts (FILE-14)
+
+A link that stops moving must end a request in bounded time; a link that is
+only slow must not.
+
+| Request | Limits |
+|---|---|
+| Any connection to a peer | Connect: 3 seconds to `localhost`, a loopback, private or link-local address; 10 seconds elsewhere (`connect_timeout_for`) |
+| Sync requests (`build_client`) | 30 seconds for a read to make progress; 180 seconds in all per request |
+| Fetch from a peer | 30 seconds for a read to make progress; no overall limit |
+| Send to a peer (`send_client_for`) | No read timeout and no overall limit, because the connection reads nothing while a body goes out. `transfer::stall_of_upload` ends the send when no byte of the body moved for 30 seconds (`SEND_STALL`), or 60 seconds after the last byte without an answer (`ANSWER_AFTER_LAST_BYTE`) |
+| Bucket upload of a small file or of a part (`bucket_setup::send_signed_watched`) | The same stall watch, plus a 15-minute deadline (`REQUEST_TIMEOUT`, `PART_TIMEOUT`) |
+| Bucket download (`bucket_setup::get_signed_stream`) | Connect 10 seconds; 30 seconds for a read to make progress (`STALL_TIMEOUT`); no overall limit |
+| Bucket existence check | A signed `HEAD` with 30 seconds |
+
+A transfer is tried three times, with waits of one, two and four seconds. A try
+after a broken send asks the peer (`missing_on_peer`) how many bytes it now
+holds and continues from there. A transfer that breaks keeps the bytes that
+arrived in its part file on both sides.
+
+### 8.10 The bucket wizard
+
+`src/core/storage_setup.py` calls `bucket_setup.rs` through the binding:
+
+- `create_bucket`: in `us-east-1` behind an endpoint, the bucket is made by a
+  signed `PUT` with no body, because the library would send a location
+  constraint for a region it does not know by name, and the service refuses it.
+- `explain_refusal(key, text)`: when the endpoint is `http://` and the service
+  refused without naming a cause (a wrong secret, an unknown key id, no such
+  bucket, another region, a taken name), the sentence says that a bucket
+  hardened by the wizard accepts only `https://`. Otherwise it returns
+  `explain_error(text)`.
+- `round_trip`: the test write is the core's own signed `PUT`, which reads the
+  service's whole answer, so the error code in it can be explained.
 
 ---
 
@@ -767,9 +932,12 @@ Always run maturin from `rust/voice-python/`, never from the repository root.
 build write the same file, `.cargo-target/release/libvoicecore.so`. maturin
 builds it without the `uniffi` feature, and afterwards the Android binding
 generator silently generates nothing. Generate the Kotlin bindings before
-running maturin, or see the VoiceAndroid guide.
+running maturin, or see `VoiceAndroid/CLAUDE.md`.
 
 ### 9.3 Running
+
+Never run these against `~/.config/voice` while working: that is the owner's
+live data. Set `VOICE_CONFIG_DIR` to a temporary directory first.
 
 ```bash
 bin/voice                      # GUI if PySide6 is installed, else TUI
@@ -790,12 +958,15 @@ cd submodules/voicecore && cargo test            # the Rust core
 cd submodules/voicecore && cargo test convergence   # random multi-device sync fleets
 ```
 
-| Directory | What it tests |
+| Directory or file | What it tests |
 |---|---|
-| `tests/unit/` | Database, cache rebuilds, conflicts, search, trash, transcription queue and flags, waveform, validation |
-| `tests/sync/` | Sync between real installations: pagination, conflicts, failures, pairing, hosting, file transfer, discovery, the flags agreement with Android |
-| `tests/cli/`, `tests/tui/`, `tests/gui/`, `tests/web/` | One interface each |
-| `tests/integration/` | Workflows across interfaces, timezone travel, performance |
+| `tests/unit/` | Database, cache rebuilds, conflicts, search, trash, transcription queue and flags, waveform, validation, where the copies are and the upload limit (`test_file_locations.py`), the Issues sentences (`test_issues_text.py`), start without an interface |
+| `tests/sync/` | Sync between real installations: pagination, conflicts, failures, pairing, hosting, file transfer, discovery, the flags agreement with Android, locations between devices (`test_file_locations_sync.py`), sync and transfers over a failing link (`test_sync_over_a_failing_network.py`) |
+| `tests/cli/`, `tests/tui/`, `tests/gui/`, `tests/web/` | One interface each; the Issues list and the copies in each (`test_cli_issues.py`, `test_tui_issues.py`, `test_tui_copies.py`, `test_issues_dialog.py`, `test_note_pane_copies.py`, `test_api_issues.py`) |
+| `tests/display/` | Where Attachments are placed in the Note view |
+| `tests/integration/` | Workflows across interfaces, timezone travel, performance; `test_file_storage.py` against a real S3 server (`TestTheWizardAgainstARealS3`, `TestUploadsAndDownloads`, `TestFailuresOfTheBucket`, `TestTheBucketOverAFailingNetwork`, `TestWhereTheCopiesAre`, `TestStorageBookkeeping`) |
+| `tests/local_s3.py` | `LocalS3`: moto's S3 server on this machine, reached over TCP like Amazon, with authentication on (a key made in moto's IAM, signature version 4). The session fixture `local_s3` in `tests/conftest.py` starts one server for the session; each test takes its own bucket. Needs `moto[server]==5.2.3` from `requirements-dev.txt`. The server speaks plain HTTP, so a bucket with the wizard's TLS-only policy refuses every write |
+| `tests/faulty_network.py` | `FaultyLink`: a TCP proxy between a client and a server that fails on command: `refuse()`, `cut_after(...)`, `stall()`, `answer(status)`, `drop_replies()`, `throttle(bytes_per_second)`, `freeze_after(...)`, `pass_through()`. Used in front of a listener and in front of moto |
 | `tests/fixtures/transcription_flags_contract.json` | Cases both applications must agree on; must stay byte-identical to the Android copy |
 
 The fixtures in `tests/conftest.py` create a fresh configuration directory and
@@ -824,9 +995,10 @@ warning fails the suite.
 3. **Every editable value is written through the version functions**, never
    with plain SQL (7.4 above).
 4. **A new synced field or entity** touches `FIELD_REGISTRY`, the `seq`
-   triggers in `migrate_add_sync_sequence`, the feed in `get_changes_since` and
-   `get_full_dataset`, `ALL_SYNC_ENTITY_TYPES` in `sync_apply.rs`, and both
-   bindings (`Voice/CLAUDE.md`, "Adding New Syncable Entity Types").
+   triggers in `migrate_add_sync_sequence`, the feed in `collect_changes` and
+   `get_full_dataset`, `ALL_SYNC_ENTITY_TYPES` and `apply_one` in
+   `sync_apply.rs`, and both bindings (`VoiceCore/CLAUDE.md`, "Adding a
+   syncable entity type or field").
 5. **Derived data is never synced** (a cache, a colour calculated from a name) (1.3).
 6. **A migration never changes a value that refers to a file** outside the database (3.1a).
 7. **Memory never grows with the user's data**: stream or bound anything the
@@ -839,8 +1011,9 @@ warning fails the suite.
 10. **Test data that contains text contains Hebrew** (6.3).
 11. **Logs use the `tracing` crate** in Rust, never `println!`.
 12. **Documentation follows the change**: `USER_MANUAL.md` for the user,
-    `DEVELOPMENT.md` for building, the `--help` text for the CLI.
-13. **The two core checkouts stay identical**; after a core change, rebuild the
+    `DEVELOPMENT.md` for building, `TESTING.md` for the tests, the `--help`
+    text for the CLI (`Voice/CLAUDE.md`, "Documentation requirements").
+13. **The core checkouts stay identical**; after a core change, rebuild the
     desktop binding and the Android library and bindings together (7.2).
 
 ---
@@ -853,31 +1026,114 @@ warning fails the suite.
 | Why did a sync not bring something? | `sync_failures`, `sync_peers` cursors, `SYNC_SPECIFICATION.md` section 7 |
 | Why is there a conflict? | `field_conflicts`, `bin/voice cli sync conflicts --details` |
 | Where is a Recording's file? | `audio_files.disk_name` in the directory `audiofile_directory` |
-| What does this command do? | `add_cli_subparser` in `src/cli.py`, then its `cmd_...` function |
-| What does this rule id mean? | `SYNC_SPECIFICATION.md` (FILE-15, VER-9 ...) or the plan (Stage N) |
+| Which devices hold a Recording? | `file_locations`, `bin/voice cli audiofile-show <id>` (section 8.7) |
+| Why is a Recording not in the bucket? | `bin/voice cli issues`, then `issues.rs` (section 8.8) |
+| Why did a transfer or an upload stop? | The error sentence, section 8.9, `transfer::stall_of_upload` |
+| What happens when a command runs? | `add_cli_subparser` in `src/cli.py`, then its `cmd_...` function |
+| What does this rule id mean? | `VoiceFamily/SYNC_SPECIFICATION.md` (FILE-22, VER-9 ...) or the plan (Stage N) |
 
 ---
 
 ## 12. Where older documents disagree with the code
 
-Checked against the code on 2026-09-13. The code is described correctly in this
-guide; these texts were not changed.
+Checked against the code on 2026-09-14. The code is described correctly in this
+guide. On 2026-09-14 `Voice/CLAUDE.md`, `SYNC_SPECIFICATION.md` (FILE-6,
+section 7.1, FILE-12, PROTO-1) and `DEVELOPMENT.md` were corrected, and every
+disagreement with them that this section listed on 2026-09-13 is gone.
+`USER_MANUAL.md`, `README.md`, `CONFIGURATION.md`, `CLOUD-STORAGE-SETUP.md`,
+`SECURITY-CONSIDERATIONS.md`, `DEVELOPMENT.md` and `TESTING.md` were being
+corrected by other people while this was checked; they were searched only for
+the subjects of the rows below.
 
-| Document | What it says | What the code does |
+| Text | What it says | What the code does |
 |---|---|---|
-| `DEVELOPMENT.md`, "Running as a Service" | The database is `.config/voice/voice.db` | The database is `notes.db`, inside the account's directory `<root>/<account id>/` (`config.rs`) |
-| `bin/voice` comment; `Voice/CLAUDE.md`, "Common Commands" | The option `-d` chooses the directory | `src/main.py` has no `-d`; the options are `-a/--account` and `$VOICE_CONFIG_DIR` |
-| `Voice/CLAUDE.md`, "UI Frameworks" | "The desktop GUI uses Textual"; `src/ui/` holds TUI components | The GUI is Qt (`src/ui/`); only the TUI (`src/tui.py`) uses Textual |
-| `Voice/CLAUDE.md`, "Common Commands" | `# Run TUI` above `src.main gui` | `gui` runs the GUI |
-| `Voice/CLAUDE.md`, "Datetime Format Enforcement" and "NULL modified_at" | Timestamps are text `YYYY-MM-DD HH:MM:SS` compared as strings | Timestamps are `INTEGER` Unix seconds since `migrate_timestamps_to_unix`; these sections are history |
-| `Voice/CLAUDE.md` "Audio File Binaries"; `SYNC_SPECIFICATION.md` FILE-6; the docstrings of `AudioFile` in `models.py` and of `AudioFileManager` | A file and its bucket object are named `{audio_id}.{ext}` | The file is named by `audio_files.disk_name` (FILE-15, TECHNICAL-DECISIONS 3.1a); the bucket object by the content hash (3.1b). Only rows older than `disk_name` keep `<id>.<ext>` |
-| `SYNC_SPECIFICATION.md` 7.1 | `/sync/audio/:id/file` is "present but unused by the current client" | Send and fetch use it (FILE-12, `sync_client.rs` `fetch_audio_file`, `send_audio_file`) |
-| `SYNC_SPECIFICATION.md` section 8 | The id `FILE-12` is used for two different rules | — |
-| `SYNC_SPECIFICATION.md` PROTO-1 | The feed's entity types, without `purge` | PURGE-4 and the `purges` triggers put `purge` in the feed |
+| `bin/voice`, the comment on line 3 | The launcher honours `-d` | `src/main.py` has no `-d`; the options are `-a/--account` and `$VOICE_CONFIG_DIR` |
+| `src/main.py`, the module docstring and the `--help` examples | `cli list-notes`, `cli search --tag Work` | The commands are `notes-list` and `notes-search` |
+| The docstrings of `AudioFile` in `src/core/models.py` and of `AudioFileManager` in `src/core/audiofile_manager.py` | A file is stored at `{audiofile_directory}/{id}.{extension}` | The file is named by `audio_files.disk_name` (FILE-15, TECHNICAL-DECISIONS 3.1a); the bucket object by the content hash (3.1b). Only rows older than `disk_name` keep `<id>.<ext>` |
 
 ---
 
-## 13. Glossary
+## 13. Defects found in the code
+
+Found by reading the code on 2026-09-13 and 2026-09-14; nothing here was
+confirmed by running the application. "Verified" means the code path was read
+from start to end and the result follows from it. "Suspected" means it was
+seen in part and needs a test before it is fixed.
+
+### 13.1 Verified
+
+1. **A setup text made on an indexed root has no `&f=`.** `pairing_offer` in
+   `rust/voice-python/src/lib.rs` receives the account's directory (from
+   `cli account show-code` and the GUI sync dialog) and opens it with
+   `Config::new`, which takes that directory as the root. `pairing::offer` then
+   looks for `<account dir>/certs/server.crt` (and `certs_dir()` creates the
+   empty directory), while the listener's certificate is
+   `<root>/certs/server.crt`. The fingerprint is empty, and
+   `SetupText::to_text` leaves `f` out. A device that joins over `https://` to
+   the self-signed listener has no fingerprint to pin. The automated pairing
+   tests use `--plain-http` on 127.0.0.1 and cannot show this.
+   `ensure_own_device_card`, called at every start, opens the account
+   directory the same way and writes this device's card with an empty
+   certificate fingerprint. `hosting_offer` opens the root and is not affected.
+2. **`cli note-purge` reads the live root.** `_remove_audio_files` in
+   `src/cli.py` calls `Config()` with no directory, so the core opens
+   `dirs::config_dir()/voice` (`~/.config/voice`) whatever `$VOICE_CONFIG_DIR`
+   and `-a` say, writes a `config.json` there when there is none, and deletes
+   matching files in that configuration's audio directory. Do not run
+   `note-purge` on the owner's computer until this is fixed.
+3. **Files of purged Recordings stay on disk.** Four functions look for them as
+   `<audio id>.*`: `_remove_audio_files` (`src/cli.py`),
+   `_remove_purged_audio_files` (`src/web.py`), `purge_audio_files`
+   (`src/tui.py`) and `remove_audio_files` (`src/ui/trash_dialog.py`). Files
+   are named by `disk_name`; only rows older than that column match.
+4. **Calculate missing data finds no file named by `disk_name`.**
+   `audio_path` in `src/core/missing_data.py` looks for `<id>.<ext>`.
+5. **The bucket wizard's Save and "Replace key" remove `encrypt` and
+   `max_upload_mb`.** `save` in `src/core/storage_setup.py` writes a
+   configuration of bucket, region, keys, prefix and endpoint only, and
+   `set_file_storage_config` replaces the whole JSON. After the next sync every
+   device of the account has encryption off and the 100 MB limit.
+6. **A TUI session writes nothing to `voice.log`.** `run` in `src/tui.py`
+   removes every `logging.StreamHandler` from the root logger;
+   `RotatingFileHandler` is a subclass of `StreamHandler`.
+7. **`cli storage upload-pending` does not show `too_large`.** The core counts
+   the files over the upload limit; `cmd_storage_upload_pending` prints
+   uploaded, skipped, failed and deferred only.
+8. **`cli sync now` without `--peer` prints the conflict count as
+   `Errors: N`** (`print(f"    Errors: {result.conflicts}")`).
+9. **The hint `Run: voice config set audiofile_directory ...` lacks `cli`**
+   (`src/cli.py`, several places).
+10. **The GUI transcription queue shows `2th`, `3th`**
+    (`f"{row.position}th"` in `src/ui/transcription_queue_dialog.py`).
+
+### 13.2 Suspected
+
+- `cli account create` without `--label`, a second time, fails with "An
+  account is already labelled default" (`accounts.rs`).
+- Core exceptions reach the user as a traceback instead of an `Error:` line:
+  `account recording-key import` with a bad key, `storage encrypt on` before
+  the key was exported, `sync serve --plain-http` on a host that is not a
+  loopback address, `sync serve` when the port is taken, `sync discover`
+  without zeroconf.
+- `cli account grant-host` to a single-directory listener answers
+  `TOKEN_INVALID` instead of saying that the listener hosts no other accounts.
+- `cli sync check` always reports that the listener on this machine is not
+  listening, because that flag belongs to the process.
+- On a hosting server, a CLI command other than `sync serve` and
+  `account list|create|default|remove|host`, run without `-a`, creates a
+  `default` account.
+- GUI: the Transcribe button acts on the first Recording of a Note only;
+  in-place edits in the Tag hierarchy dialog are never saved; Forget and Rename
+  in the sync dialog with no row selected act on the last peer; several sync
+  dialog checks run on the GUI thread and freeze the window; the transcription
+  queue does not start at launch.
+- TUI: Ctrl+F can report `0 gap(s) cannot be calculated`.
+- The core's `tracing` lines are not recorded from the GUI or the TUI: a
+  subscriber is installed only when the listener starts with `--verbose`.
+
+---
+
+## 14. Glossary
 
 **axum** — A Rust library for writing HTTP servers. The sync server is built on it.
 
@@ -901,7 +1157,7 @@ guide; these texts were not changed.
 
 **Head** — The version of a field that is its current value.
 
-**Idempotent** — Doing it twice has the same result as doing it once.
+**Idempotent** — Running it twice has the same result as running it once.
 
 **Index** — An extra structure SQLite keeps so that searches on a column are fast.
 
@@ -911,11 +1167,15 @@ guide; these texts were not changed.
 
 **Migration** — Code that changes an existing database's structure (new tables, new columns) so that it matches what the current code expects.
 
+**moto** — A Python library that imitates Amazon's services. The tests run its S3 server on this machine.
+
 **Peer** — Another Voice installation of the same account that this one syncs with.
 
 **Polymorphic association** — A link whose target table is named in a column (`attachment_type`) instead of being fixed.
 
 **Primary key** — The column, or columns, that identify a row uniquely.
+
+**Proxy (TCP proxy)** — A program that accepts a connection and copies its bytes to another server and back. `FaultyLink` is one that can break the connection on command.
 
 **Purge** — Removing an item for good, with its history, on every device. Only possible from the trash.
 
@@ -923,9 +1183,13 @@ guide; these texts were not changed.
 
 **Root (directory)** — The directory that holds all accounts of an installation: `~/.config/voice` unless `$VOICE_CONFIG_DIR` says otherwise.
 
+**Signed request** — An HTTP request to S3 that carries a signature calculated from the request and the secret key (signature version 4), so the service can check who sent it.
+
 **Soft delete** — Marking a row as deleted (`deleted_at`) instead of removing it.
 
 **SQLite** — A database engine that stores a whole database in one file and runs inside the application.
+
+**Stall** — A connection that stays open but moves no bytes.
 
 **Submodule** — A git repository placed inside another at a fixed commit. `submodules/voicecore` is one.
 

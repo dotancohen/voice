@@ -6,6 +6,7 @@ used, the [user manual](USER_MANUAL.md).
 
 ## Contents
 
+- [Technical decisions](#technical-decisions)
 - [Architecture](#architecture)
 - [Installation](#installation)
 - [Updating](#updating)
@@ -19,18 +20,31 @@ used, the [user manual](USER_MANUAL.md).
 Decisions that apply to more than one project in the Voice Family — data rules,
 time handling, thresholds, naming, interface conventions, testing rules — are in
 `../TECHNICAL-DECISIONS.md`. Read it before changing behaviour the other
-projects share, and record new cross-project decisions there.
+projects share, and record new cross-project decisions there. The sync rules
+are in `../SYNC_SPECIFICATION.md`.
 
 ## Architecture
 
-- Primary application written in fully typed Python 3.
-- Core functionality in Rust module for seamless compatibility with mobile applications.
-- GUI written in Qt, other modes remain available if Qt (PySide) is not installed.
-- TUI written in Textual, other modes remain available if Textual is not installed.
-- REST API written in Flask, other modes remain available if Flask is not installed.
-- The CLI is always available.
+- The application is written in fully typed Python 3 (`src/`).
+- The core — database, sync client and listener, pairing, cloud storage — is
+  the Rust crate `submodules/voicecore`, which the Android application shares.
+  `rust/voice-python` builds its Python module, `voicecore`, with maturin.
+- GUI written in Qt (PySide6). Without PySide6 and pyqtdarktheme, the TUI, CLI
+  and Web API still start.
+- TUI written in Textual, Web API written in Flask. **Both are needed by every
+  interface, the CLI included**: `src/main.py` imports `src.tui` and `src.web`
+  to build its argument parser, and those modules import Textual and Flask when
+  they are loaded.
+- The listener announces itself on the local network with `zeroconf`. Without
+  it, `sync serve` prints `Not announced on the network: No module named 'zeroconf'`
+  and serves anyway, and `cli sync discover` ends in a traceback.
+- `segno` draws the QR codes of pairing; without it the setup text is printed
+  alone.
 - SQLite database.
 - Comprehensive test suite.
+- `bin/voice` runs `.venv/bin/python -m src.main` from the repository's
+  directory. Link it into a directory in your `PATH`, and `voice cli sync status`
+  works from anywhere.
 
 ## Installation
 
@@ -58,8 +72,15 @@ git submodule update --init --recursive
 ```bash
 pip install -r requirements.txt
 pip install -r requirements-dev.txt     # Only for development
-pip install -r requirements-server.txt  # For deployment to a server, useful for centralized syncing and TUI/CLI access.
+pip install -r requirements-server.txt  # On a server without the GUI, instead of requirements.txt
 ```
+
+- `requirements.txt` lists `PySide6` beside `PySide6-Essentials` because
+  pytest-qt reads `PySide6.__version__`. Installed through `-r`, it also brings
+  `PySide6-Addons` (428 MB), which nothing imports. The file's own advice is to
+  install it with `pip install --no-deps PySide6`.
+- `requirements-server.txt` has no `zeroconf`. Add `pip install zeroconf` for
+  the listener to announce itself on the local network.
 
 ### Build Rust Extension
 
@@ -85,7 +106,10 @@ cd ../..
 
 ## Server Deployment
 
-- For deploying Voice on a server (sync server + TUI for SSH access), use the server requirements file.
+A server runs the listener for one account or for the accounts of several
+people, and the TUI or CLI over SSH. The security side (reverse proxy,
+firewall, what is encrypted) is in
+[SECURITY-CONSIDERATIONS.md](SECURITY-CONSIDERATIONS.md).
 
 ### Pre-Installation
 
@@ -111,6 +135,7 @@ git clone --recurse-submodules https://github.com/dotancohen/voice.git .
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-server.txt # Provides centralized syncing and TUI/CLI access.
+pip install zeroconf                   # Optional: announce the listener on the local network
 cd rust/voice-python && maturin develop --release && cd ../..
 ```
 
@@ -121,19 +146,35 @@ cd /var/www/voice
 git pull
 git submodule update --init --recursive
 cd rust/voice-python && ../../.venv/bin/maturin develop --release && cd ../..
+sudo systemctl restart voicesync
 ```
 
 ### Starting the Sync Server
 
-- The database is created automatically on first start
-- The default root is `~/.config/voice/`, with one directory per account under it; set `VOICE_CONFIG_DIR` for another root and `-a` for another account.
+- The root is `$VOICE_CONFIG_DIR`, else `~/.config/voice` of the user who runs
+  the listener.
+- **On an empty root**, `sync serve` creates `accounts.db`, `config.json` and
+  `certs/server.crt` with `certs/server.key`, and **no account**. It serves
+  every account listed in `accounts.db`, including accounts added while it
+  runs.
+- On a root that holds one account in its own directory (`config.json` or
+  `notes.db`, and no `accounts.db`), it serves that account only. Such a root
+  cannot host other accounts.
+- The listener serves HTTPS with its own self-signed certificate. With `-v` it
+  logs the certificate's fingerprint (`Certificate fingerprint SHA256:…`); its
+  start text does not show it.
+- It refuses callers outside private networks (`NOT_ON_LAN`) unless
+  `public_url` is set in `<root>/config.json`, for example
+  `"public_url": "https://sync.example.com:8384"`. There is no command for it;
+  edit the file, then restart the listener.
 
 ```bash
-python -m src.main cli sync serve                              # Start with defaults (0.0.0.0:8384)
-python -m src.main cli sync serve --host 0.0.0.0 --port 8384   # Custom host/port
-python -m src.main cli sync serve --verbose                    # Enable logging to stdout
-python -m src.main cli sync serve --verbose --no-color         # Logging without ANSI colors
-VOICE_CONFIG_DIR=/path/to/root python -m src.main cli sync serve   # With another root
+python -m src.main cli sync serve                                # 0.0.0.0, port from config (8384)
+python -m src.main cli sync serve --host 0.0.0.0 --port 8384     # Custom host/port
+python -m src.main cli sync serve --verbose                      # Enable logging to stdout
+python -m src.main cli sync serve --verbose --no-color           # Logging without ANSI colors
+python -m src.main cli sync serve --host 127.0.0.1 --plain-http  # Behind a reverse proxy on this machine
+VOICE_CONFIG_DIR=/path/to/root python -m src.main cli sync serve # With another root
 ```
 
 #### Sync Server Options
@@ -143,19 +184,60 @@ VOICE_CONFIG_DIR=/path/to/root python -m src.main cli sync serve   # With anothe
 | `--host` | | Host to bind to (default: 0.0.0.0) |
 | `--port` | | Port to bind to (default: 8384 or from config) |
 | `--verbose` | `-v` | Enable verbose logging to stdout (shows sync requests and operations) |
-| `--no-color` | | Disable ANSI color codes in log output (useful for log files or non-terminal output) |
+| `--no-color` | | Disable ANSI color codes in log output |
+| `--no-announce` | | Do not announce this listener on the local network |
+| `--plain-http` | | Serve plain http instead of https. Allowed only on a loopback address: for a reverse proxy in front, or a test |
+
+Without `--verbose` the Rust core writes no log lines. The Python log lines go
+to standard error and to `voice.log`.
+
+### Hosting an account
+
+1. Start the listener on the server once, so that `<root>/certs/server.crt`
+   exists. Then, as the same user and with the same `VOICE_CONFIG_DIR`, make a
+   grant text:
+
+```bash
+python -m src.main cli account host --label dotan --url https://sync.example.com:8384
+```
+
+It is valid for ten minutes and for one account, and carries the
+certificate's fingerprint. Without `--url` it offers
+`https://<each private address>:<port>` and `https://<host name>:<port>`.
+2. On the device that holds the account, with the server's listener running:
+
+```bash
+voice cli account grant-host "<grant text>"
+voice cli sync deliver <server id>
+```
+
+3. `python -m src.main cli account list` on the server shows the account,
+marked `(hosted)`.
+
+Further devices of the account pair with a device that holds it (`account
+show-code` there, `account join` on the new device). A setup text shown on the
+server itself (`-a <label> cli account show-code`) currently carries no
+certificate fingerprint, because the code looks for the certificate in the
+account's directory instead of the root; a join to the server over HTTPS then
+fails certificate verification. This is a defect.
+
+**On a hosting server, give `-a` to every command.** Every command other than
+`sync serve` and `account list|create|default|remove|host`, run without `-a`
+(or `VOICE_ACCOUNT_ID`) on a root that has no default account, creates an
+account labelled `default` and makes it the default.
 
 ### Using the TUI via SSH
 
-- Users can SSH into the server and use the TUI to manage notes.
-- On servers without GUI dependencies, simply running `python -m src.main` will launch the TUI.
+- Run the TUI as the user that runs the listener, so that it opens the same
+  root, and name the account.
+- Without an interface, `python -m src.main` starts the `default_interface` of
+  the account's configuration, else the GUI if PySide6 is installed, else the
+  TUI.
 
 ```bash
 ssh user@server
-cd /opt/voice
-source .venv/bin/activate
-python -m src.main       # Will launch TUI if GUI is not available
-python -m src.main tui # Force TUI even if GUI is available
+cd /var/www/voice
+sudo -u voicesync -H .venv/bin/python -m src.main -a <label> tui
 ```
 
 ### Running as a Service
@@ -166,7 +248,10 @@ sudo useradd --system --create-home --home-dir /var/www/voice --shell /bin/bash 
 sudo chown -R voicesync:voicesync /var/www/voice
 ```
 
-Create a systemd service file at `/etc/systemd/system/voicesync.service`:
+The root is then `/var/www/voice/.config/voice`.
+
+Create a systemd service file at `/etc/systemd/system/voicesync.service` (the
+repository contains no unit file):
 ```ini
 [Unit]
 Description=Voice Sync Server
@@ -205,16 +290,22 @@ sudo systemctl status voicesync # Check status
 journalctl -u voicesync -f  # Follow logs
 ```
 
+Open the port devices connect to in the firewall (8384/tcp, or 443 for a
+reverse proxy); see [SECURITY-CONSIDERATIONS.md](SECURITY-CONSIDERATIONS.md#firewall).
+
 Access Voice data with sudo. The root holds the machine's `config.json`,
-`accounts.db` and `certs/`; each account is a directory named by its id,
-`<account id>/`, with its `notes.db`, `config.json`, `audio/` and `snapshots/`
-(`voice cli account list` shows the ids):
+`accounts.db`, `certs/` and `backups/`; each account is a directory named by
+its id, `<account id>/`, with its `notes.db`, `config.json`, `audio/`,
+`snapshots/`, `voice.log` and `audit.log` (`voice cli account list` shows the
+ids):
 ```bash
 sudo -u voicesync vim /var/www/voice/.config/voice/config.json
 sudo -u voicesync sqlite3 /var/www/voice/.config/voice/<account id>/notes.db
 ```
 
-Access Voice data as the logged-in user without sudo:
+Access Voice data as the logged-in user without sudo. This gives the
+`voicesync` group every account's device key (in `<account id>/config.json`)
+and the certificate's private key:
 ```bash
 sudo usermod -aG voicesync $USER
 sudo chmod -R g+rw /var/www/voice/.config/voice/
@@ -224,78 +315,47 @@ sqlite3 /var/www/voice/.config/voice/<account id>/notes.db
 
 ## Testing
 
-### Driving the Android app from a computer (ADB)
-
-The debug build of VoiceAndroid accepts every user action as an Android *Intent* (an explicit broadcast to `com.dotancohen.voiceandroid/.automation.AdbCommandReceiver`), so a manual test plan can script the phone. The helper `~/Projects/VoiceFamily/VoiceAndroid/tools/voice-adb` sends the intent and prints the app's reply, which starts with `OK` or `ERROR`:
+The test suite, how to run each part, what it needs (the core's Python module
+built with `maturin develop --release`, moto for the S3 tests) and the rules
+every test follows are in [TESTING.md](TESTING.md). In short:
 
 ```bash
-voice-adb ping
-voice-adb set-sync http://192.168.1.20:8384 <server-peer-id> Android
-voice-adb sync-now                      # OK success received=12 sent=3
-voice-adb create-note "פתק מהטלפון"     # OK id=01a0...
+cd ~/Projects/VoiceFamily/Voice
+.venv/bin/python -m pytest                      # the whole desktop suite
+.venv/bin/python -m pytest tests/sync           # one directory
+cd submodules/voicecore && cargo test           # the core
+```
+
+A test never runs against live data: every test works in a temporary
+configuration root, never in `~/.config/voice` (`../TECHNICAL-DECISIONS.md` 7.6).
+
+### Driving the Android app from a computer (ADB)
+
+The debug build of VoiceAndroid accepts user actions as explicit broadcasts to
+`com.dotancohen.voiceandroid/.automation.AdbCommandReceiver`, so a manual test
+plan can script the phone. `~/Projects/VoiceFamily/VoiceAndroid/tools/voice-adb`
+sends the broadcast and prints the app's reply, which contains `OK` or `ERROR`:
+
+```bash
+voice-adb ping                          # PING OK pong device=<name> id=<id>
+voice-adb use-code 'voice://pair?...'   # pair with the device that showed the code
+voice-adb exchange                      # sync, then send and fetch recordings, with the last peer
+voice-adb sync <peer id>                # Notes only, with that peer
+voice-adb create-note "פתק מהטלפון"     # CREATE_NOTE OK id=01a0...
 voice-adb list-notes                    # one NOTE {...} JSON line per note, with media state and conflicts
-voice-adb import-audio /sdcard/VoiceTestStorage
+voice-adb import-audio /storage/emulated/0/voice-testing/VoiceTestStorage
 voice-adb open settings                 # opens the app on a screen for steps done by hand
-voice-adb set-recording-format opus     # opus (default), aac or wav16
-voice-adb set-recorder start_immediately=true during_call=pause
+voice-adb set-recording-format opus     # opus (default), opus32, aac or wav16
 voice-adb merge-notes <note>,<note>     # merge them into the oldest one
-voice-adb download-model large-v3-q5_0  # a Whisper model for transcription on the phone
-voice-adb transcribe <note> he all      # transcribe every recording of the note, one at a time (2 = only the 2nd)
-voice-adb list-transcriptions <note>    # one TRANSCRIPTION {...} line per transcription: text, language, model
+voice-adb transcribe <note> he all      # transcribe every recording of the note, one at a time
 voice-adb help                          # the full list
 ```
 
-Release builds do not contain the receiver. See `../test-plans/` (in the VoiceFamily directory) for the manual test plans that use it.
-
-### Run All Tests
-
-```bash
-pytest
-cargo test --manifest-path submodules/voicecore/Cargo.toml
-```
-
-### Run Tests by Type
-
-```bash
-pytest tests/unit  # Unit tests only (fast, no dependencies)
-pytest tests/gui    # GUI tests only (requires Qt/PySide6)
-pytest tests/cli      # CLI tests only
-pytest tests/web  # Web API tests only (Flask)
-pytest -m unit        # Unit tests
-pytest -m gui         # GUI tests
-pytest -m cli           # CLI tests
-pytest -m web      # Web API tests
-```
-
-### Run with Coverage Report
-
-```bash
-pytest --cov=src --cov-report=html
-```
-
-### Run Specific Test File
-
-```bash
-pytest tests/unit/test_database.py
-pytest tests/cli/test_cli_search.py
-```
-
-### Run Specific Test Class or Function
-
-```bash
-pytest tests/unit/test_database.py::TestSearchNotes
-pytest tests/cli/test_cli_search.py::TestSearchText::test_search_by_text
-```
-
-### Test Data
-
-The test suite uses a pre-populated database with:
-- 14 tags in hierarchical structure
-- 6 notes with various tag combinations
-- Hebrew text support testing
-- Multiple notes per tag for comprehensive testing
-
-See [TESTING.md](TESTING.md) for detailed test documentation.
+`voice-adb` acts on whichever phone `adb` reaches; with two phones connected it
+fails, which is intended. Release builds and the `.uitest` build do not contain
+the receiver. The manual test plans that use it are in `../test-plans/`; read
+their `README.md` first, because the owner's own phone must never be driven by
+them.
 
 ## Development
 

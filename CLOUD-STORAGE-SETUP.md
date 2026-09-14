@@ -1,9 +1,14 @@
 # Setting up cloud storage for your recordings
 
-**There is a wizard now.** On the desktop, File → Set up the bucket… (or
-`python -m src.main cli storage setup`) does every Amazon step below for you,
-one screen at a time, and tests the result. This guide stays for
-DigitalOcean and Backblaze, and for reading what the wizard does.
+**There is a wizard for Amazon S3.** On the desktop, File → Set up the bucket…
+(the same button is in the Sync dialogue), or
+`python -m src.main cli storage setup`, shows the key-making steps in the
+Amazon console and the policy text to paste, then makes the bucket, blocks
+public access, switches on encryption at rest, sets a policy that refuses
+connections without TLS and the lifecycle rules, tests the bucket by writing
+and reading a small object, and saves the result for every device of the
+account. It works with bucket names that start with `voice-` only. This guide
+stays for DigitalOcean and Backblaze, and for reading what the wizard does.
 
 This guide is for someone who has never done this before. It assumes only that
 you can use a web browser, and that you have an account with a credit card on it.
@@ -45,11 +50,13 @@ Cloud storage gives every recording a second home:
 **It is not a complete backup by itself.** Your notes, tags and transcriptions
 travel between your devices through your own sync server; cloud storage holds the
 sound files only. You want both. And if you want a full copy of every recording
-on your computer as well, there is a setting for that — see the end of this
+on your computer as well, there is a command for that — see the end of this
 guide.
 
-Nobody but you can read any of it. The files go over an encrypted connection, the
-bucket is private, and only the key you are about to create can open it.
+The files go over an encrypted connection, the bucket is private, and only the
+key you are about to create can open it. The storage service itself can read
+the recordings, unless you switch on encryption of recordings in Voice
+(`storage encrypt on`, after `account recording-key export`).
 
 ---
 
@@ -118,60 +125,85 @@ lives in Amazon Web Services, which uses the same sign-in.
 3. **AWS Region**: open the list and choose the one nearest to you. Write down
    the code in brackets — it looks like `eu-central-1` or `us-east-1`. **This is
    your Region.**
-4. **Bucket name**: type a name. The rules: lower-case letters, numbers and
-   hyphens only, at least 3 characters, and it must be unlike every other bucket
-   name in the world. So put something of your own in it:
-   `dotan-voice-recordings-7214`. **This is your Bucket name.**
+4. **Bucket name**: type a name. The rules: it starts with `voice-` (the key
+   below may touch no other bucket, and the wizard accepts no other name),
+   lower-case letters, numbers and hyphens only, 3 to 63 characters, and it
+   must be unlike every other bucket name in the world. So put something of
+   your own in it: `voice-dotan-7214`. **This is your Bucket name.**
    - If it says the name is taken, add more numbers to the end.
 5. Leave everything else exactly as it is. In particular **Block all public
    access** must stay ticked — that is what keeps your recordings private.
 6. Scroll to the bottom and click **Create bucket**.
 
-### 3. Make a key that can only touch that bucket
+### 3. Make a key that can only touch Voice's buckets
 
 Do not use your main account password for this. You are making a narrow key that
-can open this one bucket and nothing else, so that it can do no harm if it leaks.
+can open buckets whose names start with `voice-` and nothing else, and that
+cannot delete anything, so that it can do little harm if it leaks. This is the
+same policy the wizard shows; Voice needs every action in it (object tags for
+removed recordings, the bucket's settings for `storage check`).
 
 1. In the search box at the top, type **IAM** and press Enter, then click **IAM**.
 2. On the left, click **Users**. Click **Create user**.
-3. **User name**: `voice-app`. Click **Next**.
+3. **User name**: `voice`. Do not tick console access. Click **Next**.
 4. On the permissions page, choose **Attach policies directly**, then click
    **Create policy**. A new tab opens.
 5. In the new tab, click the **JSON** tab. Delete everything in the box and paste
-   this in, then **replace both copies of `YOUR-BUCKET-NAME`** with the bucket
-   name from step 2.4:
+   this in, unchanged:
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "VoiceBuckets",
       "Effect": "Allow",
-      "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME"
+      "Action": [
+        "s3:CreateBucket",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:ListBucketMultipartUploads",
+        "s3:PutLifecycleConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:PutEncryptionConfiguration",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutBucketPolicy",
+        "s3:GetBucketPolicy"
+      ],
+      "Resource": "arn:aws:s3:::voice-*"
     },
     {
+      "Sid": "VoiceObjects",
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME/*"
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:PutObjectTagging",
+        "s3:GetObjectTagging",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": "arn:aws:s3:::voice-*/*"
     }
   ]
 }
 ```
 
-6. Click **Next**. **Policy name**: `voice-recordings`. Click **Create policy**.
+6. Click **Next**. **Policy name**: `voice-bucket`. Click **Create policy**.
 7. Close that tab and go back to the tab where you were creating the user. Click
-   the refresh arrow next to the list of policies, type `voice-recordings` in the
+   the refresh arrow next to the list of policies, type `voice-bucket` in the
    search box, and tick it.
 8. Click **Next**, then **Create user**.
 
 ### 4. Get the two halves of the key
 
-1. Click the user **voice-app** in the list.
+1. Click the user **voice** in the list.
 2. Click the **Security credentials** tab.
 3. Scroll to **Access keys** and click **Create access key**.
-4. It asks what it is for. Choose **Other**, click **Next**, then **Create access
-   key**.
+4. It asks what it is for. Choose **Application running outside AWS**, click
+   **Next**, then **Create access key**.
 5. You are now on the only screen that will ever show you the secret.
    - **Access key** is your **Access key ID**.
    - **Secret access key** — click **Show** — is your **Secret access key**.
@@ -179,7 +211,12 @@ can open this one bucket and nothing else, so that it can do no harm if it leaks
      and keep the file somewhere safe.
 6. Click **Done**.
 
-You have all five values. **Endpoint is left empty for Amazon.** Go to
+You have all five values. **Endpoint is left empty for Amazon.**
+
+The simplest way on from here is the wizard, with this key and this bucket
+name: `python -m src.main cli storage setup`, or File → Set up the bucket….
+It finds the bucket you made, sets encryption at rest, the TLS-only policy and
+the lifecycle rules, tests the bucket and saves it. Otherwise go to
 [Telling Voice about it](#telling-voice-about-it).
 
 ---
@@ -282,11 +319,17 @@ anywhere.
 Open a terminal in the Voice folder and type this as one command, putting your
 own five values in. Keep the quotation marks.
 
+`storage configure-s3` does not test the key, and it **replaces** the whole
+stored bucket configuration: an upload limit set earlier with
+`storage upload-limit` returns to 100 MB. To change only the key of a bucket
+that already works, use `storage replace-key` instead (see
+[Keeping it safe](#keeping-it-safe)).
+
 **For Amazon S3** (no endpoint):
 
 ```bash
 .venv/bin/python -m src.main cli storage configure-s3 \
-    --bucket "dotan-voice-recordings-7214" \
+    --bucket "voice-dotan-7214" \
     --region "eu-central-1" \
     --access-key-id "AKIAIOSFODNN7EXAMPLE" \
     --secret-access-key "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
@@ -304,7 +347,7 @@ own five values in. Keep the quotation marks.
 ```
 
 If a value of yours contains a character the terminal dislikes, the quotation
-marks already handle it. Secret keys often contain `/` and `+`; that is normal.
+marks keep it as it is. Secret keys often contain `/` and `+`; that is normal.
 
 ---
 
@@ -314,12 +357,24 @@ marks already handle it. Secret keys often contain `/` and `+`; that is normal.
 # What Voice thinks it is configured with. The secret is not shown back to you.
 .venv/bin/python -m src.main cli storage status
 
-# Send every recording on this computer that is not in the bucket yet
+# Test the bucket: one row per check, ok or FAIL
+.venv/bin/python -m src.main cli storage check
+
+# Upload every recording on this computer that is not in the bucket yet
 .venv/bin/python -m src.main cli storage upload-pending
 ```
 
+`storage check` writes a small object, reads it back and tags it for removal,
+then reads four of the bucket's settings: `Public access blocked`,
+`Encrypted at rest`, `TLS only` and `Lifecycle rules`. A bucket that the wizard
+did not set up can show `FAIL` in those four rows (`Not set; run the wizard's
+hardening again`) although uploads work; on DigitalOcean and Backblaze expect
+that.
+
 Then look in the service's own web page — the bucket should have files in it,
-named like `01a0952602bc7080.opus`. That is the proof.
+named by the SHA-256 of their content: `<64 hexadecimal characters>.<extension>`,
+for example `3f1c…9a0b.opus`, inside the prefix folder if you gave one, and
+ending in `.enc` when encryption is on. That is the proof.
 
 On your phone: Settings → Sync Settings → sync once, and a note whose recording
 is not on the phone will offer a **Download** button where it used to say the
@@ -336,11 +391,23 @@ DigitalOcean API token used instead of a Spaces key.
 
 - **The secret access key is a password.** Do not put it in an email, a chat
   message, or a screenshot.
-- **If it ever leaks**, delete that key in the service's web page and make a new
-  one, then run the `configure-s3` command again with the new values. Nothing is
-  lost: the recordings stay where they are.
-- The key you made can only read and write this one bucket. It cannot spend money
-  elsewhere in your account, start servers, or see anything else you keep there.
+- **If it ever leaks**, make a new key in the service's web page, give it to
+  Voice, then delete or deactivate the old one:
+
+```bash
+.venv/bin/python -m src.main cli storage replace-key "<new access key id>"
+```
+
+It asks for the new secret, tests the key on the bucket, and keeps the rest
+of the configuration (the GUI: File → Replace the bucket's key…). Every
+device receives the new key at its next sync. Nothing is lost: the
+recordings stay where they are.
+- Sync copies the key to every device of the account. A device you revoke
+  (`device revoke`) still holds it; replace the key when that matters.
+- The Amazon key made above can only touch buckets named `voice-*`, and cannot
+  delete. The DigitalOcean and Backblaze keys can read and write the bucket you
+  chose. None of them can spend money elsewhere in your account, start servers,
+  or see anything else you keep there.
 - Keep the spending alert from [What it costs](#what-it-costs) switched on.
 
 ---
@@ -352,12 +419,16 @@ protects you against losing the *account*, and it costs nothing. One command, on
 the computer:
 
 ```bash
-.venv/bin/python -m src.main cli storage mirror enable
+.venv/bin/python -m src.main cli storage download-missing
 ```
 
-Every sync then downloads any recording the computer does not have, so the
-computer ends up holding all of them. `storage mirror disable` undoes it. Do not
-do this on your phone, which does not have the room.
+It downloads every recording that is in the bucket and not on the computer.
+Run it again from time to time; it downloads only what is new.
+
+`storage mirror enable` also exists, and its message says that every sync will
+download all recordings. On the desktop no sync reads that setting today, so it
+downloads nothing by itself; use `storage download-missing`. Do not do this on
+your phone, which does not have the room.
 
 If your recordings matter to you, do this **as well as** the bucket, not instead
 of it. A copy in one place is not a copy.

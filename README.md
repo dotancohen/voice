@@ -9,7 +9,7 @@ build it is in [DEVELOPMENT.md](DEVELOPMENT.md).**
 ## Everything runs on your own machines
 
 There is no company between you and your notes, and no part of VOICE needs an
-account or an internet connection:
+account with any company, or an internet connection:
 
 - **Transcription runs locally.** Whisper models on your own machine, with no
   API key, no per-minute charge, and no recording uploaded to anybody's
@@ -18,9 +18,10 @@ account or an internet connection:
 - **The database is a SQLite file** in your own directory, and the recordings
   are ordinary audio files beside it. Nothing is locked in an application's
   private store.
-- **Syncing is between your own installations**, over a server you run — a
-  laptop, a phone and a home server keeping each other up to date, with no
-  third party in the middle and no central account.
+- **Syncing is between your own installations**, directly on your own network
+  or through a server you run — a laptop, a phone and a home server keeping
+  each other up to date over HTTPS, with no third party in the middle. A device
+  joins by pairing with a device that already holds the notes.
 - **Nothing is lost quietly.** Deleted notes wait in a trash bin, every edit
   keeps its history, and two installations that changed the same note both
   keep what they wrote rather than the later one winning.
@@ -30,7 +31,9 @@ account or an internet connection:
 ## Major Features
 
 - Note-taking application with hierarchical tags.
-- Sync notes between instances - fully decentralized self-hosted service.
+- Sync notes between your own devices, peer to peer: no central service.
+- Several accounts on one installation, and one server can host the accounts of
+  several people.
 - GUI, TUI, CLI, and Web API interfaces.
 - Voice note transcription using local Whisper AI models and many online services.
 - An [Android application](https://github.com/dotancohen/VoiceAndroid) that
@@ -71,9 +74,7 @@ account or an internet connection:
 
 ## Roadmap
 
-- Add UI for sync conflict management.
 - Web UI that uses Web API.
-- Multiple user accounts per server.
 - Automatic content summary of voice notes, using AI installed locally.
 - Detect file timestamps from filesystem metadata or filenames, import as new notes.
 
@@ -82,9 +83,12 @@ account or an internet connection:
 - Python 3.10 or higher
 - Rust toolchain (for building the core library)
 - maturin (for building Python bindings)
-- PySide6 + pyqtdarktheme (for GUI mode)
-- Flask + Flask-CORS (for Web API mode)
+- Textual, Flask and Flask-CORS (needed by every interface, the CLI included)
+- PySide6 + pyqtdarktheme (for GUI mode only)
 - Whisper GGML model files (for transcription) — see [Transcription](USER_MANUAL.md#transcription) in the user manual
+
+The complete lists are `requirements.txt` and, for a server without the GUI,
+`requirements-server.txt`; see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## More
 
