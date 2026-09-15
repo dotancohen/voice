@@ -737,7 +737,7 @@ class NotePane(QWidget, NoteEditorMixin):
         from src.core.issues_text import location_lines
 
         if self.audiofile_directory:
-            self.db.check_files_here(self.audiofile_directory, self.config.get_device_id_hex() if self.config is not None else None)
+            self.db.check_files_here(self.audiofile_directory, self.config.get_this_device_id_hex() if self.config is not None else None)
         QMessageBox.information(self, "Where the copies are", "\n".join(location_lines(self.db, audio_id, self.config)))
 
     def _remove_local_copy(self, audio_id: str) -> None:

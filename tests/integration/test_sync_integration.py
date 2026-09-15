@@ -16,7 +16,7 @@ from uuid6 import uuid7
 
 from core.config import Config
 from core.conflicts import ConflictManager, has_conflict_markers
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 from core.validation import uuid_to_hex
 
 
@@ -24,7 +24,7 @@ from core.validation import uuid_to_hex
 def device_a(test_config_dir: Path) -> Tuple[Database, Config]:
     """Create device A (first device)."""
     device_id = uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes
-    set_local_device_id(device_id)
+    set_this_device_id(device_id)
 
     config_dir = test_config_dir / "device_a"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -40,7 +40,7 @@ def device_a(test_config_dir: Path) -> Tuple[Database, Config]:
 def device_b(test_config_dir: Path) -> Tuple[Database, Config]:
     """Create device B (second device)."""
     device_id = uuid.UUID("00000000-0000-7000-8000-00000000000b").bytes
-    set_local_device_id(device_id)
+    set_this_device_id(device_id)
 
     config_dir = test_config_dir / "device_b"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -61,7 +61,7 @@ class TestConflictResolution:
         """A note edited here and, concurrently, on a remote device."""
         from voicecore import apply_sync_changes
 
-        set_local_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
+        set_this_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
         remote = Database(":memory:")
         note_id = db.create_note("גרסה מקורית")
         changes = db.get_changes_after_seq(0, None, 100000)["changes"]
@@ -118,7 +118,7 @@ class TestConflictResolution:
         from voicecore import apply_sync_changes
 
         db, config = device_a
-        set_local_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
+        set_this_device_id(uuid.UUID("00000000-0000-7000-8000-00000000000a").bytes)
         remote = Database(":memory:")
         note_id = db.create_note("תוכן")
         changes = db.get_changes_after_seq(0, None, 100000)["changes"]

@@ -1,7 +1,7 @@
 """Tests for audiofile sync configuration validation.
 
 Tests that verify:
-- Sync is rejected if target peer lacks audiofile_directory config (#8)
+- Sync is rejected if target device lacks audiofile_directory config (#8)
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def server_without_audiofiles(tmp_path: Path) -> Generator[SyncNode, None, None]
 
 
 class TestSyncRejectsWithoutAudiofileDirectory:
-    """Test that sync is rejected when peer lacks audiofile_directory config."""
+    """Test that sync is rejected when device lacks audiofile_directory config."""
 
     def test_server_rejects_audio_upload_without_audiofile_directory(
         self,
@@ -119,7 +119,7 @@ class TestSyncRejectsWithoutAudiofileDirectory:
         # Create a client with NO audiofile_directory
         # The SyncClient should check this before downloading
         from core.config import Config
-        from core.database import Database, set_local_device_id
+        from core.database import Database, set_this_device_id
         from tempfile import TemporaryDirectory
 
         with TemporaryDirectory() as tmp:
@@ -127,14 +127,14 @@ class TestSyncRejectsWithoutAudiofileDirectory:
             client_dir.mkdir()
             config_data = {
                 "database_file": str(client_dir / "notes.db"),
-                "device_id": "00000000000070008000000000000099",
-                "device_name": "Client No Audio",
+                "this_device_id": "00000000000070008000000000000099",
+                "this_device_name": "Client No Audio",
             }
             with open(client_dir / "config.json", "w") as f:
                 json.dump(config_data, f)
 
             client_cfg = Config(client_dir)
-            set_local_device_id(client_cfg.get_device_id_hex())
+            set_this_device_id(client_cfg.get_this_device_id_hex())
             client_db = Database(client_dir / "notes.db")
 
             # Client's audiofile_directory is not configured

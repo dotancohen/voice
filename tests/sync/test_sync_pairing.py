@@ -85,22 +85,22 @@ class TestPairing:
             assert joined.returncode == 0, joined.stderr
             result = json.loads(joined.stdout)
             assert result["account_id"] == desk.db.account_id()
-            assert result["peer_id"] == desk.device_id_hex
+            assert result["device_id"] == desk.device_id_hex
 
             phone.reload_db()
             assert phone.db.account_id() == desk.db.account_id(), "the phone took the account"
             phone_config = json.loads((phone.config_dir / "config.json").read_text())
             assert len(phone_config["sync"]["device_key"]) == 43
-            assert phone_config["sync"]["peers"][0]["peer_id"] == desk.device_id_hex
+            assert phone_config["sync"]["devices"][0]["device_id"] == desk.device_id_hex
             desk.reload_db()
-            cards = {c["device_id"] for c in desk.db.list_devices()}
+            cards = {c["device_id"] for c in desk.db.list_device_cards()}
             assert phone.device_id_hex in cards, "the desk holds the phone's card"
 
             again = cli(phone, "account", "join", text)
             assert again.returncode == 1
             assert "TOKEN_INVALID" in again.stderr, "the token was spent"
 
-            synced = SyncClient(str(phone.config_dir)).sync_with_peer(desk.device_id_hex)
+            synced = SyncClient(str(phone.config_dir)).sync_with_device(desk.device_id_hex)
             assert synced.success, synced.errors
             phone.reload_db()
             assert [n["content"] for n in phone.db.get_all_notes()] == ["על השולחן"]

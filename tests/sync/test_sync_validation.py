@@ -22,7 +22,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 from tests.sync_support import SyncChange, apply_sync_changes
 
 from .conftest import (
@@ -38,7 +38,7 @@ class TestInvalidEntityId:
 
     def test_apply_change_invalid_uuid_format(self, sync_node_a: SyncNode):
         """Applying change with invalid UUID format is handled."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(
@@ -66,7 +66,7 @@ class TestInvalidEntityId:
 
     def test_apply_change_empty_entity_id(self, sync_node_a: SyncNode):
         """Applying change with empty entity_id is handled."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(
@@ -89,7 +89,7 @@ class TestInvalidEntityId:
 
     def test_apply_note_tag_invalid_composite_id(self, sync_node_a: SyncNode):
         """Invalid note_tag composite ID is handled."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         # note_tag entity_id should be "note_id:tag_id"
         changes = [
@@ -172,7 +172,7 @@ class TestInvalidTimestamps:
 
     def test_apply_change_invalid_timestamp(self, sync_node_a: SyncNode):
         """Applying change with invalid timestamp format."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         # With timestamps now as integers, we test with a negative value (invalid)
         changes = [
@@ -202,7 +202,7 @@ class TestInvalidTimestamps:
 
     def test_apply_change_future_timestamp(self, sync_node_a: SyncNode):
         """Applying change with far-future timestamp."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(
@@ -230,7 +230,7 @@ class TestInvalidTimestamps:
 
     def test_apply_change_very_old_timestamp(self, sync_node_a: SyncNode):
         """Applying change with very old timestamp."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(
@@ -283,7 +283,7 @@ class TestVeryLongContent:
 
     def test_apply_change_very_long_content(self, sync_node_a: SyncNode):
         """Apply handles very long content."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         long_content = "y" * 100000
 
@@ -341,7 +341,7 @@ class TestMissingRequiredFields:
 
     def test_apply_change_missing_content(self, sync_node_a: SyncNode):
         """Apply note change missing content field."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(
@@ -372,7 +372,7 @@ class TestMissingRequiredFields:
 
     def test_apply_change_missing_entity_type(self, sync_node_a: SyncNode):
         """Apply change with unknown entity type."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(
@@ -466,7 +466,7 @@ class TestUnknownOperations:
 
     def test_apply_unknown_operation(self, sync_node_a: SyncNode):
         """Unknown operation is handled gracefully."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(
@@ -498,7 +498,7 @@ class TestSpecialCharacters:
 
     def test_null_bytes_in_content(self, sync_node_a: SyncNode):
         """Content with null bytes is handled."""
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         changes = [
             SyncChange(

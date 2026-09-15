@@ -346,8 +346,8 @@ sends the broadcast and prints the app's reply, which contains `OK` or `ERROR`:
 ```bash
 voice-adb ping                          # PING OK pong device=<name> id=<id>
 voice-adb use-code 'voice://pair?...'   # pair with the device that showed the code
-voice-adb exchange                      # sync, then send and fetch recordings, with the last peer
-voice-adb sync <peer id>                # Notes only, with that peer
+voice-adb exchange                      # sync, then send and fetch recordings, with the last device
+voice-adb sync <device id>                # Notes only, with that device
 voice-adb create-note "פתק מהטלפון"     # CREATE_NOTE OK id=01a0...
 voice-adb list-notes                    # one NOTE {...} JSON line per note, with media state and conflicts
 voice-adb import-audio /storage/emulated/0/voice-testing/VoiceTestStorage

@@ -1,12 +1,14 @@
 """The sync dialogue (Stage 5, Stage 10, Stage 12).
 
 One place for everything between this device and the others: the line that
-says what is on this device only, the peers with when each was last reached,
-one button that names the last peer, the code to show, the connection check,
+says what is on this device only, the devices with when each was last reached,
+one button that names the last device, the code to show, the connection check,
 the listener switch, and this device's own address at the bottom.
 """
 
 from __future__ import annotations
+
+import html
 
 import logging
 from typing import Any, Callable, Dict, List, Optional
@@ -44,7 +46,7 @@ OPERATIONS = [
     ("exchange", "Exchange", "sync, then send and fetch recordings"),
     ("deliver", "Deliver", "sync, then send recordings"),
     ("sync", "Sync", "notes only"),
-    ("send", "Send", "recordings the peer lacks, no sync"),
+    ("send", "Send", "recordings the device lacks, no sync"),
     ("fetch", "Fetch", "recordings this device lacks, no sync"),
 ]
 
@@ -72,7 +74,7 @@ def not_duplicated_sentence(counts: Dict[str, int]) -> str:
     return f"{note_part} and {recording_part} are not duplicated off this device."
 
 
-def result_sentence(operation: str, peer_name: str, result: Any) -> str:
+def result_sentence(operation: str, device_name: str, result: Any) -> str:
     """One sentence for a result (Stage 5), followed by the request id."""
     verb = dict((k, v) for k, v, _ in OPERATIONS)[operation]
     parts = []
@@ -87,9 +89,9 @@ def result_sentence(operation: str, peer_name: str, result: Any) -> str:
     what = ", ".join(parts) if parts else "nothing to move"
     request = f" Request {result.request_id}." if getattr(result, "request_id", "") else ""
     if result.success:
-        return f"{verb} with {peer_name}: {what}.{request}"
+        return f"{verb} with {device_name}: {what}.{request}"
     errors = "; ".join(result.errors) if result.errors else "it did not say why"
-    return f"{verb} with {peer_name} failed: {errors}.{request}"
+    return f"{verb} with {device_name} failed: {errors}.{request}"
 
 
 def refusal_code(errors: List[str]) -> str:
@@ -108,16 +110,16 @@ class OperationWorker(QThread):
     progressed = Signal(str)
     done = Signal(object)
 
-    def __init__(self, client, method_name: str, peer_id: str, parent=None) -> None:
+    def __init__(self, client, method_name: str, device_id: str, parent=None) -> None:
         super().__init__(parent)
         self.client = client
         self.method_name = method_name
-        self.peer_id = peer_id
+        self.device_id = device_id
 
     def run(self) -> None:
         self.client.set_progress(lambda stage, done, total, bytes_moved, sentence: self.progressed.emit(sentence))
         try:
-            result = getattr(self.client, self.method_name)(self.peer_id)
+            result = getattr(self.client, self.method_name)(self.device_id)
         except Exception as e:  # noqa: BLE001 - handed to the window
             result = e
         finally:
@@ -150,6 +152,13 @@ class SyncDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # Which device this window is on, before anything else: its name heads the
+        # window, and every other device is listed under a heading of its own
+        self.this_device_heading = QLabel()
+        self.this_device_heading.setObjectName("this_device_heading")
+        self.this_device_heading.setAccessibleName("This device")
+        layout.addWidget(self.this_device_heading)
+
         # Stage 8: the checklist, each row its state and the one button that completes it
         self.checklist_box = QVBoxLayout()
         self.checklist_rows: List[Any] = []
@@ -161,17 +170,20 @@ class SyncDialog(QDialog):
         self.proof_label.setAccessibleName("What is on this device only")
         layout.addWidget(self.proof_label)
 
-        # The peers
-        self.peers_table = QTableWidget(0, 4)
-        self.peers_table.setHorizontalHeaderLabels(["Peer", "Address", "Last reached", "Last operation"])
-        self.peers_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.peers_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.peers_table.horizontalHeader().setStretchLastSection(True)
-        self.peers_table.setAccessibleName("Peers of this account")
-        layout.addWidget(self.peers_table)
+        # The other devices of the account
+        self.devices_heading = QLabel("Other devices of this account")
+        self.devices_heading.setObjectName("devices_heading")
+        layout.addWidget(self.devices_heading)
+        self.devices_table = QTableWidget(0, 4)
+        self.devices_table.setHorizontalHeaderLabels(["Other device", "Address", "Last reached", "Last operation"])
+        self.devices_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.devices_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.devices_table.horizontalHeader().setStretchLastSection(True)
+        self.devices_table.setAccessibleName("Other devices of this account")
+        layout.addWidget(self.devices_table)
 
-        # One visible button, naming the last peer; the arrow chooses another
-        # peer or another operation
+        # One visible button, naming the last device; the arrow chooses another
+        # device or another operation
         actions = QHBoxLayout()
         self.operation_button = QToolButton()
         self.operation_button.setObjectName("operation_button")
@@ -223,23 +235,23 @@ class SyncDialog(QDialog):
         layout.addLayout(encryption)
         self._refresh_encryption()
 
-        peer_actions = QHBoxLayout()
+        device_actions = QHBoxLayout()
         self.rename_button = QPushButton("Rename…")
-        self.rename_button.clicked.connect(self._rename_peer)
-        peer_actions.addWidget(self.rename_button)
+        self.rename_button.clicked.connect(self._rename_device)
+        device_actions.addWidget(self.rename_button)
         self.forget_button = QPushButton("Forget")
-        self.forget_button.setAccessibleDescription("Remove the selected peer from this device's list; its card does not bring it back")
-        self.forget_button.clicked.connect(self._forget_peer)
-        peer_actions.addWidget(self.forget_button)
+        self.forget_button.setAccessibleDescription("Remove the selected device from this device's list; its card does not bring it back")
+        self.forget_button.clicked.connect(self._forget_device)
+        device_actions.addWidget(self.forget_button)
         self.add_button = QPushButton("Add by address…")
-        self.add_button.clicked.connect(self._add_peer)
-        peer_actions.addWidget(self.add_button)
+        self.add_button.clicked.connect(self._add_device)
+        device_actions.addWidget(self.add_button)
         self.find_button = QPushButton("Find on this network")
-        self.find_button.setAccessibleDescription("Devices of this account announcing on the local network; a found one can be added as a peer")
+        self.find_button.setAccessibleDescription("Devices of this account announcing on the local network; a found one can be added as a device")
         self.find_button.clicked.connect(self._find_on_network)
-        peer_actions.addWidget(self.find_button)
-        peer_actions.addStretch()
-        layout.addLayout(peer_actions)
+        device_actions.addWidget(self.find_button)
+        device_actions.addStretch()
+        layout.addLayout(device_actions)
 
         # The result: one sentence, and the button that fixes a refusal
         self.result_label = QLabel()
@@ -264,7 +276,7 @@ class SyncDialog(QDialog):
         # Stage 6: the listener, the same switch as the File menu's, and
         # the hours of silence after which it stops itself
         listen_row = QHBoxLayout()
-        self.listen_checkbox = QCheckBox("Listen for peers")
+        self.listen_checkbox = QCheckBox("Listen for devices")
         self.listen_checkbox.setAccessibleDescription("Let other devices of the account reach this computer")
         if listen_action is not None:
             self.listen_checkbox.setChecked(listen_action.isChecked())
@@ -300,7 +312,7 @@ class SyncDialog(QDialog):
     # ----- state
 
     def refresh(self) -> None:
-        """Read everything again: the checklist, the line, the peers, the button, this device."""
+        """Read everything again: the checklist, the line, the devices, the button, this device."""
         self._refresh_checklist()
         try:
             counts = self.db.not_duplicated(self.config.get_audiofile_directory())
@@ -308,20 +320,23 @@ class SyncDialog(QDialog):
         except Exception as e:  # noqa: BLE001 - the dialogue still opens
             self.proof_label.setText(f"Could not count what is on this device only: {e}")
 
-        self.peers = self.config.get_peers()
-        summaries = {p["peer_id"]: p for p in self.db.peer_summaries()}
-        self.peers_table.setRowCount(len(self.peers))
-        for row, peer in enumerate(self.peers):
-            summary = summaries.get(peer["peer_id"], {})
+        self.devices = self.config.get_devices()
+        summaries = {p["device_id"]: p for p in self.db.device_summaries()}
+        self.devices_table.setRowCount(len(self.devices))
+        for row, device in enumerate(self.devices):
+            summary = summaries.get(device["device_id"], {})
             reached = summary.get("last_reached_at")
-            self.peers_table.setItem(row, 0, QTableWidgetItem(f"{peer['peer_name']} ({peer['peer_id'][:UUID_SHORT_LEN]})"))
-            self.peers_table.setItem(row, 1, QTableWidgetItem(peer.get("peer_url") or "no address yet"))
-            self.peers_table.setItem(row, 2, QTableWidgetItem(format_timestamp(reached) if reached else "never"))
-            self.peers_table.setItem(row, 3, QTableWidgetItem(summary.get("last_operation") or ""))
-        self.peers_table.resizeColumnsToContents()
+            self.devices_table.setItem(row, 0, QTableWidgetItem(f"{device['device_name']} ({device['device_id'][:UUID_SHORT_LEN]})"))
+            self.devices_table.setItem(row, 1, QTableWidgetItem(device.get("device_url") or "no address yet"))
+            self.devices_table.setItem(row, 2, QTableWidgetItem(format_timestamp(reached) if reached else "never"))
+            self.devices_table.setItem(row, 3, QTableWidgetItem(summary.get("last_operation") or ""))
+        self.devices_table.resizeColumnsToContents()
 
         self._build_operation_menu()
         self.device_label.setText(self._this_device_text())
+        this_name = self.config.get_this_device_name()
+        self.this_device_heading.setText(f"<b>This device:</b> {html.escape(this_name)}")
+        self.setWindowTitle(f"Sync — {this_name}")
 
     def _refresh_checklist(self) -> None:
         from src.core.storage_setup import checklist
@@ -377,19 +392,19 @@ class SyncDialog(QDialog):
 
         SyncPathsDialog(self.config, parent=self).exec()
 
-    def _last_peer(self) -> Optional[Dict[str, Any]]:
-        """The peer the visible button names: the last used, else the only one."""
-        last = self.config.last_peer_id()
-        for peer in self.peers:
-            if peer["peer_id"] == last:
-                return peer
-        return self.peers[0] if len(self.peers) == 1 else None
+    def _last_device(self) -> Optional[Dict[str, Any]]:
+        """The device the visible button names: the last used, else the only one."""
+        last = self.config.last_device_id()
+        for device in self.devices:
+            if device["device_id"] == last:
+                return device
+        return self.devices[0] if len(self.devices) == 1 else None
 
-    def _selected_peer(self) -> Optional[Dict[str, Any]]:
-        rows = self.peers_table.selectionModel().selectedRows() if self.peers_table.selectionModel() else []
+    def _selected_device(self) -> Optional[Dict[str, Any]]:
+        rows = self.devices_table.selectionModel().selectedRows() if self.devices_table.selectionModel() else []
         if rows:
-            return self.peers[rows[0].row()]
-        return self._last_peer()
+            return self.devices[rows[0].row()]
+        return self._last_device()
 
     def _build_operation_menu(self) -> None:
         # A fresh menu each time: clearing one deletes its submenus under us
@@ -398,16 +413,16 @@ class SyncDialog(QDialog):
         self.submenus = []
         self.operation_button.setMenu(self.operation_menu)
         old_menu.deleteLater()
-        peer = self._last_peer()
-        if peer is None:
-            self.operation_button.setText("Exchange…" if self.peers else "No peer yet: show my code, or read another device's")
-            self.operation_button.setEnabled(bool(self.peers))
+        device = self._last_device()
+        if device is None:
+            self.operation_button.setText("Exchange…" if self.devices else "No device yet: show my code, or read another device's")
+            self.operation_button.setEnabled(bool(self.devices))
         else:
-            self.operation_button.setText(f"Exchange with {peer['peer_name']}")
+            self.operation_button.setText(f"Exchange with {device['device_name']}")
             self.operation_button.setEnabled(True)
         self.operation_button.setAccessibleName(self.operation_button.text())
-        for other in self.peers:
-            submenu = self.operation_menu.addMenu(other["peer_name"])
+        for other in self.devices:
+            submenu = self.operation_menu.addMenu(other["device_name"])
             self.submenus.append(submenu)
             for operation, label, detail in OPERATIONS:
                 action = submenu.addAction(f"{label} — {detail}")
@@ -425,7 +440,7 @@ class SyncDialog(QDialog):
         except Exception:  # noqa: BLE001
             fingerprint = "(made when the listener first runs)"
         return (
-            f"<b>This device:</b> {self.config.get_device_name()} ({self.config.get_device_id_hex()})<br>"
+            f"<b>This device:</b> {self.config.get_this_device_name()} ({self.config.get_this_device_id_hex()})<br>"
             f"<b>Address:</b> {address_words(addresses)} (port {port})<br>"
             f"<b>Certificate:</b> {fingerprint}"
         )
@@ -433,29 +448,29 @@ class SyncDialog(QDialog):
     # ----- operations
 
     def _run_default(self) -> None:
-        peer = self._last_peer()
-        if peer is None:
-            if self.peers:
+        device = self._last_device()
+        if device is None:
+            if self.devices:
                 self.operation_button.showMenu()
             return
-        self._run("exchange", peer)
+        self._run("exchange", device)
 
-    def _run(self, operation: str, peer: Dict[str, Any]) -> None:
+    def _run(self, operation: str, device: Dict[str, Any]) -> None:
         """The operation on a worker thread, with progress and Cancel (Stage 4)."""
         from voicecore import SyncClient
 
         if self._worker is not None and self._worker.isRunning():
             self.result_label.setText("An operation is under way; cancel it first.")
             return
-        self.result_label.setText(f"{dict((k, v) for k, v, _ in OPERATIONS)[operation]} with {peer['peer_name']}…")
+        self.result_label.setText(f"{dict((k, v) for k, v, _ in OPERATIONS)[operation]} with {device['device_name']}…")
         self.fix_button.hide()
         self.cancel_button.show()
         self.operation_button.setEnabled(False)
         self._client = SyncClient(str(self.config.get_config_dir()))
-        method_name = {"sync": "sync_with_peer", "deliver": "deliver", "exchange": "exchange", "send": "send_to_peer", "fetch": "fetch_from_peer"}[operation]
-        self._worker = OperationWorker(self._client, method_name, peer["peer_id"], parent=self)
+        method_name = {"sync": "sync_with_device", "deliver": "deliver", "exchange": "exchange", "send": "send_to_device", "fetch": "fetch_from_device"}[operation]
+        self._worker = OperationWorker(self._client, method_name, device["device_id"], parent=self)
         self._worker.progressed.connect(self.result_label.setText)
-        self._worker.done.connect(lambda result, o=operation, p=peer: self._finished(o, p, result))
+        self._worker.done.connect(lambda result, o=operation, p=device: self._finished(o, p, result))
         self._worker.start()
 
     def _cancel(self) -> None:
@@ -463,26 +478,26 @@ class SyncDialog(QDialog):
             self._client.cancel()
             self.result_label.setText("Cancelling at the next page, file or chunk…")
 
-    def _finished(self, operation: str, peer: Dict[str, Any], result: Any) -> None:
+    def _finished(self, operation: str, device: Dict[str, Any], result: Any) -> None:
         self.cancel_button.hide()
         self.operation_button.setEnabled(True)
         if isinstance(result, Exception):
-            self.result_label.setText(f"{operation} with {peer['peer_name']} could not run: {result}")
+            self.result_label.setText(f"{operation} with {device['device_name']} could not run: {result}")
             return
         # The remembered address was silent: the network is asked once, on this thread
-        from src.core.discovery import looks_unreachable, find_peer_url
+        from src.core.discovery import looks_unreachable, find_device_url
 
         if not result.success and looks_unreachable(list(result.errors)):
             try:
-                found = find_peer_url(self.db.account_id(), peer["peer_id"], 3.0)
+                found = find_device_url(self.db.account_id(), device["device_id"], 3.0)
             except Exception:  # noqa: BLE001
                 found = None
-            if found is not None and found.urls and found.urls[0].rstrip("/") != (peer.get("peer_url") or "").rstrip("/"):
-                self.config.add_peer(peer["peer_id"], peer["peer_name"], found.urls[0], found.certificate_fingerprint or None, True)
-                self.result_label.setText(f"{peer['peer_name']} answered from {found.urls[0]}; trying there…")
-                self._run(operation, {**peer, "peer_url": found.urls[0]})
+            if found is not None and found.urls and found.urls[0].rstrip("/") != (device.get("device_url") or "").rstrip("/"):
+                self.config.add_device(device["device_id"], device["device_name"], found.urls[0], found.certificate_fingerprint or None, True)
+                self.result_label.setText(f"{device['device_name']} answered from {found.urls[0]}; trying there…")
+                self._run(operation, {**device, "device_url": found.urls[0]})
                 return
-        self.result_label.setText(result_sentence(operation, peer["peer_name"], result))
+        self.result_label.setText(result_sentence(operation, device["device_name"], result))
         code = refusal_code(list(result.errors))
         if code:
             self._offer_fix(code)
@@ -508,11 +523,11 @@ class SyncDialog(QDialog):
     def _check_connection(self) -> None:
         from voicecore import SyncClient
 
-        peer = self._selected_peer()
-        if peer is None:
-            self.result_label.setText("Choose a peer to check.")
+        device = self._selected_device()
+        if device is None:
+            self.result_label.setText("Choose a device to check.")
             return
-        rows = SyncClient(str(self.config.get_config_dir())).check(peer["peer_id"])
+        rows = SyncClient(str(self.config.get_config_dir())).check(device["device_id"])
         lines = []
         for row in rows:
             mark = "✓" if row["passed"] else "✗"
@@ -659,7 +674,7 @@ class SyncDialog(QDialog):
             self.listen_action.setChecked(False)
         self.refresh()
 
-    # ----- the peers
+    # ----- the devices
 
     def _find_on_network(self) -> None:
         """The devices of this account announcing nearby (Stage 7); one can be added."""
@@ -671,59 +686,59 @@ class SyncDialog(QDialog):
         except Exception as e:  # noqa: BLE001
             self.result_label.setText(f"Could not browse the network: {e}")
             return
-        known = {p["peer_id"] for p in self.peers}
+        known = {p["device_id"] for p in self.devices}
         if not found:
             self.result_label.setText("No device of this account is announcing on this network.")
             return
         lines = []
         for entry in found:
             if entry.device_id in known:
-                lines.append(f"{entry.name} ({entry.device_id[:UUID_SHORT_LEN]}) at {', '.join(entry.urls)}: already a peer")
+                lines.append(f"{entry.name} ({entry.device_id[:UUID_SHORT_LEN]}) at {', '.join(entry.urls)}: already a device")
                 continue
-            answer = QMessageBox.question(self, "Found on the network", f"{entry.name} ({entry.device_id[:UUID_SHORT_LEN]}) at {', '.join(entry.urls)} is of this account. Add it as a peer?")
+            answer = QMessageBox.question(self, "Found on the network", f"{entry.name} ({entry.device_id[:UUID_SHORT_LEN]}) at {', '.join(entry.urls)} is of this account. Add it as a device?")
             if answer == QMessageBox.StandardButton.Yes and entry.urls:
-                self.config.add_peer(entry.device_id, entry.name or entry.device_id[:UUID_SHORT_LEN], entry.urls[0], entry.certificate_fingerprint or None, True)
+                self.config.add_device(entry.device_id, entry.name or entry.device_id[:UUID_SHORT_LEN], entry.urls[0], entry.certificate_fingerprint or None, True)
                 lines.append(f"{entry.name}: added")
             else:
                 lines.append(f"{entry.name}: not added")
         self.result_label.setText("\n".join(lines))
         self.refresh()
 
-    def _rename_peer(self) -> None:
-        peer = self._selected_peer()
-        if peer is None:
+    def _rename_device(self) -> None:
+        device = self._selected_device()
+        if device is None:
             return
-        name, ok = QInputDialog.getText(self, "Rename peer", "The name shown on this device:", text=peer["peer_name"])
+        name, ok = QInputDialog.getText(self, "Rename device", "The name shown on this device:", text=device["device_name"])
         if ok and name.strip():
-            self.config.rename_peer(peer["peer_id"], name.strip())
+            self.config.rename_device(device["device_id"], name.strip())
             self.refresh()
 
-    def _forget_peer(self) -> None:
-        peer = self._selected_peer()
-        if peer is None:
+    def _forget_device(self) -> None:
+        device = self._selected_device()
+        if device is None:
             return
         answer = QMessageBox.question(
             self,
-            "Forget peer",
-            f"Forget {peer['peer_name']} on this device? Its card will not bring it back; adding it again or pairing again undoes this.",
+            "Forget device",
+            f"Forget {device['device_name']} on this device? Its card will not bring it back; adding it again or pairing again undoes this.",
         )
         if answer == QMessageBox.StandardButton.Yes:
-            self.config.forget_peer(peer["peer_id"])
+            self.config.forget_device(device["device_id"])
             self.refresh()
 
-    def _add_peer(self) -> None:
-        """A peer typed by hand (Stage 7, the third way)."""
-        peer_id, ok = QInputDialog.getText(self, "Add peer", "The other device's id (32 hex characters, shown in its About or sync screen):")
-        if not ok or not peer_id.strip():
+    def _add_device(self) -> None:
+        """A device typed by hand (Stage 7, the third way)."""
+        device_id, ok = QInputDialog.getText(self, "Add device", "The other device's id (32 hex characters, shown in its About or sync screen):")
+        if not ok or not device_id.strip():
             return
-        url, ok = QInputDialog.getText(self, "Add peer", "Where it listens (https://address:port):")
+        url, ok = QInputDialog.getText(self, "Add device", "Where it listens (https://address:port):")
         if not ok or not url.strip():
             return
-        name, ok = QInputDialog.getText(self, "Add peer", "A name for it:", text=peer_id.strip()[:UUID_SHORT_LEN])
+        name, ok = QInputDialog.getText(self, "Add device", "A name for it:", text=device_id.strip()[:UUID_SHORT_LEN])
         if not ok:
             return
         try:
-            self.config.add_peer(peer_id.strip(), name.strip() or peer_id.strip()[:UUID_SHORT_LEN], url.strip(), None, True)
+            self.config.add_device(device_id.strip(), name.strip() or device_id.strip()[:UUID_SHORT_LEN], url.strip(), None, True)
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Not added", str(e))
             return

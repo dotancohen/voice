@@ -49,10 +49,10 @@ def local_path(node: SyncNode, audio_id: str) -> Path:
 
 
 def serve(node_b: SyncNode, node_a: SyncNode) -> None:
-    """Start B's listener after its audio directory is set, and make it A's peer."""
+    """Start B's listener after its audio directory is set, and make it A's device."""
     start_sync_server(node_b)
     assert node_b.wait_for_server()
-    node_a.config.add_peer(node_b.device_id_hex, node_b.name, node_b.url)
+    node_a.config.add_device(node_b.device_id_hex, node_b.name, node_b.url)
 
 
 class TestFilesBetweenInstances:
@@ -84,7 +84,7 @@ class TestFilesBetweenInstances:
         give_recording(node_b, 10)  # B has an audio directory too
         serve(node_b, node_a)
 
-        synced = SyncClient(str(node_a.config_dir)).sync_with_peer(node_b.device_id_hex)
+        synced = SyncClient(str(node_a.config_dir)).sync_with_device(node_b.device_id_hex)
         assert synced.success, synced.errors
         assert not local_path(node_b, id_a).exists(), "a sync never moves a file"
 

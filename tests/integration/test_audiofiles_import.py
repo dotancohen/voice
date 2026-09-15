@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 
 # Test device ID (hex string - 32 chars)
@@ -47,7 +47,7 @@ def audiofiles_db(audiofiles_config_dir: Path):
     Yields:
         Database instance.
     """
-    set_local_device_id(TEST_DEVICE_ID)
+    set_this_device_id(TEST_DEVICE_ID)
     db_path = audiofiles_config_dir / "notes.db"
     db = Database(db_path)
 

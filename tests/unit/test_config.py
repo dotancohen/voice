@@ -84,22 +84,22 @@ class TestSaveConfig:
     def test_saves_known_key_to_file(self, test_config_dir: Path) -> None:
         """Test that known config keys are saved to JSON file."""
         config = Config(config_dir=test_config_dir)
-        config.set("device_name", "Test Device")
+        config.set("this_device_name", "Test Device")
 
         # Read file directly
         with open(config.config_file, "r") as f:
             data = json.load(f)
 
-        assert data["device_name"] == "Test Device"
+        assert data["this_device_name"] == "Test Device"
 
     def test_saved_config_is_loadable(self, test_config_dir: Path) -> None:
         """Test that saved config can be loaded again."""
         config1 = Config(config_dir=test_config_dir)
-        config1.set("device_name", "Persistent Device")
+        config1.set("this_device_name", "Persistent Device")
 
         # Create new config instance (simulates app restart)
         config2 = Config(config_dir=test_config_dir)
-        assert config2.get("device_name") == "Persistent Device"
+        assert config2.get("this_device_name") == "Persistent Device"
 
     def test_unknown_key_raises_error(self, test_config_dir: Path) -> None:
         """Test that setting unknown keys raises an error."""
@@ -113,8 +113,8 @@ class TestGetSet:
 
     def test_get_returns_value(self, test_config: Config) -> None:
         """Test that get returns stored value for known keys."""
-        test_config.set("device_name", "Test Value")
-        assert test_config.get("device_name") == "Test Value"
+        test_config.set("this_device_name", "Test Value")
+        assert test_config.get("this_device_name") == "Test Value"
 
     def test_get_returns_default_for_missing_key(self, test_config: Config) -> None:
         """Test that get returns default for unknown key."""
@@ -123,11 +123,11 @@ class TestGetSet:
 
     def test_set_updates_value(self, test_config: Config) -> None:
         """Test that set updates existing value."""
-        test_config.set("device_name", "value1")
-        assert test_config.get("device_name") == "value1"
+        test_config.set("this_device_name", "value1")
+        assert test_config.get("this_device_name") == "value1"
 
-        test_config.set("device_name", "value2")
-        assert test_config.get("device_name") == "value2"
+        test_config.set("this_device_name", "value2")
+        assert test_config.get("this_device_name") == "value2"
 
 
 class TestGetConfigDir:
@@ -180,13 +180,13 @@ class TestDefaultConfig:
 
     def test_device_id_exists(self, test_config: Config) -> None:
         """Test that device_id is generated."""
-        device_id = test_config.get_device_id_hex()
+        device_id = test_config.get_this_device_id_hex()
         assert device_id is not None
         assert len(device_id) == 32  # UUID hex without hyphens
 
     def test_device_name_exists(self, test_config: Config) -> None:
         """Test that device_name is set."""
-        device_name = test_config.get_device_name()
+        device_name = test_config.get_this_device_name()
         assert device_name is not None
         assert len(device_name) > 0
 

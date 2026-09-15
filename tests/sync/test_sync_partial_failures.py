@@ -16,7 +16,7 @@ from typing import Generator, Tuple
 
 import pytest
 
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 from tests.sync_support import SyncChange, apply_sync_changes
 
 from .conftest import (
@@ -37,7 +37,7 @@ class TestPartialSyncFailures:
 
     def test_partial_failure_reported_to_client(self, tmp_path: Path) -> None:
         """Test that when some changes fail, errors are reported to client."""
-        set_local_device_id(DEVICE_A_ID)
+        set_this_device_id(DEVICE_A_ID)
         db = Database(tmp_path / "test.db")
 
         # Create a valid note change
@@ -72,7 +72,7 @@ class TestPartialSyncFailures:
             db,
             [valid_change, invalid_change],
             "00000000000070008000000000000002",
-            "TestPeer",
+            "TestDevice",
         )
 
         # Valid change should be applied
@@ -94,16 +94,16 @@ class TestPartialSyncFailures:
         node_a = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
         node_b = create_sync_node("NodeB", DEVICE_B_ID, tmp_path)
 
-        # Configure as peers
-        node_a.config.add_peer(
-            peer_id=node_b.device_id_hex,
-            peer_name=node_b.name,
-            peer_url=node_b.url,
+        # Configure as devices
+        node_a.config.add_device(
+            device_id=node_b.device_id_hex,
+            device_name=node_b.name,
+            device_url=node_b.url,
         )
-        node_b.config.add_peer(
-            peer_id=node_a.device_id_hex,
-            peer_name=node_a.name,
-            peer_url=node_a.url,
+        node_b.config.add_device(
+            device_id=node_a.device_id_hex,
+            device_name=node_a.name,
+            device_url=node_a.url,
         )
 
         # Start only node B's server
@@ -113,18 +113,18 @@ class TestPartialSyncFailures:
 
         try:
             # Create a note on A
-            set_local_device_id(node_a.device_id)
+            set_this_device_id(node_a.device_id)
             note_id = node_a.db.create_note("Test note")
 
             # Get initial last_sync_at (should be None)
-            initial_last_sync = node_a.db.get_peer_last_sync(node_b.device_id_hex)
+            initial_last_sync = node_a.db.get_device_last_sync(node_b.device_id_hex)
 
             # Sync should succeed
             result = sync_nodes(node_a, node_b)
             assert result["success"] is True
 
             # Now last_sync_at should be set
-            after_success_sync = node_a.db.get_peer_last_sync(node_b.device_id_hex)
+            after_success_sync = node_a.db.get_device_last_sync(node_b.device_id_hex)
             assert after_success_sync is not None, "last_sync_at should be set after success"
 
             # Stop server to cause failure
@@ -132,7 +132,7 @@ class TestPartialSyncFailures:
 
             # Wait and create another note
             time.sleep(1.1)
-            set_local_device_id(node_a.device_id)
+            set_this_device_id(node_a.device_id)
             note_id2 = node_a.db.create_note("Another note")
 
             # Try to sync - should fail
@@ -140,7 +140,7 @@ class TestPartialSyncFailures:
             assert result["success"] is False, "Sync should fail when server is down"
 
             # last_sync_at should NOT be updated after failure
-            after_failed_sync = node_a.db.get_peer_last_sync(node_b.device_id_hex)
+            after_failed_sync = node_a.db.get_device_last_sync(node_b.device_id_hex)
             assert after_failed_sync == after_success_sync, (
                 "last_sync_at should not change after failed sync"
             )
@@ -156,21 +156,21 @@ class TestPartialSyncFailures:
         node_a = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
         node_b = create_sync_node("NodeB", DEVICE_B_ID, tmp_path)
 
-        # Configure as peers
-        node_a.config.add_peer(
-            peer_id=node_b.device_id_hex,
-            peer_name=node_b.name,
-            peer_url=node_b.url,
+        # Configure as devices
+        node_a.config.add_device(
+            device_id=node_b.device_id_hex,
+            device_name=node_b.name,
+            device_url=node_b.url,
         )
-        node_b.config.add_peer(
-            peer_id=node_a.device_id_hex,
-            peer_name=node_a.name,
-            peer_url=node_a.url,
+        node_b.config.add_device(
+            device_id=node_a.device_id_hex,
+            device_name=node_a.name,
+            device_url=node_a.url,
         )
 
         try:
             # Create note on A while B is down
-            set_local_device_id(node_a.device_id)
+            set_this_device_id(node_a.device_id)
             note_id = node_a.db.create_note("Will be retried")
 
             # Try to sync - should fail (server not running)
@@ -331,7 +331,7 @@ class TestApplySyncChangesErrorHandling:
 
     def test_continues_after_single_failure(self, tmp_path: Path) -> None:
         """Test that processing continues after one change fails."""
-        set_local_device_id(DEVICE_A_ID)
+        set_this_device_id(DEVICE_A_ID)
         db = Database(tmp_path / "test.db")
 
         changes = [
@@ -376,7 +376,7 @@ class TestApplySyncChangesErrorHandling:
             db,
             changes,
             "00000000000070008000000000000002",
-            "TestPeer",
+            "TestDevice",
         )
 
         # Both valid notes should be applied
@@ -391,7 +391,7 @@ class TestApplySyncChangesErrorHandling:
 
     def test_error_message_includes_entity_info(self, tmp_path: Path) -> None:
         """Test that error messages include entity type and ID."""
-        set_local_device_id(DEVICE_A_ID)
+        set_this_device_id(DEVICE_A_ID)
         db = Database(tmp_path / "test.db")
 
         changes = [
@@ -413,7 +413,7 @@ class TestApplySyncChangesErrorHandling:
             db,
             changes,
             "00000000000070008000000000000002",
-            "TestPeer",
+            "TestDevice",
         )
 
         assert len(errors) >= 1
@@ -436,15 +436,15 @@ class TestSyncClientErrorPropagation:
         node_a = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
         node_b = create_sync_node("NodeB", DEVICE_B_ID, tmp_path)
 
-        node_a.config.add_peer(
-            peer_id=node_b.device_id_hex,
-            peer_name=node_b.name,
-            peer_url=node_b.url,
+        node_a.config.add_device(
+            device_id=node_b.device_id_hex,
+            device_name=node_b.name,
+            device_url=node_b.url,
         )
-        node_b.config.add_peer(
-            peer_id=node_a.device_id_hex,
-            peer_name=node_a.name,
-            peer_url=node_a.url,
+        node_b.config.add_device(
+            device_id=node_a.device_id_hex,
+            device_name=node_a.name,
+            device_url=node_a.url,
         )
 
         start_sync_server(node_a)
@@ -467,7 +467,7 @@ class TestSyncClientErrorPropagation:
         node_a, node_b = two_nodes
 
         # Create valid content on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Test note")
 
         # Sync should succeed
@@ -480,7 +480,7 @@ class TestSyncClientErrorPropagation:
         node_a, node_b = two_nodes
 
         # Create valid content
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Test note")
 
         # Normal sync should work
@@ -506,16 +506,16 @@ class TestServerSideSyncTimeUpdate:
         if not node.wait_for_server():
             pytest.fail("Failed to start sync server")
 
-        peer_device_id = "00000000000070008000000000000002"
-        peer_headers = admit_test_device(node, peer_device_id, "TestClient")
+        from_device_id = "00000000000070008000000000000002"
+        device_headers = admit_test_device(node, from_device_id, "TestClient")
 
         try:
             # First, do a successful sync to establish baseline
             response = requests.post(
                 f"{node.url}/sync/handshake",
-                headers=peer_headers,
+                headers=device_headers,
                 json={
-                    "device_id": peer_device_id,
+                    "device_id": from_device_id,
                     "device_name": "TestClient",
                     "protocol_version": "2.0",
                     "account_id": ACCOUNT_ID,
@@ -524,15 +524,15 @@ class TestServerSideSyncTimeUpdate:
             )
             assert response.status_code == 200
 
-            # When this device last synced with the peer, as its database records it
-            initial_sync_time = node.db.get_peer_last_sync(peer_device_id)
+            # When this device last synced with the device, as its database records it
+            initial_sync_time = node.db.get_device_last_sync(from_device_id)
 
             # Do a successful apply to set the sync time
             response = requests.post(
                 f"{node.url}/sync/apply",
-                headers=peer_headers,
+                headers=device_headers,
                 json={
-                    "device_id": peer_device_id,
+                    "device_id": from_device_id,
                     "device_name": "TestClient",
                     "changes": [
                         {
@@ -545,7 +545,7 @@ class TestServerSideSyncTimeUpdate:
                                 "content": "Valid note",
                             },
                             "timestamp": 1735725600,
-                            "device_id": peer_device_id,
+                            "device_id": from_device_id,
                         }
                     ],
                 },
@@ -556,16 +556,16 @@ class TestServerSideSyncTimeUpdate:
             # Handshake again to get the updated sync time
             response = requests.post(
                 f"{node.url}/sync/handshake",
-                headers=peer_headers,
+                headers=device_headers,
                 json={
-                    "device_id": peer_device_id,
+                    "device_id": from_device_id,
                     "device_name": "TestClient",
                     "protocol_version": "2.0",
                     "account_id": ACCOUNT_ID,
                 },
                 timeout=10,
             )
-            after_success_sync_time = node.db.get_peer_last_sync(peer_device_id)
+            after_success_sync_time = node.db.get_device_last_sync(from_device_id)
             assert after_success_sync_time is not None, (
                 "Sync time should be set after successful sync"
             )
@@ -574,9 +574,9 @@ class TestServerSideSyncTimeUpdate:
             time.sleep(1.1)  # Ensure timestamp would change if updated
             response = requests.post(
                 f"{node.url}/sync/apply",
-                headers=peer_headers,
+                headers=device_headers,
                 json={
-                    "device_id": peer_device_id,
+                    "device_id": from_device_id,
                     "device_name": "TestClient",
                     "changes": [
                         {
@@ -585,7 +585,7 @@ class TestServerSideSyncTimeUpdate:
                             "operation": "create",
                             "data": {"id": "ffff0000000000000000000000000001"},
                             "timestamp": 1735729200,
-                            "device_id": peer_device_id,
+                            "device_id": from_device_id,
                         }
                     ],
                 },
@@ -598,19 +598,19 @@ class TestServerSideSyncTimeUpdate:
             # Handshake again to check sync time
             response = requests.post(
                 f"{node.url}/sync/handshake",
-                headers=peer_headers,
+                headers=device_headers,
                 json={
-                    "device_id": peer_device_id,
+                    "device_id": from_device_id,
                     "device_name": "TestClient",
                     "protocol_version": "2.0",
                     "account_id": ACCOUNT_ID,
                 },
                 timeout=10,
             )
-            after_error_sync_time = node.db.get_peer_last_sync(peer_device_id)
+            after_error_sync_time = node.db.get_device_last_sync(from_device_id)
 
             # Current behavior: sync time IS updated even with errors
-            # This is because the apply endpoint always calls update_peer_last_sync
+            # This is because the apply endpoint always calls update_device_last_sync
             # Future improvement: don't update when all changes fail
             assert after_error_sync_time is not None, "Sync time should exist"
 
@@ -620,7 +620,7 @@ class TestServerSideSyncTimeUpdate:
 
 
 class TestOneWaySyncMethods:
-    """Test that pull_from_peer and push_to_peer work correctly."""
+    """Test that pull_from_device and push_to_device work correctly."""
 
     @pytest.fixture
     def two_nodes_with_audio(
@@ -638,15 +638,15 @@ class TestOneWaySyncMethods:
         node_a.config.set_audiofile_directory(str(audiodir_a))
         node_b.config.set_audiofile_directory(str(audiodir_b))
 
-        node_a.config.add_peer(
-            peer_id=node_b.device_id_hex,
-            peer_name=node_b.name,
-            peer_url=node_b.url,
+        node_a.config.add_device(
+            device_id=node_b.device_id_hex,
+            device_name=node_b.name,
+            device_url=node_b.url,
         )
-        node_b.config.add_peer(
-            peer_id=node_a.device_id_hex,
-            peer_name=node_a.name,
-            peer_url=node_a.url,
+        node_b.config.add_device(
+            device_id=node_a.device_id_hex,
+            device_name=node_a.name,
+            device_url=node_a.url,
         )
 
         start_sync_server(node_a)
@@ -664,57 +664,57 @@ class TestOneWaySyncMethods:
         node_a.db.close()
         node_b.db.close()
 
-    def test_pull_from_peer_updates_timestamp(
+    def test_pull_from_device_updates_timestamp(
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:
-        """Test that pull_from_peer updates last_sync_at on success."""
+        """Test that pull_from_device updates last_sync_at on success."""
         from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audio
 
         # Create note on B
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.create_note("Note on B")
 
         # Get initial sync time (should be None)
-        initial = node_a.db.get_peer_last_sync(node_b.device_id_hex)
+        initial = node_a.db.get_device_last_sync(node_b.device_id_hex)
         assert initial is None
 
         # Pull from B to A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
-        result = client.pull_from_peer(node_b.device_id_hex)
+        result = client.pull_from_device(node_b.device_id_hex)
 
         assert result.success is True
         assert result.pulled >= 1
 
         # Sync time should be updated
-        after = node_a.db.get_peer_last_sync(node_b.device_id_hex)
+        after = node_a.db.get_device_last_sync(node_b.device_id_hex)
         assert after is not None, "Sync time should be updated after successful pull"
 
-    def test_push_to_peer_updates_timestamp(
+    def test_push_to_device_updates_timestamp(
         self, two_nodes_with_audio: Tuple[SyncNode, SyncNode]
     ) -> None:
-        """Test that push_to_peer updates last_sync_at on success."""
+        """Test that push_to_device updates last_sync_at on success."""
         from voicecore import SyncClient
 
         node_a, node_b = two_nodes_with_audio
 
         # Create note on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.create_note("Note on A")
 
         # Get initial sync time (should be None)
-        initial = node_a.db.get_peer_last_sync(node_b.device_id_hex)
+        initial = node_a.db.get_device_last_sync(node_b.device_id_hex)
         assert initial is None
 
         # Push from A to B
         client = SyncClient(str(node_a.config_dir))
-        result = client.push_to_peer(node_b.device_id_hex)
+        result = client.push_to_device(node_b.device_id_hex)
 
         assert result.success is True
         assert result.pushed >= 1
 
         # Sync time should be updated
-        after = node_a.db.get_peer_last_sync(node_b.device_id_hex)
+        after = node_a.db.get_device_last_sync(node_b.device_id_hex)
         assert after is not None, "Sync time should be updated after successful push"

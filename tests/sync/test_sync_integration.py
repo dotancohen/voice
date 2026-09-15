@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 
 from .conftest import (
     SyncNode,
@@ -116,7 +116,7 @@ class TestTwoNodeSync:
         note_id = create_note_on_node(node_a, "Important note")
 
         # Associate tag with note
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Sync to B
@@ -150,7 +150,7 @@ class TestTwoNodeSync:
         time.sleep(1.1)
 
         # Update on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "Updated content")
 
         # Sync again - update propagates cleanly (B hasn't edited since last sync)
@@ -184,7 +184,7 @@ class TestTwoNodeSync:
         time.sleep(1.1)
 
         # Delete on A (B has same content - never edited)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
         # Sync again - delete propagates because B didn't edit
@@ -393,7 +393,7 @@ class TestComplexWorkflows:
         time.sleep(1.1)
 
         # "Offline" editing - multiple updates without sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "Edit 1")
         node_a.db.update_note(note_id, "Edit 2")
         node_a.db.update_note(note_id, "Final edit")
@@ -444,7 +444,7 @@ class TestComplexWorkflows:
         # B needs to reload to see the note before editing
         node_b.reload_db()
         # Edit on B
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "Version 2 from B")
         sync_nodes(node_b, node_a)
 
@@ -473,10 +473,10 @@ class TestComplexWorkflows:
         time.sleep(1.1)
 
         # BOTH sides edit (creating a real conflict scenario)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "Edit from A")
 
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "Edit from B")
 
         # Sync - both edited since last sync, so conflict is created
@@ -601,16 +601,16 @@ class TestAudioFileSyncIntegration:
         node_a.config.set_audiofile_directory(str(audiodir_a))
         node_b.config.set_audiofile_directory(str(audiodir_b))
 
-        # Configure as peers
-        node_a.config.add_peer(
-            peer_id=node_b.device_id_hex,
-            peer_name=node_b.name,
-            peer_url=node_b.url,
+        # Configure as devices
+        node_a.config.add_device(
+            device_id=node_b.device_id_hex,
+            device_name=node_b.name,
+            device_url=node_b.url,
         )
-        node_b.config.add_peer(
-            peer_id=node_a.device_id_hex,
-            peer_name=node_a.name,
-            peer_url=node_a.url,
+        node_b.config.add_device(
+            device_id=node_a.device_id_hex,
+            device_name=node_a.name,
+            device_url=node_a.url,
         )
 
         # Start servers
@@ -647,7 +647,7 @@ class TestAudioFileSyncIntegration:
         test_audio_content = b"FAKE_AUDIO_DATA_FOR_TESTING_" * 100
 
         # Create note and audio file on node A (client)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Note with audio attachment")
         audio_id = node_a.db.create_audio_file(
             "recording.ogg", file_created_at=int(datetime(2024, 6, 15, 10, 30, 0).timestamp())
@@ -720,7 +720,7 @@ class TestAudioFileSyncIntegration:
         test_audio_content = b"SERVER_AUDIO_DATA_FOR_TESTING_" * 100
 
         # Create note and audio file on node B (server)
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         note_id = node_b.db.create_note("Server note with audio")
         audio_id = node_b.db.create_audio_file(
             "server-recording.mp3", file_created_at=int(datetime(2024, 7, 20, 14, 0, 0).timestamp())
@@ -786,7 +786,7 @@ class TestAudioFileSyncIntegration:
         node_a, node_b = two_nodes_with_audiofiles
 
         # Create note and audio file on node A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Note for ordering test")
         audio_id = node_a.db.create_audio_file("ordering-test.wav")
         node_a.db.attach_to_note(note_id, audio_id, "audio_file")
@@ -820,7 +820,7 @@ class TestAudioFileSyncIntegration:
         node_a, node_b = two_nodes_with_audiofiles
 
         # Create note with multiple audio files on node A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Note with multiple audio files")
 
         audio_ids = []
@@ -855,10 +855,10 @@ class TestDeletedEntitySyncIntegration:
     on Android didn't sync to desktop.
     """
 
-    def test_deleted_tag_propagates_to_peer(
+    def test_deleted_tag_propagates_to_device(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """CRITICAL: Deleted tags must propagate to all peers.
+        """CRITICAL: Deleted tags must propagate to all devices.
 
         This was a bug where delete_tag used hard delete instead of soft delete,
         causing deleted tags to never sync to other devices.
@@ -882,7 +882,7 @@ class TestDeletedEntitySyncIntegration:
         time.sleep(1.1)
 
         # Delete tag on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_tag(tag_id)
 
         # Verify A no longer shows the tag in get_all_tags
@@ -896,7 +896,7 @@ class TestDeletedEntitySyncIntegration:
 
         # CRITICAL: B should also have 0 tags now
         assert get_tag_count(node_b) == 0, (
-            "CRITICAL: Deleted tag should propagate to peer. "
+            "CRITICAL: Deleted tag should propagate to device. "
             "If this fails, delete_tag is not using soft delete."
         )
 
@@ -919,7 +919,7 @@ class TestDeletedEntitySyncIntegration:
         time.sleep(1.1)
 
         # Delete child tag on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_tag(child_id)
 
         # Sync to B
@@ -956,7 +956,7 @@ class TestDeletedEntitySyncIntegration:
         time.sleep(1.1)
 
         # B deletes the note
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.delete_note(note_id)
 
         # Verify B shows 0 notes now
@@ -989,7 +989,7 @@ class TestDeletedEntitySyncIntegration:
         time.sleep(1.1)
 
         # Delete and recreate on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_tag(tag_id1)
         tag_id2 = create_tag_on_node(node_a, "MyTag")
 
@@ -1039,16 +1039,16 @@ class TestTranscriptionSyncIntegration:
         node_a.config.set_audiofile_directory(str(audiodir_a))
         node_b.config.set_audiofile_directory(str(audiodir_b))
 
-        # Configure as peers
-        node_a.config.add_peer(
-            peer_id=node_b.device_id_hex,
-            peer_name=node_b.name,
-            peer_url=node_b.url,
+        # Configure as devices
+        node_a.config.add_device(
+            device_id=node_b.device_id_hex,
+            device_name=node_b.name,
+            device_url=node_b.url,
         )
-        node_b.config.add_peer(
-            peer_id=node_a.device_id_hex,
-            peer_name=node_a.name,
-            peer_url=node_a.url,
+        node_b.config.add_device(
+            device_id=node_a.device_id_hex,
+            device_name=node_a.name,
+            device_url=node_a.url,
         )
 
         # Start servers
@@ -1074,7 +1074,7 @@ class TestTranscriptionSyncIntegration:
         node_a, node_b = two_nodes_with_audiofiles
 
         # Create audio file and transcription on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("speech.mp3")
         transcription_id = node_a.db.create_transcription(
             audio_file_id=audio_id,
@@ -1111,7 +1111,7 @@ class TestTranscriptionSyncIntegration:
         node_a, node_b = two_nodes_with_audiofiles
 
         # Create audio file with multiple transcriptions
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("multi-transcription.mp3")
 
         # Add transcriptions from different services
@@ -1144,7 +1144,7 @@ class TestTranscriptionSyncIntegration:
         node_a, node_b = two_nodes_with_audiofiles
 
         # Create note with audio attachment and transcription
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Note with transcribed audio")
         audio_id = node_a.db.create_audio_file("meeting-notes.mp3")
         node_a.db.attach_to_note(note_id, audio_id, "audio_file")

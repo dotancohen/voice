@@ -13,7 +13,7 @@ Configuration section of the [user manual](USER_MANUAL.md).
 - [Transcribing long recordings (this machine only)](#transcribing-long-recordings-this-machine-only)
 - [Example account configuration](#example-account-configuration)
 - [Warning color priority](#warning-color-priority)
-- [Sync peers](#sync-peers)
+- [Sync devices](#sync-devices)
 - [Changing the configuration](#changing-the-configuration)
 
 ## Where the files are
@@ -154,7 +154,7 @@ Border colour of the focused pane in the TUI. Accepts Textual colour names
 
 Border colour of the panes without focus in the TUI.
 
-### device_id
+### this_device_id
 
 **Type**: `string` (32 hex characters)
 **Default**: a UUIDv7, generated when the file is first written
@@ -162,7 +162,7 @@ Border colour of the panes without focus in the TUI.
 
 This device's identifier for sync. Do not change it.
 
-### device_name
+### this_device_name
 
 **Type**: `string`
 **Default**: the first of (1) the name the user gave the computer: the name
@@ -174,7 +174,7 @@ counts as none (SYNC_SPECIFICATION UI-11)
 **Machine setting**
 
 The name other devices of the account show for this device. Set it with
-`python -m src.main cli config set device_name "My Desktop"`.
+`python -m src.main cli config set this_device_name "My Desktop"`.
 
 ### sync
 
@@ -185,13 +185,13 @@ The name other devices of the account show for this device. Set it with
   "sync": {
     "enabled": false,
     "server_port": 8384,
-    "peers": [],
+    "devices": [],
     "max_sync_file_size_mb": 100,
     "mirror_audio_files": false,
     "device_key": "",
     "recording_key_exported": false,
-    "last_peer_id": "",
-    "forgotten_peers": [],
+    "last_device_id": "",
+    "forgotten_devices": [],
     "listener_idle_stop_hours": 0
   }
 }
@@ -212,32 +212,32 @@ Whether sync is enabled for this account on this device. `account join` and
 **Machine setting**
 
 The port the listener uses (`python -m src.main cli sync serve`, or File →
-Listen for peers in the GUI) when `--port` is not given, and the port that
+Listen for devices in the GUI) when `--port` is not given, and the port that
 `account show-code` and `account host` put into the addresses they offer.
 
-#### sync.peers
+#### sync.devices
 
-**Type**: `array` of peer objects
+**Type**: `array` of device objects
 **Default**: `[]`
 
 The devices this device syncs with. Pairing adds them, and so do the device
-cards that sync brings. Each peer object has these properties:
+cards that sync brings. Each device object has these properties:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `peer_id` | string | The peer's device ID (32 hex characters) |
-| `peer_name` | string | The name for the peer on this device |
-| `peer_url` | string | The peer's listener, e.g. `https://192.168.1.100:8384` |
-| `certificate_fingerprint` | string or null | The pinned fingerprint of the peer's TLS certificate |
+| `device_id` | string | The other device's id (32 hex characters) |
+| `device_name` | string | The name this device shows for the other device |
+| `device_url` | string | The device's listener, e.g. `https://192.168.1.100:8384` |
+| `certificate_fingerprint` | string or null | The pinned fingerprint of the device's TLS certificate |
 
 ```json
 {
   "sync": {
-    "peers": [
+    "devices": [
       {
-        "peer_id": "019b5574d6357f409ee72734053c05a7",
-        "peer_name": "My Server",
-        "peer_url": "https://192.168.1.100:8384",
+        "device_id": "019b5574d6357f409ee72734053c05a7",
+        "device_name": "My Server",
+        "device_url": "https://192.168.1.100:8384",
         "certificate_fingerprint": "SHA256:aa:bb:cc:..."
       }
     ]
@@ -245,17 +245,17 @@ cards that sync brings. Each peer object has these properties:
 }
 ```
 
-A `peer_url` beginning with `http://` is refused unless its host is
+A `device_url` beginning with `http://` is refused unless its host is
 `localhost`, `127.*` or `::1`:
 `… is plain http; a device key must not cross a network in clear (TLS_REQUIRED)`.
 
-When a peer does not answer at its `peer_url` (a network error, not a
+When a device does not answer at its `device_url` (a network error, not a
 refusal), a sync (also the sync that starts a deliver or an exchange), a pull, a
-push and an initial sync first try each address on the peer's device card, with
-the peer's pinned certificate, and write the one that answers to `peer_url`
+push and an initial sync first try each address on the other device's card, with
+the device's pinned certificate, and write the one that answers to `device_url`
 (LISTEN-4). When none answers, the operations `sync deliver`, `exchange`,
-`send`, `fetch` and `sync now --peer` look for it on the local network for 3
-seconds. An address found there is written to `peer_url`, with
+`send`, `fetch` and `sync now --device` look for it on the local network for 3
+seconds. An address found there is written to `device_url`, with
 the announced fingerprint.
 
 ##### Certificate fingerprint
@@ -263,7 +263,7 @@ the announced fingerprint.
 **Format**: `SHA256:xx:xx:…` (32 bytes of the SHA-256 hash of the certificate,
 lowercase hex, separated by colons)
 
-- When `certificate_fingerprint` is set, the peer's certificate is accepted
+- When `certificate_fingerprint` is set, the device's certificate is accepted
   only if its fingerprint is this one. A different certificate is refused with
   `CERTIFICATE_MISMATCH`.
 - When it is `null`, the certificate is checked against the system's root
@@ -273,7 +273,7 @@ lowercase hex, separated by colons)
   LAN discovery, or by hand:
 
 ```bash
-python -m src.main cli sync add-peer <id> "<name>" "https://192.168.1.100:8384" --fingerprint "SHA256:aa:bb:..."
+python -m src.main cli sync add-device <id> "<name>" "https://192.168.1.100:8384" --fingerprint "SHA256:aa:bb:..."
 ```
 
 A listener logs its fingerprint when started with `-v`
@@ -316,10 +316,10 @@ received at pairing, or made by `account recording-key export`, which also sets
 `recording_key_exported` to `true`. Encryption of new uploads can be switched
 on only after the key was exported.
 
-#### sync.last_peer_id, sync.forgotten_peers
+#### sync.last_device_id, sync.forgotten_devices
 
-`last_peer_id` is the peer of the last operation. `forgotten_peers` lists the
-peers removed with `sync remove-peer`: their device cards do not add them back
+`last_device_id` is the device of the last operation. `forgotten_devices` lists the
+devices removed with `sync forget-device`: their device cards do not add them back
 until they are added again by hand or by pairing.
 
 #### sync.listener_idle_stop_hours
@@ -327,7 +327,7 @@ until they are added again by hand or by pairing.
 **Type**: `integer`
 **Default**: `0` (never)
 
-Read only by the GUI: its listener (File → Listen for peers) stops after this
+Read only by the GUI: its listener (File → Listen for devices) stops after this
 many hours without a request. `sync serve` never stops by itself.
 
 ### server_certificate_fingerprint
@@ -447,11 +447,11 @@ two-hour meeting is a fact about that computer. See
   "sync": {
     "enabled": true,
     "server_port": 8384,
-    "peers": [
+    "devices": [
       {
-        "peer_id": "019b5574d6357f409ee72734053c05a7",
-        "peer_name": "My Server",
-        "peer_url": "https://192.168.1.100:8384",
+        "device_id": "019b5574d6357f409ee72734053c05a7",
+        "device_name": "My Server",
+        "device_url": "https://192.168.1.100:8384",
         "certificate_fingerprint": "SHA256:aa:bb:cc:..."
       }
     ],
@@ -459,8 +459,8 @@ two-hour meeting is a fact about that computer. See
     "mirror_audio_files": false,
     "device_key": "<43 characters>",
     "recording_key_exported": false,
-    "last_peer_id": "019b5574d6357f409ee72734053c05a7",
-    "forgotten_peers": [],
+    "last_device_id": "019b5574d6357f409ee72734053c05a7",
+    "forgotten_devices": [],
     "listener_idle_stop_hours": 0
   },
   "server_certificate_fingerprint": null,
@@ -501,10 +501,10 @@ The warning colour is chosen in this order:
 
 In this example, dark theme uses `#FFD700` (overrides `warnings`) and light theme uses `#FF6600` (overrides `warnings`).
 
-## Sync peers
+## Sync devices
 
-A device becomes a peer by pairing, not by editing the file. Adding a peer by
-hand does not let this device into the peer's listener: the listener refuses a
+A device becomes a device by pairing, not by editing the file. Adding a device by
+hand does not let this device into the other device's listener: the listener refuses a
 device that was not paired (`DEVICE_UNKNOWN`, or `ACCOUNT_UNKNOWN` for an
 account it does not serve).
 
@@ -515,12 +515,12 @@ python -m src.main cli account show-code
 # On the new device: join with that code
 python -m src.main cli account join "voice://pair?..."
 
-# List, rename and remove peers
-python -m src.main cli sync list-peers
-python -m src.main cli sync rename-peer <peer id or prefix> "<name>"
-python -m src.main cli sync remove-peer <full peer id>
+# List, rename and remove devices
+python -m src.main cli sync list-devices
+python -m src.main cli sync rename-device <device id or prefix> "<name>"
+python -m src.main cli sync forget-device <full device id>
 
-# Exchange notes with every peer
+# Exchange notes with every device
 python -m src.main cli sync now
 
 # Start the listener
@@ -534,7 +534,7 @@ over HTTPS to that listener fails certificate verification.
 Use `VOICE_CONFIG_DIR` for another root and `-a` for another account:
 
 ```bash
-VOICE_CONFIG_DIR=/path/to/root python -m src.main -a <label> cli sync list-peers
+VOICE_CONFIG_DIR=/path/to/root python -m src.main -a <label> cli sync list-devices
 ```
 
 ## Changing the Configuration
@@ -550,5 +550,5 @@ VOICE_CONFIG_DIR=/path/to/root python -m src.main -a <label> cli sync list-peers
 
 **If the JSON is malformed**, the default values are used and nothing is
 logged. The next time any setting is saved, the defaults are written over the
-file: a new `device_id`, and no peers or device key. Keep a copy of the file
+file: a new `device_id`, and no devices or device key. Keep a copy of the file
 before editing it by hand.

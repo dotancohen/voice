@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        # Sync: the dialogue with the one button, the peers and the line
+        # Sync: the dialogue with the one button, the devices and the line
         self.sync_action = QAction("&Sync…", self)
         self.sync_action.setShortcut("Ctrl+Shift+S")
         self.sync_action.setStatusTip("Exchange with the other devices of the account, show a code, check a connection")
@@ -188,8 +188,8 @@ class MainWindow(QMainWindow):
         self._idle_timer.timeout.connect(self._stop_listener_if_idle)
         self._idle_timer.start(60 * 1000)
 
-        # Listen for peers: the listener runs only while this is checked
-        self.listen_action = QAction("&Listen for peers", self)
+        # Listen for devices: the listener runs only while this is checked
+        self.listen_action = QAction("&Listen for devices", self)
         self.listen_action.setCheckable(True)
         self.listen_action.setStatusTip("Let other devices of the account reach this computer to sync")
         self.listen_action.toggled.connect(self._toggle_listener)
@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         ReplaceKeyWizard(self.db, parent=self).exec()
 
     def open_sync_dialog(self) -> None:
-        """The sync dialogue: the peers, the one button, the code, the check."""
+        """The sync dialogue: the devices, the one button, the code, the check."""
         from src.ui.sync_dialog import SyncDialog
 
         def after_operation() -> None:
@@ -698,11 +698,11 @@ class MainWindow(QMainWindow):
             self._listener_thread = threading.Thread(target=serve, daemon=True, name="voice-listener")
             self._listener_thread.start()
             self._announce_listener(port)
-            self.statusBar().showMessage(f"Listening for peers on port {port}", 5000)
+            self.statusBar().showMessage(f"Listening for devices on port {port}", 5000)
         else:
             stop_sync_server()
             self._stop_announcing()
-            self.statusBar().showMessage("No longer listening for peers", 5000)
+            self.statusBar().showMessage("No longer listening for devices", 5000)
 
     def _stop_listener_if_idle(self) -> None:
         """Stop the listener after the chosen hours of silence; never starts it."""
@@ -737,7 +737,7 @@ class MainWindow(QMainWindow):
             fingerprint = certificate_fingerprint(str(self.config.get_config_dir()))
         except Exception:  # noqa: BLE001
             fingerprint = ""
-        self._announcer = Announcer(self.db.account_id(), self.config.get_device_id_hex(), self.config.get_device_name(), port, fingerprint)
+        self._announcer = Announcer(self.db.account_id(), self.config.get_this_device_id_hex(), self.config.get_this_device_name(), port, fingerprint)
         try:
             self._announcer.start()
         except Exception as e:  # noqa: BLE001 - listening does not depend on it
@@ -751,7 +751,7 @@ class MainWindow(QMainWindow):
             self._announcer = None
 
     def _this_device_lines(self) -> str:
-        """The account, the device and the address a peer would type, for About."""
+        """The account, the device and the address a device would type, for About."""
         from voicecore import certificate_fingerprint, listen_addresses
 
         from src.core.addresses_text import address_words
@@ -765,7 +765,7 @@ class MainWindow(QMainWindow):
             fingerprint = "(not made yet)"
         return (
             f"<b>Account:</b> {self.db.account_id()}<br>"
-            f"<b>Device:</b> {self.config.get_device_id_hex()} ({self.config.get_device_name()})<br>"
+            f"<b>Device:</b> {self.config.get_this_device_id_hex()} ({self.config.get_this_device_name()})<br>"
             f"<b>Address:</b> {address_words(addresses)}<br>"
             f"<b>Certificate:</b> {fingerprint}"
         )
@@ -779,7 +779,7 @@ class MainWindow(QMainWindow):
 <p>{self._this_device_lines()}</p>
 
 <p>A note-taking application with audio transcription support
-and peer-to-peer synchronization.</p>
+and device-to-device synchronization.</p>
 
 <h3>Credits</h3>
 <p>

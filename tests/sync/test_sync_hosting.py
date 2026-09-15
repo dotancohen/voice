@@ -103,8 +103,8 @@ class TestHosting:
             granted = shown(cli(desk.config_dir, "account", "grant-host", text))
             desk.reload_db()
             assert granted["account_id"] == desk.db.account_id()
-            assert granted["peer_url"] == url
-            server_id = granted["peer_id"]
+            assert granted["device_url"] == url
+            server_id = granted["device_id"]
 
             listed = shown(cli(root, "account", "list"))
             assert [(a["account_id"], a["label"], a["hosted"], a["is_default"]) for a in listed] == [(desk.db.account_id(), "meirav", True, False)]
@@ -120,7 +120,7 @@ class TestHosting:
 
             # The holder syncs with the server
             desk.db.close()
-            delivered = shown(cli(desk.config_dir, "sync", "now", "--peer", server_id))
+            delivered = shown(cli(desk.config_dir, "sync", "now", "--device", server_id))
             assert delivered["success"], delivered
             desk.reload_db()
             listed_devices = shown(cli(desk.config_dir, "device", "list"))
@@ -132,18 +132,18 @@ class TestHosting:
             phone = create_sync_node("phone", DEVICE_B_ID, tmp_path / "p", account_id="0199aaaaaaaa7000800000000000000a")
             phone.db.close()
             joined = shown(cli(phone.config_dir, "account", "join", code["setup_text"]))
-            assert joined["peer_id"] == server_id
+            assert joined["device_id"] == server_id
             phone.reload_db()
             assert phone.db.account_id() == desk.db.account_id()
             create_note_on_node(phone, "מהטלפון")
             phone.db.close()
-            synced = shown(cli(phone.config_dir, "sync", "now", "--peer", server_id))
+            synced = shown(cli(phone.config_dir, "sync", "now", "--device", server_id))
             assert synced["success"], synced
             phone.reload_db()
             assert sorted(n["content"] for n in phone.db.get_all_notes()) == ["מהטלפון", "על השולחן"], "the phone has the desk's note through the server"
 
             desk.db.close()
-            synced = shown(cli(desk.config_dir, "sync", "now", "--peer", server_id))
+            synced = shown(cli(desk.config_dir, "sync", "now", "--device", server_id))
             assert synced["success"], synced
             desk.reload_db()
             assert sorted(n["content"] for n in desk.db.get_all_notes()) == ["מהטלפון", "על השולחן"]

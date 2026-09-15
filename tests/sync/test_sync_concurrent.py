@@ -22,7 +22,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 
 from .conftest import (
     SyncNode,
@@ -353,7 +353,7 @@ class TestStressTests:
         time.sleep(1.1)
 
         # Round 2: Update on B, create on A, sync (3 more = 6 total)
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         if note_ids:
             node_b.db.update_note(note_ids[0], "Updated on B")
         for i in range(3):
@@ -368,7 +368,7 @@ class TestStressTests:
         time.sleep(1.1)
 
         # Round 3: Delete on A, create on B, sync (3 more = 9 total, A deletes 1)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         if len(note_ids) > 1:
             node_a.db.delete_note(note_ids[1])
         for i in range(3):
@@ -406,16 +406,16 @@ import sys
 sys.path.insert(0, "{src_path}")
 
 from core.config import Config
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 from voicecore import SyncClient
 
 config = Config(config_dir="{source.config_dir}")
-device_id = bytes.fromhex(config.get_device_id_hex())
-set_local_device_id(device_id)
+device_id = bytes.fromhex(config.get_this_device_id_hex())
+set_this_device_id(device_id)
 
 try:
     client = SyncClient("{source.config_dir}")
-    result = client.sync_with_peer("{target.device_id_hex}")
+    result = client.sync_with_device("{target.device_id_hex}")
     if result.success:
         sys.exit(0)
     else:
@@ -452,11 +452,11 @@ import sys
 sys.path.insert(0, "{src_path}")
 
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 config = Config(config_dir="{node.config_dir}")
-device_id = bytes.fromhex(config.get_device_id_hex())
-set_local_device_id(device_id)
+device_id = bytes.fromhex(config.get_this_device_id_hex())
+set_this_device_id(device_id)
 db = Database(config.config_data["database_file"])
 
 try:

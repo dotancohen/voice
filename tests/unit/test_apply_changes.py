@@ -15,30 +15,30 @@ from typing import Generator
 
 import pytest
 
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 from tests.sync_support import SyncChange, apply_sync_changes, read_feed
 
 LOCAL_DEVICE = uuid.UUID("00000000-0000-7000-8000-000000000001")
-PEER_DEVICE = uuid.UUID("00000000-0000-7000-8000-000000000002")
+DEVICE_DEVICE = uuid.UUID("00000000-0000-7000-8000-000000000002")
 
 
 @pytest.fixture
 def sync_db(test_config_dir: Path) -> Generator[Database, None, None]:
     """The local device's database."""
-    set_local_device_id(LOCAL_DEVICE.bytes)
+    set_this_device_id(LOCAL_DEVICE.bytes)
     db = Database(test_config_dir / "sync_test.db")
     yield db
     db.close()
 
 
 @pytest.fixture
-def peer_db(test_config_dir: Path) -> Generator[Database, None, None]:
+def device_db(test_config_dir: Path) -> Generator[Database, None, None]:
     """A second device, so that sync can be tested as it really happens."""
-    set_local_device_id(PEER_DEVICE.bytes)
-    db = Database(test_config_dir / "sync_peer.db")
+    set_this_device_id(DEVICE_DEVICE.bytes)
+    db = Database(test_config_dir / "sync_device.db")
     yield db
     db.close()
-    set_local_device_id(LOCAL_DEVICE.bytes)
+    set_this_device_id(LOCAL_DEVICE.bytes)
 
 
 def on_device(device: uuid.UUID) -> None:
@@ -47,7 +47,7 @@ def on_device(device: uuid.UUID) -> None:
     The device identity is process-wide, so a test with two databases has to
     say which one is acting before every write.
     """
-    set_local_device_id(device.bytes)
+    set_this_device_id(device.bytes)
 
 
 def push(
@@ -65,7 +65,7 @@ def push(
     changes, next_cursor = read_feed(source, cursor)
     on_device(target_device)
     applied, conflicts, errors = apply_sync_changes(
-        target, changes, source_device.hex, "Test Peer"
+        target, changes, source_device.hex, "Test Device"
     )
     return applied, conflicts, errors, next_cursor
 
@@ -93,12 +93,12 @@ class TestReadingTheFeed:
 
 
 class TestApplySyncChanges:
-    """Applying rows from a peer."""
+    """Applying rows from a device."""
 
     def test_applies_new_note(self, sync_db: Database) -> None:
-        """A note the peer created appears here."""
+        """A note the device created appears here."""
         note_id = uuid.uuid4().hex
-        peer_id = uuid.uuid4().hex
+        device_id = uuid.uuid4().hex
 
         changes = [
             SyncChange(
@@ -113,12 +113,12 @@ class TestApplySyncChanges:
                     "deleted_at": None,
                 },
                 timestamp=1736935200,
-                device_id=peer_id,
+                device_id=device_id,
             )
         ]
 
         applied, conflicts, errors = apply_sync_changes(
-            sync_db, changes, peer_id, "Test Peer"
+            sync_db, changes, device_id, "Test Device"
         )
 
         assert applied == 1
@@ -129,9 +129,9 @@ class TestApplySyncChanges:
         assert note["content"] == "Remote note"
 
     def test_applies_new_tag(self, sync_db: Database) -> None:
-        """A tag the peer created appears here."""
+        """A tag the device created appears here."""
         tag_id = uuid.uuid4().hex
-        peer_id = uuid.uuid4().hex
+        device_id = uuid.uuid4().hex
 
         changes = [
             SyncChange(
@@ -146,12 +146,12 @@ class TestApplySyncChanges:
                     "modified_at": None,
                 },
                 timestamp=1736935200,
-                device_id=peer_id,
+                device_id=device_id,
             )
         ]
 
         applied, conflicts, errors = apply_sync_changes(
-            sync_db, changes, peer_id, "Test Peer"
+            sync_db, changes, device_id, "Test Device"
         )
 
         assert applied == 1
@@ -165,21 +165,21 @@ class TestApplySyncChangesDeleteConflicts:
     """A delete that did not see an edit never destroys the edit."""
 
     def test_edit_arriving_after_a_local_delete_keeps_the_note(
-        self, sync_db: Database, peer_db: Database
+        self, sync_db: Database, device_db: Database
     ) -> None:
         """Here the note is deleted, there it is edited: the edit wins."""
         on_device(LOCAL_DEVICE)
         note_id = sync_db.create_note("תוכן מקורי")
-        _, _, _, to_peer = push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
-        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
+        _, _, _, to_device = push(sync_db, LOCAL_DEVICE, device_db, DEVICE_DEVICE)
+        _, _, _, to_local = push(device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE)
 
         on_device(LOCAL_DEVICE)
         sync_db.delete_note(note_id)
-        on_device(PEER_DEVICE)
-        peer_db.update_note(note_id, "עריכה חשובה מאוד")
+        on_device(DEVICE_DEVICE)
+        device_db.update_note(note_id, "עריכה חשובה מאוד")
 
         _, conflicts, errors, _ = push(
-            peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local
+            device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE, to_local
         )
 
         assert errors == []
@@ -192,30 +192,30 @@ class TestApplySyncChangesDeleteConflicts:
         assert sync_db.get_note_conflict_types(note_id) == ["delete"]
 
         # And the device that deleted tells the other, so both agree.
-        push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE, to_peer)
-        on_device(PEER_DEVICE)
-        peer_note = peer_db.get_note_raw(note_id)
-        assert peer_note is not None
-        assert peer_note["deleted_at"] is None
-        assert peer_note["content"] == "עריכה חשובה מאוד"
-        assert peer_db.get_note_conflict_types(note_id) == ["delete"]
+        push(sync_db, LOCAL_DEVICE, device_db, DEVICE_DEVICE, to_device)
+        on_device(DEVICE_DEVICE)
+        device_note = device_db.get_note_raw(note_id)
+        assert device_note is not None
+        assert device_note["deleted_at"] is None
+        assert device_note["content"] == "עריכה חשובה מאוד"
+        assert device_db.get_note_conflict_types(note_id) == ["delete"]
 
     def test_delete_arriving_after_a_local_edit_keeps_the_note(
-        self, sync_db: Database, peer_db: Database
+        self, sync_db: Database, device_db: Database
     ) -> None:
         """The same disagreement seen from the other side."""
         on_device(LOCAL_DEVICE)
         note_id = sync_db.create_note("תוכן מקורי")
-        push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
-        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
+        push(sync_db, LOCAL_DEVICE, device_db, DEVICE_DEVICE)
+        _, _, _, to_local = push(device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE)
 
         on_device(LOCAL_DEVICE)
         sync_db.update_note(note_id, "עריכה מקומית חשובה")
-        on_device(PEER_DEVICE)
-        peer_db.delete_note(note_id)
+        on_device(DEVICE_DEVICE)
+        device_db.delete_note(note_id)
 
         _, conflicts, errors, _ = push(
-            peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local
+            device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE, to_local
         )
 
         assert errors == []
@@ -227,19 +227,19 @@ class TestApplySyncChangesDeleteConflicts:
         assert note["content"] == "עריכה מקומית חשובה"
 
     def test_delete_of_an_unedited_note_propagates(
-        self, sync_db: Database, peer_db: Database
+        self, sync_db: Database, device_db: Database
     ) -> None:
         """Nobody edited it, so the delete simply travels."""
         on_device(LOCAL_DEVICE)
         note_id = sync_db.create_note("פתק לא ערוך")
-        push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
-        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
+        push(sync_db, LOCAL_DEVICE, device_db, DEVICE_DEVICE)
+        _, _, _, to_local = push(device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE)
 
-        on_device(PEER_DEVICE)
-        peer_db.delete_note(note_id)
+        on_device(DEVICE_DEVICE)
+        device_db.delete_note(note_id)
 
         _, conflicts, errors, _ = push(
-            peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local
+            device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE, to_local
         )
 
         assert errors == []
@@ -251,7 +251,7 @@ class TestApplySyncChangesDeleteConflicts:
         assert sync_db.get_note(note_id) is None
 
     def test_a_second_delete_after_seeing_the_edit_is_obeyed(
-        self, sync_db: Database, peer_db: Database
+        self, sync_db: Database, device_db: Database
     ) -> None:
         """The user who wanted the note gone deletes again, and it goes.
 
@@ -260,27 +260,27 @@ class TestApplySyncChangesDeleteConflicts:
         """
         on_device(LOCAL_DEVICE)
         note_id = sync_db.create_note("תוכן מקורי")
-        _, _, _, to_peer = push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE)
-        _, _, _, to_local = push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE)
+        _, _, _, to_device = push(sync_db, LOCAL_DEVICE, device_db, DEVICE_DEVICE)
+        _, _, _, to_local = push(device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE)
 
         on_device(LOCAL_DEVICE)
         sync_db.delete_note(note_id)
-        on_device(PEER_DEVICE)
-        peer_db.update_note(note_id, "עריכה חשובה מאוד")
+        on_device(DEVICE_DEVICE)
+        device_db.update_note(note_id, "עריכה חשובה מאוד")
 
-        push(peer_db, PEER_DEVICE, sync_db, LOCAL_DEVICE, to_local)
-        _, _, _, to_peer = push(sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE, to_peer)
+        push(device_db, DEVICE_DEVICE, sync_db, LOCAL_DEVICE, to_local)
+        _, _, _, to_device = push(sync_db, LOCAL_DEVICE, device_db, DEVICE_DEVICE, to_device)
 
         # The note is alive on both. Delete it again, having seen the edit.
         on_device(LOCAL_DEVICE)
         sync_db.delete_note(note_id)
         _, conflicts, errors, _ = push(
-            sync_db, LOCAL_DEVICE, peer_db, PEER_DEVICE, to_peer
+            sync_db, LOCAL_DEVICE, device_db, DEVICE_DEVICE, to_device
         )
 
         assert errors == []
         assert conflicts == 0
-        on_device(PEER_DEVICE)
-        peer_note = peer_db.get_note_raw(note_id)
-        assert peer_note is not None
-        assert peer_note["deleted_at"] is not None, "The second delete stands"
+        on_device(DEVICE_DEVICE)
+        device_note = device_db.get_note_raw(note_id)
+        assert device_note is not None
+        assert device_note["deleted_at"] is not None, "The second delete stands"

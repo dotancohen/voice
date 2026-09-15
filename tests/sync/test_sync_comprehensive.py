@@ -28,7 +28,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 
 from .conftest import (
     SyncNode,
@@ -55,7 +55,7 @@ class TestNoteTagAssociationSync:
     def test_add_tag_to_note_syncs(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Adding a tag to an existing note syncs to peer."""
+        """Adding a tag to an existing note syncs to device."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note and tag on A
@@ -74,7 +74,7 @@ class TestNoteTagAssociationSync:
         time.sleep(1.1)
 
         # Add tag to note on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Verify A's note has the tag
@@ -88,19 +88,19 @@ class TestNoteTagAssociationSync:
         # Verify B's note also has the tag
         note_b = node_b.db.get_note(note_id)
         assert "TestTag" in note_b.get("tag_names", ""), (
-            "Tag association should sync to peer"
+            "Tag association should sync to device"
         )
 
     def test_remove_tag_from_note_syncs(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Removing a tag from a note syncs to peer."""
+        """Removing a tag from a note syncs to device."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with tag on A
         note_id = create_note_on_node(node_a, "Tagged note")
         tag_id = create_tag_on_node(node_a, "RemoveMe")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Sync to B
@@ -115,7 +115,7 @@ class TestNoteTagAssociationSync:
         time.sleep(1.1)
 
         # Remove tag from note on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
 
         # Verify A's note no longer has the tag
@@ -131,7 +131,7 @@ class TestNoteTagAssociationSync:
         note_b = node_b.db.get_note(note_id)
         tag_names_b = note_b.get("tag_names") or ""
         assert "RemoveMe" not in tag_names_b, (
-            "Tag removal should sync to peer"
+            "Tag removal should sync to device"
         )
 
     def test_tag_association_on_synced_note(
@@ -152,7 +152,7 @@ class TestNoteTagAssociationSync:
 
         # B creates tag and adds to the note
         tag_id = create_tag_on_node(node_b, "TagFromB")
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.add_tag_to_note(note_id, tag_id)
 
         # Sync B -> A
@@ -193,7 +193,7 @@ class TestTombstoneHandling:
         time.sleep(1.1)
 
         # A deletes the note
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
         assert get_note_count(node_a) == 0
 
@@ -208,13 +208,13 @@ class TestTombstoneHandling:
         node_a.reload_db()
 
         assert get_note_count(node_a) == 0, (
-            "Deleted note should not resurrect from peer sync"
+            "Deleted note should not resurrect from device sync"
         )
 
     def test_deleted_tag_does_not_resurrect(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Deleted tag should not come back from peer with old data."""
+        """Deleted tag should not come back from device with old data."""
         node_a, node_b = two_nodes_with_servers
 
         # Create tag on A, sync to B
@@ -229,7 +229,7 @@ class TestTombstoneHandling:
         time.sleep(1.1)
 
         # A deletes the tag
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_tag(tag_id)
         assert get_tag_count(node_a) == 0
 
@@ -243,7 +243,7 @@ class TestTombstoneHandling:
         node_a.reload_db()
 
         assert get_tag_count(node_a) == 0, (
-            "Deleted tag should not resurrect from peer sync"
+            "Deleted tag should not resurrect from device sync"
         )
 
     def test_edit_after_delete_creates_conflict_or_stays_deleted(
@@ -262,10 +262,10 @@ class TestTombstoneHandling:
         time.sleep(1.1)
 
         # A deletes, B edits (concurrent actions)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "Edited by B")
 
         # Sync - this may create a conflict
@@ -303,7 +303,7 @@ class TestTimestampEdgeCases:
         node_a, node_b = two_nodes_with_servers
 
         # Create multiple notes rapidly (may be same second)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_ids = []
         for i in range(5):
             note_id = node_a.db.create_note(f"Rapid note {i}")
@@ -325,7 +325,7 @@ class TestTimestampEdgeCases:
         node_a, node_b = two_nodes_with_servers
 
         # Create two notes as fast as possible
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note1 = node_a.db.create_note("Note 1")
         note2 = node_a.db.create_note("Note 2")
 
@@ -456,7 +456,7 @@ class TestConcurrentChanges:
         node_a, node_b = two_nodes_with_servers
 
         # Create 100 notes
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_ids = []
         for i in range(100):
             note_id = node_a.db.create_note(f"Bulk note {i}")
@@ -477,7 +477,7 @@ class TestConcurrentChanges:
         """Create, delete, create pattern syncs correctly."""
         node_a, node_b = two_nodes_with_servers
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
 
         # Create note1
         note1 = node_a.db.create_note("Note 1 - will keep")
@@ -504,7 +504,7 @@ class TestConcurrentChanges:
         """Multiple tag creates, renames, deletes sync."""
         node_a, node_b = two_nodes_with_servers
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
 
         # Create tags
         tag1 = node_a.db.create_tag("Tag1")
@@ -579,16 +579,16 @@ class TestAudioFileEdgeCases:
         node_a.config.set_audiofile_directory(str(audiodir_a))
         node_b.config.set_audiofile_directory(str(audiodir_b))
 
-        # Configure as peers
-        node_a.config.add_peer(
-            peer_id=node_b.device_id_hex,
-            peer_name=node_b.name,
-            peer_url=node_b.url,
+        # Configure as devices
+        node_a.config.add_device(
+            device_id=node_b.device_id_hex,
+            device_name=node_b.name,
+            device_url=node_b.url,
         )
-        node_b.config.add_peer(
-            peer_id=node_a.device_id_hex,
-            peer_name=node_a.name,
-            peer_url=node_a.url,
+        node_b.config.add_device(
+            device_id=node_a.device_id_hex,
+            device_name=node_a.name,
+            device_url=node_a.url,
         )
 
         start_sync_server(node_a)
@@ -613,7 +613,7 @@ class TestAudioFileEdgeCases:
         node_a, node_b = two_nodes_with_audiofiles
 
         # Create audio file without attaching to note
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("orphan.mp3")
 
         # Sync
@@ -631,7 +631,7 @@ class TestAudioFileEdgeCases:
         """Same audio attached to multiple notes - all associations sync."""
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
 
         # Create audio and two notes
         audio_id = node_a.db.create_audio_file("shared.mp3")
@@ -661,7 +661,7 @@ class TestAudioFileEdgeCases:
         """Detach audio, then reattach to different note."""
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
 
         # Create audio, two notes, attach to note1
         audio_id = node_a.db.create_audio_file("movable.mp3")
@@ -681,7 +681,7 @@ class TestAudioFileEdgeCases:
         time.sleep(1.1)
 
         # Detach from note1, attach to note2
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.detach_from_note(attachment_id)
         node_a.db.attach_to_note(note2, audio_id, "audio_file")
 
@@ -708,7 +708,7 @@ class TestInitialSync:
         node_a, node_b = two_nodes_with_servers
 
         # Create various data on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note1 = node_a.db.create_note("Note 1")
         note2 = node_a.db.create_note("Note 2")
         tag1 = node_a.db.create_tag("Tag1")
@@ -735,7 +735,7 @@ class TestInitialSync:
         node_a, node_b = two_nodes_with_servers
 
         # Create and delete a note on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         note_id = node_a.db.create_note("Will delete")
         node_a.db.delete_note(note_id)
 
@@ -767,7 +767,7 @@ class TestErrorHandling:
         node_a, node_b = two_nodes_with_servers
 
         # Create multiple notes
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         notes = []
         for i in range(10):
             note_id = node_a.db.create_note(f"Note {i}")
@@ -806,14 +806,14 @@ class TestComplexWorkflows:
             audiodir.mkdir()
             node.config.set_audiofile_directory(str(audiodir))
 
-        # Configure all as peers of each other
+        # Configure all as devices of each other
         for node in nodes:
             for other in nodes:
                 if node != other:
-                    node.config.add_peer(
-                        peer_id=other.device_id_hex,
-                        peer_name=other.name,
-                        peer_url=other.url,
+                    node.config.add_device(
+                        device_id=other.device_id_hex,
+                        device_name=other.name,
+                        device_url=other.url,
                     )
 
         # Start servers
@@ -879,7 +879,7 @@ class TestComplexWorkflows:
         time.sleep(1.1)
 
         # Step 4: C makes modifications
-        set_local_device_id(node_c.device_id)
+        set_this_device_id(node_c.device_id)
 
         # 4a: Edit the note content
         edited_content = "Note edited by Device C with additional information"
@@ -910,7 +910,7 @@ class TestComplexWorkflows:
 
         # 4d: Create a tag and add to the note
         tag_id = create_tag_on_node(node_c, "ImportantFromC")
-        set_local_device_id(node_c.device_id)
+        set_this_device_id(node_c.device_id)
         node_c.db.add_tag_to_note(note_id, tag_id)
 
         # Verify C's state
@@ -1049,7 +1049,7 @@ class TestComplexWorkflows:
         time.sleep(1.1)
 
         # A deletes the note
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
         assert get_note_count(node_a) == 0
 

@@ -93,8 +93,8 @@ owner's live data. Point `VOICE_CONFIG_DIR` at a temporary directory.
 # Run the sync server
 .venv/bin/python -m src.main cli sync serve --verbose
 
-# Sync with every peer, or with one
-.venv/bin/python -m src.main cli sync now [--peer <peer id>]
+# Sync with every device, or with one
+.venv/bin/python -m src.main cli sync now [--device <device id>]
 
 # Run the Python tests
 .venv/bin/python -m pytest

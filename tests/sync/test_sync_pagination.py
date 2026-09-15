@@ -18,7 +18,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 from tests.sync_support import read_feed
 from voicecore import SyncClient
 
@@ -124,7 +124,7 @@ class TestReadingTheFeed:
         for i in range(10):
             create_note_on_node(sync_node_a, f"Note {i}")
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         changes, _ = read_feed(sync_node_a.db, 0, limit=1000)
 
         assert len([c for c in changes if c.entity_type == "note"]) == 10
@@ -134,7 +134,7 @@ class TestReadingTheFeed:
         for i in range(20):
             create_note_on_node(sync_node_a, f"Note {i}")
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         page, cursor = read_feed(sync_node_a.db, 0, limit=5)
         assert len(page) == 5
         rest, _ = read_feed(sync_node_a.db, cursor)
@@ -143,7 +143,7 @@ class TestReadingTheFeed:
     def test_a_cursor_reads_only_what_was_written_after_it(self, sync_node_a: SyncNode):
         """What was written after a cursor, and nothing before it."""
         create_note_on_node(sync_node_a, "Old note")
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         _, cursor = read_feed(sync_node_a.db, 0)
 
         for i in range(3):
@@ -156,7 +156,7 @@ class TestReadingTheFeed:
         """The cursor returned after a read is past every change the read returned."""
         create_note_on_node(sync_node_a, "Test note")
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         changes, cursor = read_feed(sync_node_a.db, 0)
 
         assert changes and cursor > 0
@@ -170,7 +170,7 @@ class TestReadingTheFeed:
         note_id = create_note_on_node(sync_node_a, "Test note")
         tag_id = create_tag_on_node(sync_node_a, "TestTag")
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         sync_node_a.db.add_tag_to_note(note_id, tag_id)
 
         changes, _ = read_feed(sync_node_a.db, 0)
@@ -247,7 +247,7 @@ class TestLargeDatasetPagination:
             note_id = create_note_on_node(node_b, f"Note {i}")
             notes.append(note_id)
             # Tag each note with a random tag
-            set_local_device_id(node_b.device_id)
+            set_this_device_id(node_b.device_id)
             node_b.db.add_tag_to_note(note_id, tags[i % len(tags)])
 
         # Sync
@@ -333,9 +333,9 @@ class TestSyncClientPaginationHandling:
             create_note_on_node(node_b, f"Note {i}")
 
         # Client should handle pagination
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
-        result = client.sync_with_peer(node_b.device_id_hex)
+        result = client.sync_with_device(node_b.device_id_hex)
 
         assert result.success is True
         assert get_note_count(node_a) == 50

@@ -25,7 +25,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 from voicecore import SyncClient, SyncResult
 
 from .conftest import (
@@ -47,19 +47,19 @@ class TestServerUnavailable:
     ):
         """Sync fails gracefully when server is not running."""
         # Don't start server B
-        sync_node_a.config.add_peer(
-            peer_id=sync_node_b.device_id_hex,
-            peer_name=sync_node_b.name,
-            peer_url=sync_node_b.url,
+        sync_node_a.config.add_device(
+            device_id=sync_node_b.device_id_hex,
+            device_name=sync_node_b.name,
+            device_url=sync_node_b.url,
         )
 
         # Create note on A
         create_note_on_node(sync_node_a, "Test note")
 
         # Try to sync - should fail gracefully
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
-        result = client.sync_with_peer(sync_node_b.device_id_hex)
+        result = client.sync_with_device(sync_node_b.device_id_hex)
 
         assert result.success is False
         assert len(result.errors) > 0
@@ -68,15 +68,15 @@ class TestServerUnavailable:
         self, sync_node_a: SyncNode, sync_node_b: SyncNode
     ):
         """Sync returns meaningful error when server unavailable."""
-        sync_node_a.config.add_peer(
-            peer_id=sync_node_b.device_id_hex,
-            peer_name=sync_node_b.name,
-            peer_url=sync_node_b.url,
+        sync_node_a.config.add_device(
+            device_id=sync_node_b.device_id_hex,
+            device_name=sync_node_b.name,
+            device_url=sync_node_b.url,
         )
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
-        result = client.sync_with_peer(sync_node_b.device_id_hex)
+        result = client.sync_with_device(sync_node_b.device_id_hex)
 
         assert result.success is False
         # Error should mention connection issue
@@ -87,10 +87,10 @@ class TestServerUnavailable:
         self, sync_node_a: SyncNode, sync_node_b: SyncNode
     ):
         """Local data is preserved when sync fails."""
-        sync_node_a.config.add_peer(
-            peer_id=sync_node_b.device_id_hex,
-            peer_name=sync_node_b.name,
-            peer_url=sync_node_b.url,
+        sync_node_a.config.add_device(
+            device_id=sync_node_b.device_id_hex,
+            device_name=sync_node_b.name,
+            device_url=sync_node_b.url,
         )
 
         # Create local notes
@@ -100,9 +100,9 @@ class TestServerUnavailable:
             note_ids.append(note_id)
 
         # Try to sync (will fail)
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
-        client.sync_with_peer(sync_node_b.device_id_hex)
+        client.sync_with_device(sync_node_b.device_id_hex)
 
         # Local notes should still exist
         assert get_note_count(sync_node_a) == 3
@@ -113,17 +113,17 @@ class TestServerUnavailable:
         self, sync_node_a: SyncNode
     ):
         """Handle DNS resolution failure."""
-        # Add peer with invalid hostname
-        sync_node_a.config.add_peer(
-            peer_id="00000000000070008000000000000099",
-            peer_name="InvalidHost",
-            peer_url="http://nonexistent.invalid.host:8384",
+        # Add device with invalid hostname
+        sync_node_a.config.add_device(
+            device_id="00000000000070008000000000000099",
+            device_name="InvalidHost",
+            device_url="http://nonexistent.invalid.host:8384",
         )
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
 
-        result = client.sync_with_peer("00000000000070008000000000000099")
+        result = client.sync_with_device("00000000000070008000000000000099")
 
         assert result.success is False
 
@@ -228,7 +228,7 @@ class TestNetworkPartition:
         node_b.stop_server()
 
         # Edit on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "Edited on A during partition")
 
         # Create new note on B (locally)
@@ -259,17 +259,17 @@ class TestPartialDataTransfer:
         self, sync_node_a: SyncNode, running_server_b: SyncNode
     ):
         """Handle incomplete changes list from server."""
-        sync_node_a.config.add_peer(
-            peer_id=running_server_b.device_id_hex,
-            peer_name=running_server_b.name,
-            peer_url=running_server_b.url,
+        sync_node_a.config.add_device(
+            device_id=running_server_b.device_id_hex,
+            device_name=running_server_b.name,
+            device_url=running_server_b.url,
         )
 
         # Create data on B
         for i in range(10):
             create_note_on_node(running_server_b, f"Note {i}")
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
 
         # Mock partial response
@@ -289,7 +289,7 @@ class TestPartialDataTransfer:
             return response
 
         with patch.object(requests, "get", side_effect=mock_get):
-            result = client.sync_with_peer(running_server_b.device_id_hex)
+            result = client.sync_with_device(running_server_b.device_id_hex)
 
         # Should handle partial data without crashing
         # May need multiple sync rounds for complete data

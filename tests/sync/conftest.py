@@ -30,7 +30,7 @@ from uuid6 import uuid7
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 from core.validation import uuid_to_hex
 
 
@@ -167,7 +167,7 @@ class SyncNode:
         connection isolation. This method closes and reopens the connection.
         """
         self.db.close()
-        set_local_device_id(self.device_id)
+        set_this_device_id(self.device_id)
         self.db = Database(self.db_path)
 
 
@@ -203,7 +203,7 @@ def create_sync_node(
     db_path = config_dir / "notes.db"
 
     # Set device ID before creating database
-    set_local_device_id(device_id)
+    set_this_device_id(device_id)
 
     # Create database, in the test's account
     db = Database(db_path, account_id)
@@ -211,12 +211,14 @@ def create_sync_node(
     # Create config
     config_data = {
         "database_file": str(db_path),
-        "device_id": uuid_to_hex(device_id),
-        "device_name": name,
+        # This device's keys as config.json names them; under any other name the
+        # core ignores them and makes up a new id the server never admitted
+        "this_device_id": uuid_to_hex(device_id),
+        "this_device_name": name,
         "sync": {
             "enabled": True,
             "server_port": port or find_free_port(),
-            "peers": [],
+            "devices": [],
         },
     }
 
@@ -335,20 +337,20 @@ def running_server_b(sync_node_b: SyncNode) -> Generator[SyncNode, None, None]:
 def two_nodes_with_servers(
     tmp_path: Path,
 ) -> Generator[Tuple[SyncNode, SyncNode], None, None]:
-    """Two sync nodes with running servers, configured as peers."""
+    """Two sync nodes with running servers, configured as devices."""
     node_a = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
     node_b = create_sync_node("NodeB", DEVICE_B_ID, tmp_path)
 
-    # Configure as peers
-    node_a.config.add_peer(
-        peer_id=node_b.device_id_hex,
-        peer_name=node_b.name,
-        peer_url=node_b.url,
+    # Configure as devices
+    node_a.config.add_device(
+        device_id=node_b.device_id_hex,
+        device_name=node_b.name,
+        device_url=node_b.url,
     )
-    node_b.config.add_peer(
-        peer_id=node_a.device_id_hex,
-        peer_name=node_a.name,
-        peer_url=node_a.url,
+    node_b.config.add_device(
+        device_id=node_a.device_id_hex,
+        device_name=node_a.name,
+        device_url=node_a.url,
     )
 
     # Start servers
@@ -372,21 +374,21 @@ def two_nodes_with_servers(
 def three_nodes_with_servers(
     tmp_path: Path,
 ) -> Generator[Tuple[SyncNode, SyncNode, SyncNode], None, None]:
-    """Three sync nodes with running servers, all configured as peers."""
+    """Three sync nodes with running servers, all configured as devices."""
     node_a = create_sync_node("NodeA", DEVICE_A_ID, tmp_path)
     node_b = create_sync_node("NodeB", DEVICE_B_ID, tmp_path)
     node_c = create_sync_node("NodeC", DEVICE_C_ID, tmp_path)
 
     nodes = [node_a, node_b, node_c]
 
-    # Configure all as peers of each other
+    # Configure all as devices of each other
     for node in nodes:
         for other in nodes:
             if node != other:
-                node.config.add_peer(
-                    peer_id=other.device_id_hex,
-                    peer_name=other.name,
-                    peer_url=other.url,
+                node.config.add_device(
+                    device_id=other.device_id_hex,
+                    device_name=other.name,
+                    device_url=other.url,
                 )
 
     # Start servers
@@ -408,7 +410,7 @@ def three_nodes_with_servers(
 
 def create_note_on_node(node: SyncNode, content: str) -> str:
     """Create a note on a node and return its ID."""
-    set_local_device_id(node.device_id)
+    set_this_device_id(node.device_id)
     note_id = node.db.create_note(content)
     return note_id
 
@@ -417,7 +419,7 @@ def create_tag_on_node(
     node: SyncNode, name: str, parent_id: Optional[str] = None
 ) -> str:
     """Create a tag on a node and return its ID."""
-    set_local_device_id(node.device_id)
+    set_this_device_id(node.device_id)
     tag_id = node.db.create_tag(name, parent_id)
     return tag_id
 
@@ -443,9 +445,9 @@ def sync_nodes(source: SyncNode, target: SyncNode) -> Dict[str, Any]:
     """
     from voicecore import SyncClient
 
-    set_local_device_id(source.device_id)
+    set_this_device_id(source.device_id)
     client = SyncClient(str(source.config_dir))
-    result = client.sync_with_peer(target.device_id_hex)
+    result = client.sync_with_device(target.device_id_hex)
     return {
         "success": result.success,
         "pulled": result.pulled,
@@ -524,12 +526,12 @@ sys.path.insert(0, "{src_path}")
 
 from pathlib import Path
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 config_dir = Path("{config_dir}")
 config = Config(config_dir=config_dir)
-device_id = bytes.fromhex(config.get_device_id_hex())
-set_local_device_id(device_id)
+device_id = bytes.fromhex(config.get_this_device_id_hex())
+set_this_device_id(device_id)
 
 db = Database(config.config_data["database_file"])
 kwargs = pickle.loads(base64.b64decode("{kwargs_encoded}"))
@@ -554,7 +556,7 @@ try:
     elif operation == "sync":
         from voicecore import SyncClient
         client = SyncClient(str(config_dir))
-        sync_result = client.sync_with_peer(kwargs["peer_id"])
+        sync_result = client.sync_with_device(kwargs["device_id"])
         result["pulled"] = sync_result.pulled
         result["pushed"] = sync_result.pushed
         result["conflicts"] = sync_result.conflicts
@@ -625,7 +627,7 @@ def get_note_count_subprocess(node: SyncNode) -> int:
 
 def sync_nodes_subprocess(source: SyncNode, target: SyncNode) -> Dict[str, Any]:
     """Perform sync via subprocess."""
-    result = run_db_operation(source.config_dir, "sync", peer_id=target.device_id_hex)
+    result = run_db_operation(source.config_dir, "sync", device_id=target.device_id_hex)
     return {
         "success": result.get("sync_success", False),
         "pulled": result.get("pulled", 0),

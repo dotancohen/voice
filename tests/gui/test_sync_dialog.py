@@ -1,5 +1,5 @@
-"""GUI tests for the sync dialogue (Stage 5, Stage 10): the line, the peers
-and the one button naming the last peer."""
+"""GUI tests for the sync dialogue (Stage 5, Stage 10): the line, the devices
+and the one button naming the last device."""
 
 from __future__ import annotations
 
@@ -30,50 +30,50 @@ class _Result:
 
 @pytest.mark.gui
 class TestSyncDialog:
-    def test_the_line_and_the_peers_and_the_button_name_the_last_peer(self, qapp, test_config: Config, empty_db: Database) -> None:
+    def test_the_line_and_the_devices_and_the_button_name_the_last_device(self, qapp, test_config: Config, empty_db: Database) -> None:
         dialog = SyncDialog(empty_db, test_config)
         assert dialog.proof_label.text() == "Everything is duplicated off this device."
-        assert dialog.peers_table.rowCount() == 0
+        assert dialog.devices_table.rowCount() == 0
         assert not dialog.operation_button.isEnabled()
-        assert "No peer yet" in dialog.operation_button.text()
+        assert "No device yet" in dialog.operation_button.text()
 
         empty_db.create_note("רק כאן")
-        test_config.add_peer(DESK, "Desk", "https://desk:8384", None, True)
-        test_config.add_peer(PHONE, "Phone", "", None, True)
+        test_config.add_device(DESK, "Desk", "https://desk:8384", None, True)
+        test_config.add_device(PHONE, "Phone", "", None, True)
         dialog.refresh()
         assert dialog.proof_label.text() == "1 note and 0 recordings are not duplicated off this device."
-        assert dialog.peers_table.rowCount() == 2
-        assert dialog.peers_table.item(1, 1).text() == "no address yet"
-        assert dialog.peers_table.item(0, 2).text() == "never"
-        # Two peers and none used yet: the button asks
+        assert dialog.devices_table.rowCount() == 2
+        assert dialog.devices_table.item(1, 1).text() == "no address yet"
+        assert dialog.devices_table.item(0, 2).text() == "never"
+        # Two devices and none used yet: the button asks
         assert dialog.operation_button.text() == "Exchange…"
         assert dialog.operation_button.isEnabled()
 
-        test_config.set_last_peer(DESK)
+        test_config.set_last_device(DESK)
         dialog.refresh()
         assert dialog.operation_button.text() == "Exchange with Desk"
-        # Every peer offers the five operations
+        # Every device offers the five operations
         submenus = dialog.submenus
         assert [m.title() for m in submenus] == ["Desk", "Phone"]
         assert len(submenus[0].actions()) == 5
         assert submenus[0].actions()[0].text().startswith("Exchange")
 
     def test_forgetting_and_renaming_change_the_list(self, qapp, test_config: Config, empty_db: Database, monkeypatch) -> None:
-        test_config.add_peer(DESK, "Desk", "https://desk:8384", None, True)
+        test_config.add_device(DESK, "Desk", "https://desk:8384", None, True)
         dialog = SyncDialog(empty_db, test_config)
-        dialog.peers_table.selectRow(0)
+        dialog.devices_table.selectRow(0)
         monkeypatch.setattr("ui.sync_dialog.QInputDialog.getText", lambda *a, **k: ("Study", True))
-        dialog._rename_peer()
-        assert test_config.get_peer(DESK)["peer_name"] == "Study"
-        assert dialog.peers_table.item(0, 0).text().startswith("Study")
+        dialog._rename_device()
+        assert test_config.get_device(DESK)["device_name"] == "Study"
+        assert dialog.devices_table.item(0, 0).text().startswith("Study")
 
         from PySide6.QtWidgets import QMessageBox
         monkeypatch.setattr("ui.sync_dialog.QMessageBox.question", lambda *a, **k: QMessageBox.StandardButton.Yes)
-        dialog.peers_table.selectRow(0)
-        dialog._forget_peer()
-        assert test_config.get_peers() == []
+        dialog.devices_table.selectRow(0)
+        dialog._forget_device()
+        assert test_config.get_devices() == []
         assert test_config.is_forgotten(DESK)
-        assert dialog.peers_table.rowCount() == 0
+        assert dialog.devices_table.rowCount() == 0
 
     def test_the_encryption_switch_waits_for_the_export_and_follows_the_synced_setting(self, qapp, test_config: Config, empty_db: Database, monkeypatch) -> None:
         """ENC-1, ENC-3 in the dialogue: the box is off and disabled until the key
@@ -106,9 +106,29 @@ class TestSyncDialog:
     def test_this_device_is_in_plain_sight(self, qapp, test_config: Config, empty_db: Database) -> None:
         dialog = SyncDialog(empty_db, test_config)
         text = dialog.device_label.text()
-        assert test_config.get_device_id_hex() in text
+        assert test_config.get_this_device_id_hex() in text
         assert f"port {test_config.get_sync_server_port()}" in text
         assert "Certificate" in text
+
+    def test_this_device_heads_the_window_and_the_other_devices_have_a_heading_of_their_own(self, qapp, test_config: Config, empty_db: Database) -> None:
+        """Which device this window is on, and which devices it lists, can be told at a glance."""
+        test_config.set_this_device_name("המחשב של דותן <2>")
+        test_config.add_device(DESK, "מחשב העבודה", "https://desk:8384", None, True)
+        dialog = SyncDialog(empty_db, test_config)
+
+        assert dialog.layout().itemAt(0).widget() is dialog.this_device_heading, "this device's name comes before everything else"
+        assert dialog.this_device_heading.text() == "<b>This device:</b> המחשב של דותן &lt;2&gt;", "the name is shown as written, not read as markup"
+        assert dialog.windowTitle() == "Sync — המחשב של דותן <2>"
+
+        assert dialog.devices_heading.text() == "Other devices of this account"
+        assert dialog.devices_table.accessibleName() == "Other devices of this account"
+        assert dialog.devices_table.horizontalHeaderItem(0).text() == "Other device"
+        assert dialog.devices_table.item(0, 0).text().startswith("מחשב העבודה (")
+
+        test_config.set_this_device_name("שולחן חדש")
+        dialog.refresh()
+        assert dialog.this_device_heading.text() == "<b>This device:</b> שולחן חדש"
+        assert dialog.windowTitle() == "Sync — שולחן חדש"
 
 
 class TestSentences:

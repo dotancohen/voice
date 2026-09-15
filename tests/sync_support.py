@@ -50,23 +50,23 @@ def read_feed(db: Database, cursor: int = 0, limit: int = 100000) -> Tuple[List[
 def apply_sync_changes(
     db: Database,
     changes: List[SyncChange],
-    peer_device_id: str,
-    peer_device_name: Optional[str] = None,
+    from_device_id: str,
+    from_device_name: Optional[str] = None,
 ) -> Tuple[int, int, List[str]]:
-    """Apply a batch from a peer through the core. Returns (applied, conflicts, errors)."""
+    """Apply a batch from a device through the core. Returns (applied, conflicts, errors)."""
     result = _rust_apply_sync_changes(
-        db._rust_db, list(changes), peer_device_id, peer_device_name
+        db._rust_db, list(changes), from_device_id, from_device_name
     )
     return result["applied"], result["conflicts"], result["errors"]
 
 
-def get_peer_last_sync(db: Database, peer_device_id: str) -> Optional[int]:
-    """When this database last synced with the peer, or None."""
-    return db.get_peer_last_sync(peer_device_id)
+def get_device_last_sync(db: Database, from_device_id: str) -> Optional[int]:
+    """When this database last synced with the device, or None."""
+    return db.get_device_last_sync(from_device_id)
 
 
-def update_peer_last_sync(
-    db: Database, peer_device_id: str, peer_device_name: Optional[str] = None
+def update_device_last_sync(
+    db: Database, from_device_id: str, from_device_name: Optional[str] = None
 ) -> None:
-    """Record a sync with the peer as having happened now."""
-    db.update_peer_sync_time(peer_device_id, peer_device_name)
+    """Record a sync with the device as having happened now."""
+    db.update_device_sync_time(from_device_id, from_device_name)

@@ -61,7 +61,7 @@ class TestAccountsOnOneInstallation:
         their_cfg = json.loads((root / created["account_id"] / "config.json").read_text())
         assert me_cfg["audiofile_directory"] != their_cfg["audiofile_directory"], "recordings are never shared"
         machine = json.loads((root / "config.json").read_text())
-        assert me_cfg["device_id"] == their_cfg["device_id"] == machine["device_id"], "one device"
+        assert me_cfg["this_device_id"] == their_cfg["this_device_id"] == machine["this_device_id"], "one device"
 
     def test_the_default_can_be_changed_and_a_label_must_be_unique(self, tmp_path: Path) -> None:
         root = tmp_path / "root"

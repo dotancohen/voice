@@ -17,7 +17,7 @@ created on every device. Conflicts are resolved by:
 - **accepting** the merged value as it stands.
 
 Both produce a new version that descends from the merge, so the resolution
-propagates to every peer. Nothing is ever picked by "last write wins".
+propagates to every device. Nothing is ever picked by "last write wins".
 
 CRITICAL: This module must have NO Qt/PySide6 dependencies.
 """

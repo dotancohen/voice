@@ -111,16 +111,16 @@ class TestSyncHandshake:
         # Server returns 400 for empty body
         assert resp.status_code == 400
 
-    def test_handshake_records_peer(self, running_server_a: SyncNode):
-        """Handshake records last sync timestamp for peer."""
-        peer_id = "00000000000070008000000000000099"
+    def test_handshake_records_device(self, running_server_a: SyncNode):
+        """Handshake records last sync timestamp for device."""
+        device_id = "00000000000070008000000000000099"
 
         # First handshake
         resp1 = requests.post(
             f"{running_server_a.url}/sync/handshake",
             headers=AUTH,
             json={
-                "device_id": peer_id,
+                "device_id": device_id,
                 "device_name": "TestClient",
                 "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
@@ -133,7 +133,7 @@ class TestSyncHandshake:
             f"{running_server_a.url}/sync/handshake",
             headers=AUTH,
             json={
-                "device_id": peer_id,
+                "device_id": device_id,
                 "device_name": "TestClient",
                 "protocol_version": "2.0",
                 "account_id": ACCOUNT_ID,
@@ -371,7 +371,7 @@ class TestSyncApply:
 
     @staticmethod
     def _remote_edit(node: SyncNode, note_id: str, content: str, device_id: str, created_at: int) -> list:
-        """The changes a protocol 1.1 peer sends for an edit: the version plus the row."""
+        """The changes a protocol 1.1 device sends for an edit: the version plus the row."""
         history = node.db.get_field_history("note", note_id, "content")
         parent = history[-1]["id"]
         version_id = uuid.uuid4().hex

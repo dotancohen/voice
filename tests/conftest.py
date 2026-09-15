@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QApplication
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 
 # Test device ID (hex string - 32 chars)
@@ -105,7 +105,7 @@ def empty_db(test_db_path: Path) -> Generator[Database, None, None]:
         Empty Database instance.
     """
     # Set test device ID
-    set_local_device_id(TEST_DEVICE_ID)
+    set_this_device_id(TEST_DEVICE_ID)
 
     db = Database(test_db_path)
     yield db
@@ -167,7 +167,7 @@ def populated_db(test_db_path: Path) -> Generator[Database, None, None]:
     NOTE_UUIDS.clear()
 
     # Set test device ID
-    set_local_device_id(TEST_DEVICE_ID)
+    set_this_device_id(TEST_DEVICE_ID)
 
     db = Database(test_db_path)
 

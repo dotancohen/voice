@@ -50,7 +50,7 @@ def test_a_copy_is_removed_only_when_the_bucket_confirms_now_that_it_holds_the_f
     from voicecore import SyncClient
 
     test_config.set_audiofile_directory(str(audio_dir))
-    here = test_config.get_device_id_hex()
+    here = test_config.get_this_device_id_hex()
     db = Database(Path(test_config._rust_config.get_database_file()))
     try:
         audio_id = recording(db, audio_dir, "הקלטה ביום הולדת.m4a", b"voice" * 100, here=here)

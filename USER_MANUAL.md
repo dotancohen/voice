@@ -23,8 +23,8 @@ command is for, and the settings behind them. For what VOICE is, see the
 - [Calculating missing data](#calculating-missing-data)
 - [Syncing between installations](#syncing-between-installations)
   - [Pairing a new device](#pairing-a-new-device)
-  - [Listening for peers](#listening-for-peers)
-  - [Peers](#peers)
+  - [Listening for devices](#listening-for-devices)
+  - [Devices](#devices)
   - [The five operations](#the-five-operations)
   - [Conflicts](#conflicts)
   - [Where "later wins"](#where-later-wins)
@@ -73,8 +73,8 @@ This device's local configuration (name, audio folder, sync port) is read and wr
 
 ```bash
 voice cli config show
-voice cli config get device_name
-voice cli config set device_name "Desktop"
+voice cli config get this_device_name
+voice cli config set this_device_name "Desktop"
 voice cli config set audiofile_directory ~/voice-audio   # created if missing
 ```
 
@@ -125,7 +125,7 @@ python -m src.main gui --theme dark   # Force dark theme
 
 The window has three panes (Tags, the Notes list, the Note) and three menus:
 
-- **File**: `New Note` (Ctrl+N), `Sync…` (Ctrl+Shift+S), `Set up the bucket…`, `Replace the bucket's key…`, `Test all syncing paths…`, `Listen for peers` (a switch), `Manage Tags...`, `Trash...`, `Issues...`, `Calculate missing data...`, `Transcription queue...`, `Quit` (Ctrl+Q)
+- **File**: `New Note` (Ctrl+N), `Sync…` (Ctrl+Shift+S), `Set up the bucket…`, `Replace the bucket's key…`, `Test all syncing paths…`, `Listen for devices` (a switch), `Manage Tags...`, `Trash...`, `Issues...`, `Calculate missing data...`, `Transcription queue...`, `Quit` (Ctrl+Q)
 - **Note**: `Delete Note` (the Delete key); the Note goes to the trash
 - **Help**: `Message Log` (this session's messages from the main window), `Application Log` (the end of `voice.log`), `About` (the version, and this device's account, device id, address and certificate fingerprint; see [This device's address](#this-devices-address))
 
@@ -222,7 +222,7 @@ already imported`. The same bytes under another name are a Recording of their ow
 
 #### Recordings on this device and in the cloud
 
-A sync never moves a Recording's file. A file reaches the bucket by upload (`storage upload-pending`) and comes back from it by download; it reaches a peer by send, fetch, deliver or exchange ([The five operations](#the-five-operations)). To download on this device, and to see where the copies are:
+A sync never moves a Recording's file. A file reaches the bucket by upload (`storage upload-pending`) and comes back from it by download; it reaches a device by send, fetch, deliver or exchange ([The five operations](#the-five-operations)). To download on this device, and to see where the copies are:
 ```bash
 python -m src.main cli audiofile-download <audiofile-id>         # One file
 python -m src.main cli note-audiofiles-download <note-id>        # All files of a Note
@@ -370,7 +370,7 @@ The length of Recordings that have none is read from their files by
 
 ```bash
 python -m src.main cli --format json sync status   # JSON output
-python -m src.main cli --format csv sync list-peers  # CSV output
+python -m src.main cli --format csv sync list-devices  # CSV output
 ```
 
 ### Web API Mode
@@ -820,35 +820,35 @@ The words below have one meaning each, in this manual and on screen:
 
 | Word | Meaning |
 |------|---------|
-| **Sync** | Exchange database changes (Notes, Tags, Transcriptions, the list of Recordings, settings) with a peer, both directions. A sync never moves a file |
+| **Sync** | Exchange database changes (Notes, Tags, Transcriptions, the list of Recordings, settings) with a device, both directions. A sync never moves a file |
 | **Upload** / **Download** | Copy Recording files from this device to the bucket / from the bucket to this device |
-| **Send** / **Fetch** | Copy Recording files from this device to a peer / from a peer to this device |
+| **Send** / **Fetch** | Copy Recording files from this device to a device / from a device to this device |
 | **Deliver** | Sync, then send |
 | **Exchange** | Sync, then send and fetch |
-| **Listen** | Accept connections from peers |
+| **Listen** | Accept connections from devices |
 | **Host** | Serve an account that is not this device's own |
-| **Pair** | Give a new device the account's id, a key of its own and one peer |
+| **Pair** | Give a new device the account's id, a key of its own and one device |
 
-- The other devices of the account are the **peers**. A device is let in only
+- The other devices of the account are the **devices**. A device is let in only
   by **pairing**: it reads a code another device of the account shows
   (`account show-code` and `account join`), or a server is given the account
   with a grant text (`account host` and `account grant-host`). After that,
-  every device of the account appears in the peer list by itself, with its
+  every device of the account appears in the device list by itself, with its
   name and where it listens, as the device cards travel with sync.
 - Every device can listen and every device can call. One device listens (the
-  desktop's File → Listen for peers, the phone's switch, or `sync serve`), and
+  desktop's File → Listen for devices, the phone's switch, or `sync serve`), and
   the other starts the operation. The result is the same whichever side
   listened.
 - **One button**: the desktop's File → Sync… dialogue and the phone's sync
-  screen show "Exchange with Desk", where Desk is the peer of the last
-  operation. The arrow beside it chooses another peer or another of the five
+  screen show "Exchange with Desk", where Desk is the device of the last
+  operation. The arrow beside it chooses another device or another of the five
   operations.
 - **Finding each other**: a listening device announces itself on the local
   network with a hash of the account id, never the id. An operation tries
   the address it remembers first; if nothing answers there, it tries each
-  address the peer's device card names, with the peer's pinned certificate,
+  address the other device's card names, with its pinned certificate,
   and remembers the one that answers; if none answers, it asks the network
-  where the peer is for three seconds and remembers the answer.
+  where that device is for three seconds and remembers the answer.
   `sync discover` and the dialogue's "Find on this network" list the devices of
   the account nearby. A listener without a configured `public_url` serves its
   own network only; a phone on hotel wifi is not a server for the hotel.
@@ -888,7 +888,7 @@ A code is used once. A new `show-code` replaces the previous one, and five wrong
 tokens withdraw it.
 
 The new device takes the account, receives a key of its own, and adds the
-showing device as a peer with the certificate fingerprint from the code pinned.
+showing device as a device with the certificate fingerprint from the code pinned.
 It also receives the recording key, if the account has one, and `sync.enabled`
 is set to true. On the phone that key is kept wrapped by the Android Keystore,
 so a copy of the app's files does not carry it; on the desktop it is in the
@@ -896,7 +896,7 @@ account's `config.json`. A device that already holds Notes of another account
 refuses the code (`DEVICE_HOLDS_NOTES`) and says to show its own code to the
 other device instead, or to use `account move`.
 
-After joining, `sync exchange <peer>` (or `sync now`) brings the account's Notes
+After joining, `sync exchange <device>` (or `sync now`) brings the account's Notes
 here.
 
 On the phone, Settings → Sync Settings has **Show my code** (the code stays on
@@ -907,11 +907,11 @@ Voice at the sync screen and pairs. A phone with no Notes yet offers "Pair
 with another device" and "Start on my own" on its first screen, and after
 pairing offers "Exchange now".
 
-### Listening for peers
+### Listening for devices
 
 A device is reachable only while it **listens**:
 
-- **GUI**: File → Listen for peers, or the `Listen for peers` box in File →
+- **GUI**: File → Listen for devices, or the `Listen for devices` box in File →
   Sync…. The GUI's listener serves the open account only. Beside the box, the
   listener can be set to stop itself: `keep listening` (the default),
   `stop after 1 hour of silence`, `stop after 4 hours of silence`,
@@ -961,10 +961,10 @@ and under `account host` (`This machine's address: …`). It is found this way:
 The code, and this device's card, carry every candidate and then the host
 name, so the other device tries them all.
 
-There is **no trust on first use**. A peer with a pinned fingerprint is accepted
-only if its certificate matches the pin; a peer without one is checked against
+There is **no trust on first use**. A device with a pinned fingerprint is accepted
+only if its certificate matches the pin; a device without one is checked against
 the system's root certificates, which a self-signed listener does not pass. A
-pin comes from pairing or granting, from `sync add-peer --fingerprint`, or
+pin comes from pairing or granting, from `sync add-device --fingerprint`, or
 from an address found on the local network. Plain `http://` is accepted only
 to this machine itself (`localhost`, `127.*`, `::1`); `sync serve --plain-http`
 is allowed only on a loopback address.
@@ -981,28 +981,32 @@ Rules the listener applies:
 - A snapshot of the account's database is taken before each handshake it
   accepts.
 
-### Peers
+### Devices
 
 ```bash
-python -m src.main cli sync status                         # this device, the peers, and what is on this device only
-python -m src.main cli sync list-peers                     # every peer, with its address, fingerprint and last operation
+python -m src.main cli sync status                         # this device, the devices, and what is on this device only
+python -m src.main cli sync list-devices                     # every device, with its address, fingerprint and last operation
 python -m src.main cli sync discover                       # the devices of this account announcing on this network
-python -m src.main cli sync check <peer-id>                # reachable, certificate, protocol, account, key, clock, free space
+python -m src.main cli sync check <device-id>                # reachable, certificate, protocol, account, key, clock, free space
 python -m src.main cli sync check --all                    # every other device of the account and the bucket, as one table (the GUI's Test all syncing paths…)
-python -m src.main cli sync rename-peer <peer-id> "Desk"   # a name shown on this device only
-python -m src.main cli sync remove-peer <full-peer-id>     # forget a peer on this device (the full id)
-python -m src.main cli sync add-peer <peer-id> "Desk" https://<address>:8384 --fingerprint SHA256:...
+python -m src.main cli sync rename-device <device-id> "Desk"   # a name shown on this device only
+python -m src.main cli sync forget-device <full-device-id>     # forget a device on this device (the full id)
+python -m src.main cli sync add-device <device-id> "Desk" https://<address>:8384 --fingerprint SHA256:...
 ```
 
-`sync add-peer` alone **does not let a device in**. It only writes the peer into
+`sync add-device` alone **does not let a device in**. It only writes the device into
 this device's list; the listener still refuses a device that was not paired
 into its account (`This device is not paired with this account; pair again
 (DEVICE_UNKNOWN)`, or `ACCOUNT_UNKNOWN` for another account). Pair instead. A
-forgotten peer's card does not bring it back until it is added again or paired
+forgotten device's card does not bring it back until it is added again or paired
 again.
 
-In File → Sync…, the peers table shows each peer's address, when it was last
-reached and its last operation. The buttons below it: `Rename…`, `Forget`,
+File → Sync… says first which device it is on: the window's title is
+`Sync — <this device's name>` and its first line is `This device: <name>`. The
+devices it syncs with are listed under the heading `Other devices of this
+account`: the table's first column, `Other device`, gives each one's name and the
+start of its id, then its address, when it was last reached and its last
+operation. The buttons below it: `Rename…`, `Forget`,
 `Add by address…`, `Find on this network`, `Check connection` and `Test all
 syncing paths…`. `Rename…` and `Forget` act on the selected row.
 
@@ -1020,31 +1024,31 @@ command line.
 ### The five operations
 
 A sync moves Notes, Tags, Transcriptions and the list of Recordings, never a
-Recording's file. Files move between two devices with these, each with one peer:
+Recording's file. Files move between two devices with these, each with one device:
 
 ```bash
-python -m src.main cli sync exchange <peer>   # sync, then send the Recordings the peer lacks and fetch the ones this device lacks
-python -m src.main cli sync deliver <peer>    # sync, then send the Recordings the peer lacks
-python -m src.main cli sync send <peer>       # send only, no sync
-python -m src.main cli sync fetch <peer>      # fetch only, no sync
-python -m src.main cli sync now --peer <peer> # sync only: no file moves
-python -m src.main cli sync now               # sync only, with every peer in turn
+python -m src.main cli sync exchange <device>   # sync, then send the Recordings the other device lacks and fetch the ones this device lacks
+python -m src.main cli sync deliver <device>    # sync, then send the Recordings the device lacks
+python -m src.main cli sync send <device>       # send only, no sync
+python -m src.main cli sync fetch <device>      # fetch only, no sync
+python -m src.main cli sync now --device <device> # sync only: no file moves
+python -m src.main cli sync now               # sync only, with every device in turn
 ```
 
-`<peer>` is the peer's device id or a unique prefix of it.
+`<device>` is the other device's id, or a unique prefix of it.
 
-In File → Sync…, the button reads `Exchange with <peer>`. Its arrow opens one
-submenu per peer, each with:
+In File → Sync…, the button reads `Exchange with <device>`. Its arrow opens one
+submenu per device, each with:
 
 - `Exchange — sync, then send and fetch recordings`
 - `Deliver — sync, then send recordings`
 - `Sync — notes only`
-- `Send — recordings the peer lacks, no sync`
+- `Send — recordings the device lacks, no sync`
 - `Fetch — recordings this device lacks, no sync`
 
 A result reads, for example, `Exchange with Desk: received 3 changes and sent 1,
 fetched 2 recordings, 41.0 MB moved. Request 0a1b….` The request id is in both
-devices' logs. When the peer refuses, the dialogue offers the button that
+devices' logs. When the device refuses, the dialogue offers the button that
 addresses the refusal (`Show my code` or `Check connection`). After every
 operation the Notes list and the open Note are read again.
 
@@ -1067,7 +1071,7 @@ Every editable value (Note content, Tag name and parent, Transcription text and 
 - A Tag link removed on one device but kept on the other stays attached.
 - A Tag renamed or moved on both devices keeps the later value.
 
-In every case that needed a decision, a conflict record is created on every device (same id everywhere) naming the two devices. The GUI, TUI and Android show a banner on the Note with an **Accept merge** button. Resolving happens in one of two ways, and either way the resolution reaches every peer:
+In every case that needed a decision, a conflict record is created on every device (same id everywhere) naming the two devices. The GUI, TUI and Android show a banner on the Note with an **Accept merge** button. Resolving happens in one of two ways, and either way the resolution reaches every device:
 
 - **Edit and save** the Note (clean up the markers). A save while a conflict is open resolves it.
 - **Accept the merge** as it stands.
@@ -1150,8 +1154,8 @@ GUI and the TUI have no view of the snapshots.
 Moving a database to another account is the one way two accounts are merged,
 and it is deliberate: `account move --to <id> --current <id>` proceeds only when
 the full id of the account being given up is typed by hand. A snapshot is taken
-first, and the record of what was exchanged with each peer is deleted, so the
-next sync exchanges everything; the peers stay in the list.
+first, and the record of what was exchanged with each device is deleted, so the
+next sync exchanges everything; the devices stay in the list.
 
 ### Backups
 
@@ -1245,15 +1249,15 @@ found in the audio folder after the recording`). In JSON the reasons are
 `sync status` says, in one line, what exists on this device only: "3 notes and
 2 recordings are not duplicated off this device.", or "Everything is duplicated
 off this device." A Note counts as duplicated once a sync has sent it to any
-peer; a Recording once it is in the bucket or a peer is known to hold it. Below
-the line, every peer with when it was last reached and what the last operation
+device; a Recording once it is in the bucket or a device is known to hold it. Below
+the line, every device with when it was last reached and what the last operation
 was. File → Sync… shows the same line, and a checklist: `Paired devices`,
 `Bucket`, `Listener`, `Not duplicated`, `Last exchange`; a row that is not yet
 in place has a button beside it (`Show my code`, `Set up the bucket`, `Listen
-for peers`, `Exchange`). The phone shows the same line at the top of its
+for devices`, `Exchange`). The phone shows the same line at the top of its
 sync screen, and nowhere else: no notification, no badge. A Recording's details
 (`note-audiofiles-list`, `audiofile-show`) name where its copies are: this
-device, the bucket, and each peer.
+device, the bucket, and each device.
 
 ### Issues
 
@@ -1277,14 +1281,14 @@ The GUI window has `Refresh`; the TUI screen reads the list again with F5.
 ### Devices, keys and certificates
 
 Every device of an account has a **key** of its own, made when it created the
-account or given to it when it was paired. Every request to a peer carries it,
-and every peer holds only a hash of it, on the device's **card**, which travels
+account or given to it when it was paired. Every request to a device carries it,
+and every device holds only a hash of it, on the device's **card**, which travels
 with the Notes. A device nobody has let in, or one that was revoked, is
 refused with a sentence and a code.
 
 ```bash
 python -m src.main cli device list                # every device of the account, with its certificate and state
-python -m src.main cli device revoke <device-id>  # every peer refuses the device once the revocation has reached it
+python -m src.main cli device revoke <device-id>  # every device refuses the device once the revocation has reached it
 ```
 
 A revoked device still holds the bucket key, if one was configured; replace the
@@ -1292,7 +1296,7 @@ key (`storage replace-key`, or File → Replace the bucket's key…) if that mat
 The GUI and the TUI have no device list.
 
 The listener's certificate and the rules for trusting it are in
-[Listening for peers](#listening-for-peers).
+[Listening for devices](#listening-for-devices).
 
 ### A server that hosts accounts
 
@@ -1342,16 +1346,16 @@ listens for every account.
 When sync issues occur (e.g., missing attachments, Transcriptions, or data inconsistencies), use these commands:
 
 ```bash
-# Check the connection to a peer, step by step, with a code for each failure
-python -m src.main cli sync check <peer-id>
+# Check the connection to a device, step by step, with a code for each failure
+python -m src.main cli sync check <device-id>
 
 # Reset sync timestamps - the next sync exchanges all data
 python -m src.main cli sync reset-timestamps
 
-# Full resync - exchanges the whole dataset with peers now,
+# Full resync - exchanges the whole dataset with devices now,
 # whatever the last sync timestamps say
-python -m src.main cli sync full-resync                       # Resync with all peers
-python -m src.main cli sync full-resync --peer <peer-id>      # Resync with one peer
+python -m src.main cli sync full-resync                       # Resync with all devices
+python -m src.main cli sync full-resync --device <device-id>      # Resync with one device
 ```
 
 **When to use each:**
@@ -1557,7 +1561,7 @@ devices with 'account show-code' here and the other device's pairing screen.`
 "Replace the bucket's key…" tests a new key the same way and saves
 it for every device. `Test all syncing paths…` (File menu, or the button in
 the Sync dialogue), or `sync check --all`, checks every other device of the
-account and the bucket as one table (see [Peers](#peers)); `storage check`
+account and the bucket as one table (see [Devices](#devices)); `storage check`
 checks the bucket alone.
 
 ### Configuration
@@ -1652,7 +1656,7 @@ a narrower policy.
 - The desktop uploads when you ask: `cli storage upload-pending` (the GUI and the TUI have no upload control); the phone uploads with the Upload button. Recordings whose file is not on this device are skipped; the device that holds them uploads them.
 - An upload and a download try each file three times, the third a minute after the second, and stop after three files failed every try; the rest wait for the next upload or download. A file whose content hash cannot be calculated is not uploaded and is reported.
 - Other devices download a file **only on demand**: the GUI and TUI show a "Media missing" notice with a Download button (the TUI also uses the `d` key), the CLI has `audiofile-download`, `note-audiofiles-download` and `storage download-missing`, and the Android app shows a Download button on the Note. The CLI's transcribe commands download a missing file first.
-- Until a device that holds a file has uploaded it, other devices show it as "not uploaded by their device yet" and cannot download it; a peer that holds it can still send it (`sync deliver`, `sync exchange`, `sync send`, or `sync fetch` from the other side).
+- Until a device that holds a file has uploaded it, other devices show it as "not uploaded by their device yet" and cannot download it; a device that holds it can still send it (`sync deliver`, `sync exchange`, `sync send`, or `sync fetch` from the other side).
 - The storage configuration (including the credentials) syncs to all connected devices. Configure it once, on any installation.
 - Sync keeps working while cloud storage is unreachable, because it never touches it. An upload that fails is reported and tried again at the next upload, and after the first failure the remaining uploads are deferred instead of each waiting for a timeout.
 - Downloads are written to a temporary `.part` file, checked against the object size and only then renamed into place, so an interrupted download never leaves a broken file behind.
@@ -1888,13 +1892,13 @@ The account's settings (in `<root>/<account id>/config.json`):
 | themes.colours.tui_border_focused | string | green | TUI border colour of the focused pane |
 | themes.colours.tui_border_unfocused | string | blue | TUI border colour of the other panes |
 | sync.enabled | boolean | false | Shown by `sync status`; `account join` and `account grant-host` set it to true |
-| sync.peers | array | [] | The peers of this device |
-| sync.peers[].peer_id | string | | The peer's device id |
-| sync.peers[].peer_name | string | | The name shown for the peer |
-| sync.peers[].peer_url | string | | Where the peer listens (`https://…`) |
-| sync.peers[].certificate_fingerprint | string/null | null | The pinned fingerprint of the peer's certificate (`SHA256:…`), from pairing, `add-peer --fingerprint` or discovery on the local network |
-| sync.last_peer_id | string | "" | The peer of the last operation, named on the one button |
-| sync.forgotten_peers | array | [] | Peers forgotten on this device; their cards do not bring them back |
+| sync.devices | array | [] | The devices of this device |
+| sync.devices[].device_id | string | | The other device's id |
+| sync.devices[].device_name | string | | The name shown for the device |
+| sync.devices[].device_url | string | | Where the device listens (`https://…`) |
+| sync.devices[].certificate_fingerprint | string/null | null | The pinned fingerprint of the device's certificate (`SHA256:…`), from pairing, `add-device --fingerprint` or discovery on the local network |
+| sync.last_device_id | string | "" | The device of the last operation, named on the one button |
+| sync.forgotten_devices | array | [] | Devices forgotten on this device; their cards do not bring them back |
 | sync.listener_idle_stop_hours | number | 0 | Hours of silence after which the GUI's listener stops; 0 means never |
 | sync.max_sync_file_size_mb | number | 100 | The listener's size limit for JSON sync requests; Recordings are streamed and not held to it |
 | sync.mirror_audio_files | boolean | false | Records that this installation keeps a copy of every Recording in the bucket. Local-only, never synced; desktop/server only |
@@ -1906,7 +1910,7 @@ The account's settings (in `<root>/<account id>/config.json`):
 
 ### Sync configuration
 
-- The peers, the device key and the recording key are in the account's `config.json`; the listen port and `public_url` in the machine's.
+- The devices, the device key and the recording key are in the account's `config.json`; the listen port and `public_url` in the machine's.
 
 ### Color Values
 
@@ -1934,11 +1938,11 @@ A one-account directory's `config.json`, which holds the machine's and the accou
   "sync": {
     "enabled": true,
     "server_port": 8384,
-    "peers": [
+    "devices": [
       {
-        "peer_id": "018e5874b8357f489eb72834083c05b7",
-        "peer_name": "Bar on server",
-        "peer_url": "https://192.168.1.20:8384",
+        "device_id": "018e5874b8357f489eb72834083c05b7",
+        "device_name": "Bar on server",
+        "device_url": "https://192.168.1.20:8384",
         "certificate_fingerprint": "SHA256:3a:9f:…"
       }
     ]

@@ -34,7 +34,7 @@ class IssuesDialog(QDialog):
         self.reload()
 
     def reload(self) -> None:
-        here = self.config.get_device_id_hex()
+        here = self.config.get_this_device_id_hex()
         issues = self.db.issues(self.config.get_audiofile_directory(), here)
         sections = issue_sections(issues, place_names(self.db, self.config), here)
         self.tree.clear()

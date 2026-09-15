@@ -232,8 +232,8 @@ other part of the suite, select by directory (section 3.2).
 | Directory | What it tests |
 |---|---|
 | `tests/unit/` | The Python layer in `src/core/` and the core through its Python bindings, without servers: the database and search, configuration, validation, edge cases (length limits, Unicode, Hebrew), recordings and their file names, the display caches, conflicts between two databases in one process, the trash, cloud storage decisions without the network, where the copies of a recording are and removing this device's copy (with `FakeS3`), missing data, timestamps shown at their recorded offset, transcription flags, the transcription queue and backlog, waveforms, this device's address in words |
-| `tests/sync/` | Sync between installations: the Rust sync server started as a child process, the sync client, the command-line sync commands, accounts, pairing, hosting, discovery on the local network, protocol versions, pagination, validation of what a peer sends, conflicts between devices, concurrent syncs, network failures, files between instances, the bucket wizard, the transcription flags contract |
-| `tests/cli/` | The command line (`python -m src.main cli ...`), run as a child process with `VOICE_CONFIG_DIR` set to a temporary directory: listing, showing and searching notes, output formats, accounts, devices, peers, recordings, issues, storage, trash, merging notes |
+| `tests/sync/` | Sync between installations: the Rust sync server started as a child process, the sync client, the command-line sync commands, accounts, pairing, hosting, discovery on the local network, protocol versions, pagination, validation of what a device sends, conflicts between devices, concurrent syncs, network failures, files between instances, the bucket wizard, the transcription flags contract |
+| `tests/cli/` | The command line (`python -m src.main cli ...`), run as a child process with `VOICE_CONFIG_DIR` set to a temporary directory: listing, showing and searching notes, output formats, accounts, devices, devices, recordings, issues, storage, trash, merging notes |
 | `tests/gui/` | The Qt interface, with real widgets built on the session's `qapp` and clicked or typed into directly: the tags pane, the notes list, search, the note pane (conflicts, copies of a recording, missing media), the sync, trash and issues dialogs |
 | `tests/tui/` | The Textual interface through Textual's `run_test()`: the tags tree, notes list, note detail, keys, search, conflicts, copies, missing media, trash, issues |
 | `tests/web/` | The Flask Web API through Flask's test client: notes, tags, search, recordings, issues, trash, health check, CORS, HTTP methods, JSON and UTF-8 |
@@ -401,7 +401,7 @@ keeps the settings the wizard writes on a bucket, and with `fail_part` answers
 
 `tests/faulty_network.py` defines `FaultyLink(target_port, target_host="127.0.0.1")`:
 a TCP proxy on `127.0.0.1` between a client (the core's sync client or its
-bucket client) and a server (a peer's listener or the S3 server). The test
+bucket client) and a server (a device's listener or the S3 server). The test
 points the client at `link.url` instead of the server, then sets a fault:
 
 | Method | Effect |
@@ -425,7 +425,7 @@ points the client at `link.url` instead of the server, then sets a fault:
   open connection.
 
 Users: `tests/sync/test_sync_over_a_failing_network.py` (a proxy in front of a
-peer's listener) and `tests/integration/test_file_storage.py` (a proxy in front
+device's listener) and `tests/integration/test_file_storage.py` (a proxy in front
 of moto). Both define `within(seconds, operation)`, which fails the test when
 the operation has not ended in time: a dead link must end an operation, not
 leave it waiting forever.
@@ -457,12 +457,12 @@ describes the Android tests.
   with `VOICE_CONFIG_DIR` set to the node's directory.
 - Fixtures: `sync_node_a`, `sync_node_b`, `sync_node_c`, `running_server_a`,
   `running_server_b`, `two_nodes_with_servers`, `three_nodes_with_servers` (the
-  last two with every node configured as a peer of every other).
+  last two with every node configured as a device of every other).
 - `AUTH` holds the headers of the test client, for a test that calls a server's
   endpoints directly; `auth_for(node)` gives a node's own headers;
   `admit(server, caller)` and `admit_test_device(server, device_id, name)`
   admit further devices.
-- `sync_nodes(source, target)` syncs through `voicecore.SyncClient.sync_with_peer`.
+- `sync_nodes(source, target)` syncs through `voicecore.SyncClient.sync_with_device`.
   Also `create_note_on_node`, `create_tag_on_node`, `get_note_count`,
   `get_tag_count` (which does not count system tags, whose names start with
   `_`), `wait_for_condition`, and `simulate_network_partition` (stops a server
@@ -479,8 +479,8 @@ describes the Android tests.
 
 - `tests/sync_support.py`: `read_feed(db, cursor=0, limit=100000)` reads a
   database's write-order feed after the cursor and returns the changes with the
-  cursor to continue from; `apply_sync_changes(db, changes, peer_device_id)`
-  applies a batch through the core; `get_peer_last_sync` and `update_peer_last_sync`.
+  cursor to continue from; `apply_sync_changes(db, changes, from_device_id)`
+  applies a batch through the core; `get_device_last_sync` and `update_device_last_sync`.
   Used by `tests/unit/test_apply_changes.py` and several files in `tests/sync/`.
 - `tests/unit/test_conflicts.py`: two databases in one process exchanging
   their feeds.

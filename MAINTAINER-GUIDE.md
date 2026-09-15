@@ -258,7 +258,7 @@ recording files on disk when a sync changed their names (FILE-15).
 | `trash_dialog.py` | Deleted Notes: recover, or purge for good |
 | `version_dialogs.py` | A field's history, and resolving a conflict |
 | `issues_dialog.py` | `IssuesDialog`: the Issues list (section 8.8) as a tree, read again by the Refresh button |
-| `sync_dialog.py` | Sync, deliver, exchange, send and fetch with a peer, in a `QThread` so the window stays responsive. Shows this device's address ("Address: …"), and the My code dialog "This device's address: …" (section 8.5) |
+| `sync_dialog.py` | Sync, deliver, exchange, send and fetch with a device, in a `QThread` so the window stays responsive. Its title and first line name this device (`Sync — <name>`, `This device: <name>`), and the table of the devices it syncs with is headed `Other devices of this account`. Shows this device's address ("Address: …"), and the My code dialog "This device's address: …" (section 8.5) |
 | `storage_wizard.py` | The bucket wizard, one step on each page: `ConsoleStepPage` (pages 1–4), `KeyPage`, `RegionPage`, `BucketPage`, `ReadyPage`, `SyncPage`; and `ReplaceKeyWizard` (section 8.10) |
 | `theme.py` | `apply_theme(app, theme)`: qdarktheme's stylesheet and its palette together, called by `src/main.py`. Whatever is drawn by hand takes its colours from the palette, as the wizard's copy icon does |
 | `sync_paths_dialog.py` | `SyncPathsDialog`, the window "Test all syncing paths": `storage_setup.check_all_paths` on a thread of its own, the result as a table (section 8.10). Opened by File → Test all syncing paths… and by the Sync window's button of that name |
@@ -287,7 +287,7 @@ with subcommands:
 
 | Group | Subcommands |
 |---|---|
-| `sync` | `status`, `discover`, `check`, `list-peers`, `add-peer`, `remove-peer`, `rename-peer`, `now`, `conflicts`, `resolve`, `serve`, and one command per operation (deliver, exchange, send, fetch) |
+| `sync` | `status`, `discover`, `check`, `list-devices`, `add-device`, `forget-device`, `rename-device`, `now`, `conflicts`, `resolve`, `serve`, and one command per operation (deliver, exchange, send, fetch) |
 | `account` | `show`, `list`, `create`, `default`, `remove`, `show-code`, `hide-code`, `recording-key export/import`, `host`, `grant`, `join`, `snapshots`, `snapshot`, `backup`, `restore`, `move` |
 | `storage` | `status`, `setup`, `replace-key`, `check`, `upload-pending`, `download-missing`, `mirror`, `encrypt`, `reupload-encrypted`, `disable`, `upload-limit [megabytes]` (the account's upload limit, section 8.8), and the S3 settings |
 | `device` | `list`, `revoke` |
@@ -343,7 +343,7 @@ This is not the sync server. The sync server is Rust (section 5).
 | `storage_setup.py` | The steps of the bucket wizard, shared by the CLI and the GUI. A refused bucket creation suggests another name only when the service's sentence says the name is taken |
 | `issues_text.py` | The sentences of the Issues list and of where a Recording's copies are, used by the CLI, the GUI and the TUI: `size_words`, `place_names`, `place_label`, `issue_sections`, `location_lines`. The web API returns the core's dictionaries instead |
 | `addresses_text.py` | `address_words`: this device's address in words, from the core's `listen_addresses` (LISTEN-4), for the Sync window, About, the My code dialog and the command line (section 8.5) |
-| `discovery.py` | Finding peers on the local network with **zeroconf** (`_voicesync._tcp`) |
+| `discovery.py` | Finding devices on the local network with **zeroconf** (`_voicesync._tcp`) |
 | `missing_data.py` | Survey and calculation of facts that were never recorded (lengths, dates, caches) |
 | `purge.py` | `remove_purged_files`: deletes the files of purged Recordings by the `disk_name` the core returns, for every interface |
 | `timestamp_utils.py` | Formatting a timestamp at its own offset; this computer's timezone |
@@ -358,17 +358,17 @@ Files in `submodules/voicecore/src/`, largest first (line counts of 2026-09-14):
 | File | Lines | Purpose |
 |---|---|---|
 | `database.rs` | 8,488 | Opening the database and making its one schema (section 7.1), every query, the display caches, the change feed, snapshots, where each copy of a Recording is (`file_locations`), the promises to keep a copy (`file_holds`, `file_removals`), the account's upload limit |
-| `sync_server.rs` | 4,774 | The HTTP server peers connect to (`/sync/...`, `/pair/...`), built on **axum**, including `POST /sync/audio/:id/keep` (FILE-26); `listen_addresses`, where this device's listener can be reached (LISTEN-4) |
+| `sync_server.rs` | 4,774 | The HTTP server devices connect to (`/sync/...`, `/pair/...`), built on **axum**, including `POST /sync/audio/:id/keep` (FILE-26); `listen_addresses`, where this device's listener can be reached (LISTEN-4) |
 | `android.rs` | 2,848 | The Android binding (not used by the desktop) |
-| `sync_client.rs` | 2,520 | The side that connects: sync, deliver, exchange, send, fetch, join; `remove_local_copy` (FILE-26); `reach`, which tries a peer at the addresses on its device card when its remembered address does not answer (LISTEN-4) |
+| `sync_client.rs` | 2,520 | The side that connects: sync, deliver, exchange, send, fetch, join; `remove_local_copy` (FILE-26); `reach`, which tries a device at the addresses on its device card when its remembered address does not answer (LISTEN-4) |
 | `versions.rs` | 2,480 | Versioned fields: history, heads, merges, conflicts (section 7.4) |
 | `file_storage.rs` | 1,651 | Upload to and download from the bucket; skips files over the upload limit; states the bucket's and this device's copies; `bucket_holds`, the question FILE-26 asks the bucket |
-| `config.rs` | 1,232 | `config.json`: device id and name, peers, keys, backup, audio directory |
+| `config.rs` | 1,232 | `config.json`: device id and name, devices, keys, backup, audio directory |
 | `bucket_setup.rs` | 1,034 | Creating and hardening an S3 bucket; the core's own signed requests (`signed`, `send_signed_watched`, `get_signed_stream`); `explain_error` and `explain_refusal` |
 | `models.rs` | 791 | Entity structs, attachment types, the audio format list, recording file names |
 | `validation.rs` | 509 | Checks on ids, Tag names and paths, Note content, search queries, audio file extensions |
 | `file_storage_s3.rs` | 496 | Bucket upload of a small file or of parts, download, and the existence check, each as a signed request of `bucket_setup.rs` |
-| `sync_apply.rs` | 458 | Applying one batch of changes from a peer |
+| `sync_apply.rs` | 458 | Applying one batch of changes from a device |
 | `issues.rs` | 425 | The Issues list (ISSUE-1), calculated at every call and never stored |
 | `accounts.rs` | 413 | The index of accounts on one installation (`accounts.db`) |
 | `crypto.rs` | 405 | Encryption of Recordings in the bucket (AES-256-GCM) |
@@ -377,7 +377,7 @@ Files in `submodules/voicecore/src/`, largest first (line counts of 2026-09-14):
 | `pairing.rs` | 342 | Pairing codes and setup texts |
 | `sync_protocol.rs` | 317 | Request and response types, error codes |
 | `tls.rs` | 296 | Self-signed certificates for the server |
-| `transfer.rs` | 250 | Streaming a file between peers; `stall_of_upload`, which ends an upload that stops moving (section 8.9) |
+| `transfer.rs` | 250 | Streaming a file between devices; `stall_of_upload`, which ends an upload that stops moving (section 8.9) |
 | `auth.rs` | 248 | Device keys and device cards |
 | `timezone.rs` | 127 | The local timezone reported by the application |
 | `error.rs` | 126 | `VoiceError` |
@@ -621,11 +621,11 @@ resolved on every device after the next sync.
 SQL. Every write goes through `set_field`, `set_deleted` or `init_field`
 (SYNC_SPECIFICATION DM-1). A plain `UPDATE notes SET content = ...` changes
 the copy but not the history, and the next recomputation of the head puts the
-old value back, or sends a wrong row to every peer.
+old value back, or sends a wrong row to every device.
 
 Values that are written by the machine rather than typed by the user
 (`filename`, `duration_seconds`, `service_response` and similar) are not
-versioned. When a row arrives from a peer they are merged column by column:
+versioned. When a row arrives from a device they are merged column by column:
 the row with the newer `modified_at` wins a column (DM-4). `file_locations`
 rows are not versioned either; they have a rule of their own (section 8.7).
 
@@ -636,14 +636,14 @@ rows are not versioned either; they have a rule of their own (section 8.7).
 | `sync_sequence` | One row holding a counter for the whole database |
 | `seq` column | On `field_versions`, `notes`, `tags`, `note_tags`, `note_attachments`, `audio_files`, `transcriptions`, `file_storage_config`, `purges`, `file_locations`. **Triggers** set it from the counter when a row is inserted, or when a synced column really changed. Cache columns never change it |
 | `sync_meta` | Key/value: `database_id` (a random id; a new one means the database was replaced) and `account_id` |
-| `sync_peers` | One row per peer: `peer_id`, `peer_name`, `peer_url`, `certificate_fingerprint`, `last_sync_at`, `last_received_cursor`, `last_sent_seq`, `peer_database_id`, `peer_account_id`, `last_operation`, `peer_entity_types` |
-| `sync_failures` | Changes from a peer that could not be applied, kept and tried again at the next batch |
-| `purges` | Everything ever purged: `entity_type`, `entity_id`, `purged_at`, `device_id`. Kept for ever, so a peer that has not heard of the purge cannot bring the item back |
+| `sync_devices` | One row per device: `device_id`, `device_name`, `device_url`, `certificate_fingerprint`, `last_sync_at`, `last_received_cursor`, `last_sent_seq`, `device_database_id`, `device_account_id`, `last_operation`, `device_entity_types` |
+| `sync_failures` | Changes from a device that could not be applied, kept and tried again at the next batch |
+| `purges` | Everything ever purged: `entity_type`, `entity_id`, `purged_at`, `device_id`. Kept for ever, so a device that has not heard of the purge cannot bring the item back |
 | `file_storage_config` | One row (`id = 'default'`): the bucket settings, as JSON in `config` |
 | `file_locations` | Where each copy of a Recording is: `audio_id`, `place` (a device id or `cloud`), `present`, `changed_at` (milliseconds), `changed_by`, `sync_received_at`; primary key `(audio_id, place)` (section 8.7) |
 
 **What a sync sends** is every row and version whose `seq` is above what the
-peer has already received: the entity types `note`, `tag`, `note_tag`,
+device has already received: the entity types `note`, `tag`, `note_tag`,
 `note_attachment`, `audio_file`, `transcription`, `file_storage_config`,
 `field_version`, `purge` and `file_location` (`ALL_SYNC_ENTITY_TYPES` in
 `sync_apply.rs`; SYNC_SPECIFICATION PROTO-1). A `file_location` change has the
@@ -655,8 +655,8 @@ entity id `<audio id>:<place>`. Synced settings and device cards travel as
 | Table | Purpose |
 |---|---|
 | `pairing_offers` | The hash of a pairing code while it is valid, its expiry, failed attempts |
-| `file_holds` | A promise this device gave a peer to keep its copy of a Recording until `until_ms`, while that peer removes its own (FILE-26, section 8.7) |
-| `file_removals` | A removal of this device's copy that is under way, since `since_ms`; while it is there, a peer asking this device to keep its copy is refused (FILE-26) |
+| `file_holds` | A promise this device gave a device to keep its copy of a Recording until `until_ms`, while that device removes its own (FILE-26, section 8.7) |
+| `file_removals` | A removal of this device's copy that is under way, since `since_ms`; while it is there, a device asking this device to keep its copy is refused (FILE-26) |
 | `upload_parts` | Journal of an upload in parts, so an interrupted upload continues |
 | `pending_file_renames` | A Recording whose file must still be renamed on disk |
 | `purged_objects` | Bucket objects deleted by a purge |
@@ -764,37 +764,37 @@ interface:
 
 | Word | Meaning |
 |---|---|
-| **Sync** | Exchange database changes with a peer, both directions. No file moves |
+| **Sync** | Exchange database changes with a device, both directions. No file moves |
 | **Upload** / **Download** | Copy Recording files to / from the S3 bucket |
 | **Send** / **Fetch** | Copy Recording files to / from another Voice installation |
 | **Deliver** | Sync, then send |
 | **Exchange** | Sync, then send and fetch |
-| **Listen** | Accept connections from peers |
+| **Listen** | Accept connections from devices |
 | **Host** | Serve an account that is not this device's own |
-| **Pair** | Give a fresh device the account's id, a key of its own and one peer |
+| **Pair** | Give a fresh device the account's id, a key of its own and one device |
 
 Every one of these runs only when the user asks. The one automatic action is
 the periodic database backup.
 
-**A sync, step by step** (`sync_with_peer` in `sync_client.rs`, SYNC_SPECIFICATION FLOW-1):
+**A sync, step by step** (`sync_with_device` in `sync_client.rs`, SYNC_SPECIFICATION FLOW-1):
 
 1. Compare this device's audio directory with what it has stated about its
    copies (`check_files_here`, section 8.7), so the push carries a file that
    was deleted by hand.
 2. `POST /sync/handshake`: identities, protocol version `2.0`, the account, the key.
-3. If the peer's `database_id` differs from the stored one, both cursors restart from zero.
+3. If the device's `database_id` differs from the stored one, both cursors restart from zero.
 4. **Pull:** `GET /sync/changes?cursor=N` page by page (at most about 4 MB each).
    Each page is applied in one transaction (`sync_apply.rs`), then the cursor is saved.
 5. **Push:** this device's changes since `last_sent_seq`, page by page, through `POST /sync/apply`.
-6. Record the time and the operation in `sync_peers`.
+6. Record the time and the operation in `sync_devices`.
 
 An interrupted sync continues from the last saved cursor. Applying the same
 page twice changes nothing (it is **idempotent**).
 
 **The listener** is `bin/voice cli sync serve` (default port 8384) or "Listen
-for peers" in the GUI. It starts the Rust server in `sync_server.rs` over
-HTTPS with a self-signed certificate, which a peer remembers at its first
-connection (**TOFU**). Peers on the same network find each other by zeroconf.
+for devices" in the GUI. It starts the Rust server in `sync_server.rs` over
+HTTPS with a self-signed certificate, which a device remembers at its first
+connection (**TOFU**). Devices on the same network find each other by zeroconf.
 At every handshake a caller starts, the listener compares its own audio
 directory with what it has stated about its copies (`check_files_here`).
 
@@ -817,7 +817,7 @@ section 8.9.
 A device shows a code (a QR code or a setup text `voice://pair?...`) that
 carries a single-use token valid for ten minutes (`pairing_offers`). The new
 device claims it (`/pair/claim`, `/pair/grant`) and receives the account id,
-its own device key and one peer. A device keeps its own key in its
+its own device key and one other device to sync with. A device keeps its own key in its
 `config.json`; every other device knows only the key's hash, from the synced
 device card. The setup text carries the listener's certificate fingerprint as
 `&f=`, when the offer finds the certificate (see section 13.1, item 1).
@@ -842,15 +842,15 @@ line for the Sync window, About, the My code dialog and `account show-code` /
 
 A setup text carries every URL in `u=`; the device that reads it tries each in
 turn, each with its own client, and remembers the one that answered. When a
-peer's remembered address does not answer (a network error, not a refusal),
-`reach` in `sync_client.rs` tries each address on the peer's device card with
-the peer's pinned certificate and remembers the one that answers as the peer's
-`peer_url`; a sync, a pull, a push and an initial sync go through it.
+device's remembered address does not answer (a network error, not a refusal),
+`reach` in `sync_client.rs` tries each address on the other device's card with
+the device's pinned certificate and remembers the one that answers as the device's
+`device_url`; a sync, a pull, a push and an initial sync go through it.
 
 ### 8.6 Snapshots and backups
 
 - **Snapshot** (SNAP-1 to SNAP-4): a copy of `notes.db` in `snapshots/`,
-  named `notes-<UTC time>.db`, taken before applying anything from a peer,
+  named `notes-<UTC time>.db`, taken before applying anything from a device,
   before moving to another account and before a restore. The newest five are
   kept. Recordings are not included.
 - **Backup** (SNAP-5): every `backup.interval_hours` (default 24, 0 turns it
@@ -874,8 +874,8 @@ Recording's file" or "no longer holds it". A place is a device of the account
   - this device, after it hashes a file (`store_content_hash(audio_id,
     audio_dir, here)`, so an import or a recording states its copy at once),
     receives a file whole (`receive_audio_file` in `sync_server.rs`), fetches
-    one, downloads one from the bucket, or promises a peer to keep its copy;
-  - the sender or fetcher, about the peer (`record_copy`); the peer's own
+    one, downloads one from the bucket, or promises a device to keep its copy;
+  - the sender or fetcher, about the device (`record_copy`); the device's own
     newer statement replaces it;
   - `check_files_here(audio_dir, here)`, which compares the audio directory
     with this device's statements and returns (now here, now gone). It runs
@@ -889,7 +889,7 @@ Recording's file" or "no longer holds it". A place is a device of the account
     carrying the purge tag uploads it again.
 - **Removing this device's copy** (FILE-26): `SyncClient.remove_local_copy(audio_id)`
   in `sync_client.rs`. It marks the removal (`begin_removal`, refused while this
-  device has promised a peer to keep the copy: "this device promised <device>
+  device has promised a device to keep the copy: "this device promised <device>
   to keep its copy until <time>…"), then asks for a confirmation now: the
   bucket directly (`bucket_holds`: the object exists and does not carry the
   `voice-purged` tag), then each device stated to hold the file, through
@@ -959,10 +959,10 @@ only slow must not.
 
 | Request | Limits |
 |---|---|
-| Any connection to a peer | Connect: 3 seconds to `localhost`, a loopback, private or link-local address; 10 seconds elsewhere (`connect_timeout_for`) |
+| Any connection to a device | Connect: 3 seconds to `localhost`, a loopback, private or link-local address; 10 seconds elsewhere (`connect_timeout_for`) |
 | Sync requests (`build_client`) | 30 seconds for a read to make progress; 180 seconds in all per request |
-| Fetch from a peer | 30 seconds for a read to make progress; no overall limit |
-| Send to a peer (`send_client_for`) | No read timeout and no overall limit, because the connection reads nothing while a body goes out. `transfer::stall_of_upload` ends the send when no byte of the body moved for 30 seconds (`SEND_STALL`), or 60 seconds after the last byte without an answer (`ANSWER_AFTER_LAST_BYTE`) |
+| Fetch from a device | 30 seconds for a read to make progress; no overall limit |
+| Send to a device (`send_client_for`) | No read timeout and no overall limit, because the connection reads nothing while a body goes out. `transfer::stall_of_upload` ends the send when no byte of the body moved for 30 seconds (`SEND_STALL`), or 60 seconds after the last byte without an answer (`ANSWER_AFTER_LAST_BYTE`) |
 | Bucket upload of a small file or of a part (`bucket_setup::send_signed_watched`) | The same stall watch, plus a 15-minute deadline (`REQUEST_TIMEOUT`, `PART_TIMEOUT`) |
 | Bucket download (`bucket_setup::get_signed_stream`) | Connect 10 seconds; 30 seconds for a read to make progress (`STALL_TIMEOUT`); no overall limit |
 | Bucket existence check | A signed `HEAD` with 30 seconds |
@@ -971,8 +971,8 @@ A transfer (send, fetch, bucket upload, bucket download) is tried three times:
 the second try straight after the first, the third a minute after the second
 (`transfer::TRIES`, `transfer::wait_before_last_try`). After three files failed
 every try the operation stops and names the files it did not attempt
-(`transfer::stop_after_failures`). A try after a broken send asks the peer
-(`missing_on_peer`) how many bytes it now holds and continues from there. A transfer that breaks keeps the bytes that
+(`transfer::stop_after_failures`). A try after a broken send asks the device
+(`missing_on_device`) how many bytes it now holds and continues from there. A transfer that breaks keeps the bytes that
 arrived in its part file on both sides.
 
 ### 8.10 The bucket wizard
@@ -1172,7 +1172,7 @@ warning fails the suite.
 | Question | Start at |
 |---|---|
 | Why is this value shown? | The cache JSON in `notes`, then `rebuild_note_cache` in `database.rs` |
-| Why did a sync not bring something? | `sync_failures`, `sync_peers` cursors, `SYNC_SPECIFICATION.md` section 7 |
+| Why did a sync not bring something? | `sync_failures`, `sync_devices` cursors, `SYNC_SPECIFICATION.md` section 7 |
 | Why is there a conflict? | `field_conflicts`, `bin/voice cli sync conflicts --details` |
 | Where is a Recording's file? | `audio_files.disk_name` in the directory `audiofile_directory` |
 | Which devices hold a Recording? | `file_locations`, `bin/voice cli audiofile-show <id>` (section 8.7) |
@@ -1244,7 +1244,7 @@ seen in part and needs a test before it is fixed.
 7. **`cli storage upload-pending` does not show `too_large`.** The core counts
    the files over the upload limit; `cmd_storage_upload_pending` prints
    uploaded, skipped, failed and deferred only.
-8. **`cli sync now` without `--peer` prints the conflict count as
+8. **`cli sync now` without `--device` prints the conflict count as
    `Errors: N`** (`print(f"    Errors: {result.conflicts}")`).
 9. **The hint `Run: voice config set audiofile_directory ...` lacks `cli`**
    (`src/cli.py`, several places).
@@ -1269,7 +1269,7 @@ seen in part and needs a test before it is fixed.
   `default` account.
 - GUI: the Transcribe button acts on the first Recording of a Note only;
   in-place edits in the Tag hierarchy dialog are never saved; Forget and Rename
-  in the sync dialog with no row selected act on the last peer; several sync
+  in the sync dialog with no row selected act on the last device; several sync
   dialog checks run on the GUI thread and freeze the window; the transcription
   queue does not start at launch.
 - TUI: Ctrl+F can report `0 gap(s) cannot be calculated`.
@@ -1316,7 +1316,7 @@ seen in part and needs a test before it is fixed.
 
 **moto** — A Python library that imitates Amazon's services. The tests run its S3 server on this machine.
 
-**Peer** — Another Voice installation of the same account that this one syncs with.
+**Other device** — Another Voice installation of the same account that this one syncs with.
 
 **Polymorphic association** — A link whose target table is named in a column (`attachment_type`) instead of being fixed.
 

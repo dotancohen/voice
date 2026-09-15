@@ -18,7 +18,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 
 from .conftest import (
     AUTH,
@@ -32,7 +32,7 @@ class TestProtocolVersionHandshake:
     """Tests for protocol version in handshake."""
 
     def test_a_handshake_of_version_one_is_refused_in_words(self, running_server_a: SyncNode):
-        """Everything starts afresh (Stage 16): a 1.x peer is told to update."""
+        """Everything starts afresh (Stage 16): a 1.x device is told to update."""
         response = requests.post(
             f"{running_server_a.url}/sync/handshake",
             headers=AUTH,
@@ -131,7 +131,7 @@ class TestProtocolVersionMismatch:
 
         # Should either accept (backward compatible) or reject
         # Current implementation accepts any version
-        # Everything started afresh (Stage 16): an older peer is told to update
+        # Everything started afresh (Stage 16): an older device is told to update
         assert response.status_code == 426
         assert response.json()["code"] == "PROTOCOL_TOO_OLD"
 
@@ -236,7 +236,7 @@ class TestProtocolCompatibility:
 
 
 class TestProtocolVersionDiscovery:
-    """Tests for discovering peer protocol version."""
+    """Tests for discovering device protocol version."""
 
     def test_discover_server_version_via_status(self, running_server_a: SyncNode):
         """Client can discover server version via status endpoint."""

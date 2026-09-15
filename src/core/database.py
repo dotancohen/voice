@@ -24,7 +24,7 @@ class TagChangeResult(TypedDict):
 
 # Import Database from the Rust extension
 from voicecore import Database as RustDatabase
-from voicecore import set_local_device_id as _rust_set_local_device_id
+from voicecore import set_this_device_id as _rust_set_this_device_id
 from voicecore import set_local_timezone as _rust_set_local_timezone
 
 from .timestamp_utils import local_timezone
@@ -33,18 +33,18 @@ import uuid as uuid_module
 logger = logging.getLogger(__name__)
 
 
-def set_local_device_id(device_id: Union[bytes, str]) -> None:
-    """Set the local device ID for database operations.
+def set_this_device_id(this_device_id: Union[bytes, str]) -> None:
+    """Set this device's id, which the database writes on every change it makes.
 
     Args:
-        device_id: UUID7 bytes or hex string of this device
+        this_device_id: UUID7 bytes or hex string of this device
     """
-    if isinstance(device_id, bytes):
-        device_id = uuid_module.UUID(bytes=device_id).hex
-    _rust_set_local_device_id(device_id)
+    if isinstance(this_device_id, bytes):
+        this_device_id = uuid_module.UUID(bytes=this_device_id).hex
+    _rust_set_this_device_id(this_device_id)
 
 
-__all__ = ["Database", "set_local_device_id"]
+__all__ = ["Database", "set_this_device_id"]
 
 
 class Database:
@@ -337,36 +337,36 @@ class Database:
     # Sync methods
     # ============================================================================
 
-    def get_peer_last_sync(self, peer_device_id: str) -> Optional[int]:
-        """Get the last sync timestamp for a peer.
+    def get_device_last_sync(self, from_device_id: str) -> Optional[int]:
+        """Get the last sync timestamp for a device.
 
         Args:
-            peer_device_id: Peer's device UUID hex string
+            from_device_id: Device's device UUID hex string
 
         Returns:
             Unix timestamp of last sync, or None if never synced.
         """
-        return self._rust_db.get_peer_last_sync(peer_device_id)
+        return self._rust_db.get_device_last_sync(from_device_id)
 
     def reset_sync_timestamps(self) -> None:
-        """Reset sync timestamps to force re-fetching all data from peers.
+        """Reset sync timestamps to force re-fetching all data from devices.
 
-        This sets last_sync_at to NULL for all peers, causing the next sync
-        to exchange all data. Unlike clearing sync peers, this preserves
-        peer configuration.
+        This sets last_sync_at to NULL for all devices, causing the next sync
+        to exchange all data. Unlike clearing sync devices, this preserves
+        device configuration.
         """
         self._rust_db.reset_sync_timestamps()
 
-    def update_peer_sync_time(
-        self, peer_device_id: str, peer_name: Optional[str] = None
+    def update_device_sync_time(
+        self, from_device_id: str, device_name: Optional[str] = None
     ) -> None:
-        """Update or create peer's last sync timestamp.
+        """Update or create device's last sync timestamp.
 
         Args:
-            peer_device_id: Peer's device UUID hex string
-            peer_name: Peer's human-readable name
+            from_device_id: Device's device UUID hex string
+            device_name: Device's human-readable name
         """
-        self._rust_db.update_peer_sync_time(peer_device_id, peer_name)
+        self._rust_db.update_device_sync_time(from_device_id, device_name)
 
     def get_changes_after_seq(
         self, cursor: int = 0, upto: Optional[int] = None, limit: int = 1000
@@ -389,7 +389,7 @@ class Database:
         return self._rust_db.current_seq()
 
     def database_id(self) -> str:
-        """Identity of this database; peers reset their cursors when it changes."""
+        """Identity of this database; devices reset their cursors when it changes."""
         return self._rust_db.database_id()
 
     def account_id(self) -> str:
@@ -399,21 +399,21 @@ class Database:
     def move_to_account(self, account_id: str) -> None:
         """Move this database, notes and all, to another account.
 
-        A snapshot is taken first; every peer is forgotten so the next sync
+        A snapshot is taken first; every device is forgotten so the next sync
         exchanges everything. This is the deliberate way to merge accounts.
         """
         self._rust_db.move_to_account(account_id)
 
-    def list_devices(self) -> List[Dict[str, Any]]:
+    def list_device_cards(self) -> List[Dict[str, Any]]:
         """Every device of the account, as its card says."""
-        return self._rust_db.list_devices()
+        return self._rust_db.list_device_cards()
 
     def not_duplicated(self, audio_dir: Optional[str]) -> Dict[str, int]:
         """What is on this device only: {"notes": n, "recordings": m} (Stage 10)."""
         return self._rust_db.not_duplicated(audio_dir)
 
     def copies_of(self, audio_id: str) -> List[Dict[str, Any]]:
-        """The peers known to hold a copy of a recording, with when that was learnt."""
+        """The devices known to hold a copy of a recording, with when that was learnt."""
         return self._rust_db.copies_of(audio_id)
 
     def file_locations(self, audio_id: str) -> List[Dict[str, Any]]:
@@ -439,16 +439,16 @@ class Database:
         """Everything the user should know about (ISSUE-1)."""
         return self._rust_db.issues(str(audio_dir) if audio_dir else None, here)
 
-    def peer_summaries(self) -> List[Dict[str, Any]]:
-        """Every peer dealt with: when it was last reached and by which operation."""
-        return self._rust_db.peer_summaries()
+    def device_summaries(self) -> List[Dict[str, Any]]:
+        """Every device dealt with: when it was last reached and by which operation."""
+        return self._rust_db.device_summaries()
 
     def admit_device(self, device_id: str, name: str, key_hash: str, certificate_fingerprint: str = "") -> None:
         """Let a device into the account: its card, with the hash of its key."""
         self._rust_db.admit_device(device_id, name, key_hash, certificate_fingerprint)
 
     def revoke_device(self, device_id: str) -> None:
-        """Revoke a device of the account. One way, and it travels to every peer."""
+        """Revoke a device of the account. One way, and it travels to every device."""
         self._rust_db.revoke_device(device_id)
 
     def snapshot(self) -> str:
@@ -546,7 +546,7 @@ class Database:
         return self._rust_db.get_note_conflict_types(note_id)
 
     def accept_conflict(self, conflict_id: str) -> bool:
-        """Accept the merged value as it stands. Propagates to every peer."""
+        """Accept the merged value as it stands. Propagates to every device."""
         return self._rust_db.accept_conflict(conflict_id)
 
     def resolve_conflict_with_content(self, conflict_id: str, content: str) -> bool:

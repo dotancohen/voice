@@ -447,7 +447,7 @@ def create_app(config_dir: Optional[Path] = None, root: Optional[Path] = None) -
     @api_endpoint
     def get_issues() -> tuple[Response, int]:
         """What needs the user's attention (ISSUE-1)."""
-        return jsonify(db.issues(audiofile_directory, config.get_device_id_hex())), 200
+        return jsonify(db.issues(audiofile_directory, config.get_this_device_id_hex())), 200
 
     @app.route("/api/storage/upload-limit", methods=["GET"])
     @api_endpoint

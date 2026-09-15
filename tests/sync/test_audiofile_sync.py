@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 
 # Device IDs for testing
@@ -25,7 +25,7 @@ DEVICE_B = "00000000000070008000000000000002"
 @pytest.fixture
 def device_a_db(tmp_path: Path) -> Database:
     """Create database for device A."""
-    set_local_device_id(DEVICE_A)
+    set_this_device_id(DEVICE_A)
     db_path = tmp_path / "device_a.db"
     db = Database(db_path)
     return db
@@ -34,7 +34,7 @@ def device_a_db(tmp_path: Path) -> Database:
 @pytest.fixture
 def device_b_db(tmp_path: Path) -> Database:
     """Create database for device B."""
-    set_local_device_id(DEVICE_B)
+    set_this_device_id(DEVICE_B)
     db_path = tmp_path / "device_b.db"
     db = Database(db_path)
     return db
@@ -48,7 +48,7 @@ class TestAudioFileSyncBasic:
     ) -> None:
         """Test syncing an audio file from device A to device B."""
         # Create audio file on device A
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file(
             "recording.mp3",
             file_created_at=int(datetime(2024, 6, 15, 10, 30, 0).timestamp())
@@ -59,7 +59,7 @@ class TestAudioFileSyncBasic:
         assert raw is not None
 
         # Apply to device B
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         # apply_sync_audio_file returns None on success (no exception raised)
         device_b_db.apply_sync_audio_file(
             raw["id"],
@@ -81,13 +81,13 @@ class TestAudioFileSyncBasic:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing an audio file with summary."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("recording.mp3")
         device_a_db.update_audio_file_summary(audio_id, "Meeting notes summary")
 
         raw = device_a_db.get_audio_file_raw(audio_id)
 
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw["id"],
             raw["imported_at"],
@@ -106,14 +106,14 @@ class TestAudioFileSyncBasic:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing a deleted audio file."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("recording.mp3")
         device_a_db.delete_audio_file(audio_id)
 
         raw = device_a_db.get_audio_file_raw(audio_id)
         assert raw["deleted_at"] is not None
 
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw["id"],
             raw["imported_at"],
@@ -138,7 +138,7 @@ class TestNoteAttachmentSyncBasic:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing a note attachment from device A to device B."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
 
         # Create note and audio file on device A
         note_id = device_a_db.create_note("Test note")
@@ -153,7 +153,7 @@ class TestNoteAttachmentSyncBasic:
         assert raw_attachment is not None
 
         # Apply to device B (note and audio first)
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
 
         device_b_db.apply_sync_note(
             raw_note["id"],
@@ -194,7 +194,7 @@ class TestNoteAttachmentSyncBasic:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing a detached (soft-deleted) attachment."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
 
         note_id = device_a_db.create_note("Test note")
         audio_id = device_a_db.create_audio_file("recording.mp3")
@@ -211,7 +211,7 @@ class TestNoteAttachmentSyncBasic:
         assert raw_attachment["deleted_at"] is not None
 
         # Apply to device B
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
 
         device_b_db.apply_sync_note(
             raw_note["id"],
@@ -247,12 +247,12 @@ class TestAudioFileSyncUpdates:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing a summary update."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("recording.mp3")
 
         # Sync initial version to device B
         raw1 = device_a_db.get_audio_file_raw(audio_id)
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw1["id"],
             raw1["imported_at"],
@@ -260,12 +260,12 @@ class TestAudioFileSyncUpdates:
         )
 
         # Update summary on device A
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         device_a_db.update_audio_file_summary(audio_id, "Updated summary")
 
         # Sync update to device B
         raw2 = device_a_db.get_audio_file_raw(audio_id)
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw2["id"],
             raw2["imported_at"],
@@ -284,12 +284,12 @@ class TestAudioFileSyncUpdates:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing deletion after initial sync."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("recording.mp3")
 
         # Sync initial version
         raw1 = device_a_db.get_audio_file_raw(audio_id)
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw1["id"],
             raw1["imported_at"],
@@ -297,12 +297,12 @@ class TestAudioFileSyncUpdates:
         )
 
         # Delete on device A
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         device_a_db.delete_audio_file(audio_id)
 
         # Sync deletion
         raw2 = device_a_db.get_audio_file_raw(audio_id)
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw2["id"],
             raw2["imported_at"],
@@ -325,7 +325,7 @@ class TestSyncManyItems:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing 50 audio files."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
 
         # Create 50 audio files on device A
         audio_ids = []
@@ -334,11 +334,11 @@ class TestSyncManyItems:
             audio_ids.append(audio_id)
 
         # Sync all to device B
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         for audio_id in audio_ids:
-            set_local_device_id(DEVICE_A)
+            set_this_device_id(DEVICE_A)
             raw = device_a_db.get_audio_file_raw(audio_id)
-            set_local_device_id(DEVICE_B)
+            set_this_device_id(DEVICE_B)
             device_b_db.apply_sync_audio_file(
                 raw["id"],
                 raw["imported_at"],
@@ -355,7 +355,7 @@ class TestSyncManyItems:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing a note with 20 attachments."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
 
         note_id = device_a_db.create_note("Note with many attachments")
         assoc_ids = []
@@ -367,7 +367,7 @@ class TestSyncManyItems:
 
         # Sync note
         raw_note = device_a_db.get_note_raw(note_id)
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_note(
             raw_note["id"],
             raw_note["created_at"],
@@ -376,11 +376,11 @@ class TestSyncManyItems:
 
         # Sync all audio files and attachments
         for audio_id, assoc_id in assoc_ids:
-            set_local_device_id(DEVICE_A)
+            set_this_device_id(DEVICE_A)
             raw_audio = device_a_db.get_audio_file_raw(audio_id)
             raw_attach = device_a_db.get_note_attachment_raw(assoc_id)
 
-            set_local_device_id(DEVICE_B)
+            set_this_device_id(DEVICE_B)
             device_b_db.apply_sync_audio_file(
                 raw_audio["id"],
                 raw_audio["imported_at"],
@@ -406,12 +406,12 @@ class TestSyncEdgeCases:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing audio file with Unicode filename."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("שיר_יפה_🎵.mp3")
 
         raw = device_a_db.get_audio_file_raw(audio_id)
 
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw["id"],
             raw["imported_at"],
@@ -425,13 +425,13 @@ class TestSyncEdgeCases:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing audio file with Unicode summary."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("recording.mp3")
         device_a_db.update_audio_file_summary(audio_id, "תקציר בעברית 音乐摘要")
 
         raw = device_a_db.get_audio_file_raw(audio_id)
 
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw["id"],
             raw["imported_at"],
@@ -449,14 +449,14 @@ class TestSyncEdgeCases:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing audio file with very long summary."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("recording.mp3")
         long_summary = "x" * 10000
         device_a_db.update_audio_file_summary(audio_id, long_summary)
 
         raw = device_a_db.get_audio_file_raw(audio_id)
 
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
         device_b_db.apply_sync_audio_file(
             raw["id"],
             raw["imported_at"],
@@ -474,7 +474,7 @@ class TestSyncEdgeCases:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test syncing one audio attached to multiple notes."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
 
         audio_id = device_a_db.create_audio_file("shared.mp3")
         note1_id = device_a_db.create_note("Note 1")
@@ -484,7 +484,7 @@ class TestSyncEdgeCases:
         assoc2_id = device_a_db.attach_to_note(note2_id, audio_id, "audio_file")
 
         # Sync to device B
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
 
         # Sync audio
         raw_audio = device_a_db.get_audio_file_raw(audio_id)
@@ -496,9 +496,9 @@ class TestSyncEdgeCases:
 
         # Sync notes
         for note_id in [note1_id, note2_id]:
-            set_local_device_id(DEVICE_A)
+            set_this_device_id(DEVICE_A)
             raw_note = device_a_db.get_note_raw(note_id)
-            set_local_device_id(DEVICE_B)
+            set_this_device_id(DEVICE_B)
             device_b_db.apply_sync_note(
                 raw_note["id"],
                 raw_note["created_at"],
@@ -507,9 +507,9 @@ class TestSyncEdgeCases:
 
         # Sync attachments
         for assoc_id in [assoc1_id, assoc2_id]:
-            set_local_device_id(DEVICE_A)
+            set_this_device_id(DEVICE_A)
             raw_attach = device_a_db.get_note_attachment_raw(assoc_id)
-            set_local_device_id(DEVICE_B)
+            set_this_device_id(DEVICE_B)
             device_b_db.apply_sync_note_attachment(
                 raw_attach["id"],
                 raw_attach["note_id"],
@@ -531,12 +531,12 @@ class TestSyncEdgeCases:
         self, device_a_db: Database, device_b_db: Database
     ) -> None:
         """Test applying the same sync data multiple times (idempotency)."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
         audio_id = device_a_db.create_audio_file("recording.mp3")
 
         raw = device_a_db.get_audio_file_raw(audio_id)
 
-        set_local_device_id(DEVICE_B)
+        set_this_device_id(DEVICE_B)
 
         # Apply same data 3 times - no exception should be raised
         for _ in range(3):
@@ -557,7 +557,7 @@ class TestTheFeed:
 
     def test_get_audio_file_changes(self, device_a_db: Database) -> None:
         """Test that audio file changes appear in the feed."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
 
         # Create audio file
         audio_id = device_a_db.create_audio_file("recording.mp3")
@@ -574,7 +574,7 @@ class TestTheFeed:
 
     def test_get_note_attachment_changes(self, device_a_db: Database) -> None:
         """Test that note attachment changes appear in the feed."""
-        set_local_device_id(DEVICE_A)
+        set_this_device_id(DEVICE_A)
 
         note_id = device_a_db.create_note("Test note")
         audio_id = device_a_db.create_audio_file("recording.mp3")

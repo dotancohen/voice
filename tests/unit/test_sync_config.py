@@ -25,23 +25,23 @@ class TestDeviceId:
 
     def test_device_id_generated_on_first_access(self, sync_config: Config) -> None:
         """Device ID is generated when first accessed."""
-        device_id = sync_config.get_device_id_hex()
+        device_id = sync_config.get_this_device_id_hex()
         assert device_id is not None
         assert len(device_id) == 32  # UUID as hex
 
     def test_device_id_persists(self, sync_config: Config) -> None:
         """Device ID persists across config reloads."""
-        device_id_1 = sync_config.get_device_id_hex()
+        device_id_1 = sync_config.get_this_device_id_hex()
 
         # Reload config
         sync_config_2 = Config(config_dir=sync_config.config_dir)
-        device_id_2 = sync_config_2.get_device_id_hex()
+        device_id_2 = sync_config_2.get_this_device_id_hex()
 
         assert device_id_1 == device_id_2
 
     def test_device_id_hex(self, sync_config: Config) -> None:
         """Device ID hex string is valid."""
-        device_id_hex = sync_config.get_device_id_hex()
+        device_id_hex = sync_config.get_this_device_id_hex()
         assert len(device_id_hex) == 32
         # Should be valid hex
         uuid.UUID(hex=device_id_hex)
@@ -53,22 +53,22 @@ class TestDeviceName:
     def test_default_device_name(self, sync_config: Config) -> None:
         """The default name names the computer and is never "localhost" (UI-11).
         How it is built from each source is tested in the core (config.rs)."""
-        name = sync_config.get_device_name()
+        name = sync_config.get_this_device_name()
         assert name.strip(), "a name"
         assert not name.lower().startswith("localhost"), name
         assert "Voice on" not in name
 
     def test_set_device_name(self, sync_config: Config) -> None:
         """Device name can be changed."""
-        sync_config.set_device_name("My Test Device")
-        assert sync_config.get_device_name() == "My Test Device"
+        sync_config.set_this_device_name("My Test Device")
+        assert sync_config.get_this_device_name() == "My Test Device"
 
     def test_device_name_persists(self, sync_config: Config) -> None:
         """Device name persists across config reloads."""
-        sync_config.set_device_name("Persistent Name")
+        sync_config.set_this_device_name("Persistent Name")
 
         sync_config_2 = Config(config_dir=sync_config.config_dir)
-        assert sync_config_2.get_device_name() == "Persistent Name"
+        assert sync_config_2.get_this_device_name() == "Persistent Name"
 
 
 class TestSyncEnabled:
@@ -103,117 +103,117 @@ class TestSyncServerPort:
         assert sync_config.get_sync_server_port() == 9000
 
 
-class TestPeerManagement:
-    """Test peer configuration management."""
+class TestDeviceManagement:
+    """Test device configuration management."""
 
-    def test_no_peers_by_default(self, sync_config: Config) -> None:
-        """No peers configured by default."""
-        assert sync_config.get_peers() == []
+    def test_no_devices_by_default(self, sync_config: Config) -> None:
+        """No devices configured by default."""
+        assert sync_config.get_devices() == []
 
-    def test_add_peer(self, sync_config: Config) -> None:
-        """Peer can be added."""
-        peer_id = uuid.uuid4().hex
-        sync_config.add_peer(
-            peer_id=peer_id,
-            peer_name="Test Peer",
-            peer_url="https://192.168.1.100:8384",
+    def test_add_device(self, sync_config: Config) -> None:
+        """Device can be added."""
+        device_id = uuid.uuid4().hex
+        sync_config.add_device(
+            device_id=device_id,
+            device_name="Test Device",
+            device_url="https://192.168.1.100:8384",
         )
 
-        peers = sync_config.get_peers()
-        assert len(peers) == 1
-        assert peers[0]["peer_id"] == peer_id
-        assert peers[0]["peer_name"] == "Test Peer"
-        assert peers[0]["peer_url"] == "https://192.168.1.100:8384"
+        devices = sync_config.get_devices()
+        assert len(devices) == 1
+        assert devices[0]["device_id"] == device_id
+        assert devices[0]["device_name"] == "Test Device"
+        assert devices[0]["device_url"] == "https://192.168.1.100:8384"
 
-    def test_add_peer_with_certificate(self, sync_config: Config) -> None:
-        """Peer can be added with certificate fingerprint."""
-        peer_id = uuid.uuid4().hex
+    def test_add_device_with_certificate(self, sync_config: Config) -> None:
+        """Device can be added with certificate fingerprint."""
+        device_id = uuid.uuid4().hex
         fingerprint = "SHA256:abc123def456..."
 
-        sync_config.add_peer(
-            peer_id=peer_id,
-            peer_name="Secure Peer",
-            peer_url="https://example.com:8384",
+        sync_config.add_device(
+            device_id=device_id,
+            device_name="Secure Device",
+            device_url="https://example.com:8384",
             certificate_fingerprint=fingerprint,
         )
 
-        peer = sync_config.get_peer(peer_id)
-        assert peer is not None
-        assert peer["certificate_fingerprint"] == fingerprint
+        device = sync_config.get_device(device_id)
+        assert device is not None
+        assert device["certificate_fingerprint"] == fingerprint
 
-    def test_add_multiple_peers(self, sync_config: Config) -> None:
-        """Multiple peers can be added."""
-        peer_id_1 = uuid.uuid4().hex
-        peer_id_2 = uuid.uuid4().hex
+    def test_add_multiple_devices(self, sync_config: Config) -> None:
+        """Multiple devices can be added."""
+        other_device_id_1 = uuid.uuid4().hex
+        other_device_id_2 = uuid.uuid4().hex
 
-        sync_config.add_peer(peer_id_1, "Peer 1", "https://host1:8384")
-        sync_config.add_peer(peer_id_2, "Peer 2", "https://host2:8384")
+        sync_config.add_device(other_device_id_1, "Device 1", "https://host1:8384")
+        sync_config.add_device(other_device_id_2, "Device 2", "https://host2:8384")
 
-        assert len(sync_config.get_peers()) == 2
+        assert len(sync_config.get_devices()) == 2
 
-    def test_update_existing_peer(self, sync_config: Config) -> None:
-        """Adding peer with same ID updates existing peer."""
-        peer_id = uuid.uuid4().hex
+    def test_update_existing_device(self, sync_config: Config) -> None:
+        """Adding device with same ID updates existing device."""
+        device_id = uuid.uuid4().hex
 
-        sync_config.add_peer(peer_id, "Original Name", "https://host1:8384")
-        sync_config.add_peer(peer_id, "Updated Name", "https://host2:8384")
+        sync_config.add_device(device_id, "Original Name", "https://host1:8384")
+        sync_config.add_device(device_id, "Updated Name", "https://host2:8384")
 
-        peers = sync_config.get_peers()
-        assert len(peers) == 1
-        assert peers[0]["peer_name"] == "Updated Name"
-        assert peers[0]["peer_url"] == "https://host2:8384"
+        devices = sync_config.get_devices()
+        assert len(devices) == 1
+        assert devices[0]["device_name"] == "Updated Name"
+        assert devices[0]["device_url"] == "https://host2:8384"
 
-    def test_remove_peer(self, sync_config: Config) -> None:
-        """Peer can be removed."""
-        peer_id = uuid.uuid4().hex
-        sync_config.add_peer(peer_id, "Test Peer", "https://host:8384")
+    def test_remove_device(self, sync_config: Config) -> None:
+        """Device can be removed."""
+        device_id = uuid.uuid4().hex
+        sync_config.add_device(device_id, "Test Device", "https://host:8384")
 
-        result = sync_config.remove_peer(peer_id)
+        result = sync_config.remove_device(device_id)
 
         assert result is True
-        assert sync_config.get_peers() == []
+        assert sync_config.get_devices() == []
 
-    def test_remove_nonexistent_peer(self, sync_config: Config) -> None:
-        """Removing nonexistent peer returns False."""
-        result = sync_config.remove_peer(uuid.uuid4().hex)
+    def test_remove_nonexistent_device(self, sync_config: Config) -> None:
+        """Removing nonexistent device returns False."""
+        result = sync_config.remove_device(uuid.uuid4().hex)
         assert result is False
 
-    def test_get_peer(self, sync_config: Config) -> None:
-        """Individual peer can be retrieved."""
-        peer_id = uuid.uuid4().hex
-        sync_config.add_peer(peer_id, "Test Peer", "https://host:8384")
+    def test_get_device(self, sync_config: Config) -> None:
+        """Individual device can be retrieved."""
+        device_id = uuid.uuid4().hex
+        sync_config.add_device(device_id, "Test Device", "https://host:8384")
 
-        peer = sync_config.get_peer(peer_id)
+        device = sync_config.get_device(device_id)
 
-        assert peer is not None
-        assert peer["peer_id"] == peer_id
+        assert device is not None
+        assert device["device_id"] == device_id
 
-    def test_get_nonexistent_peer(self, sync_config: Config) -> None:
-        """Getting nonexistent peer returns None."""
-        peer = sync_config.get_peer(uuid.uuid4().hex)
-        assert peer is None
+    def test_get_nonexistent_device(self, sync_config: Config) -> None:
+        """Getting nonexistent device returns None."""
+        device = sync_config.get_device(uuid.uuid4().hex)
+        assert device is None
 
-    def test_update_peer_certificate(self, sync_config: Config) -> None:
-        """Peer certificate can be updated (TOFU)."""
-        peer_id = uuid.uuid4().hex
-        sync_config.add_peer(peer_id, "Test Peer", "https://host:8384")
+    def test_update_device_certificate(self, sync_config: Config) -> None:
+        """Device certificate can be updated (TOFU)."""
+        device_id = uuid.uuid4().hex
+        sync_config.add_device(device_id, "Test Device", "https://host:8384")
 
-        result = sync_config.update_peer_certificate(peer_id, "SHA256:newfingerprint")
+        result = sync_config.update_device_certificate(device_id, "SHA256:newfingerprint")
 
         assert result is True
-        peer = sync_config.get_peer(peer_id)
-        assert peer["certificate_fingerprint"] == "SHA256:newfingerprint"
+        device = sync_config.get_device(device_id)
+        assert device["certificate_fingerprint"] == "SHA256:newfingerprint"
 
-    def test_peers_persist(self, sync_config: Config) -> None:
-        """Peers persist across config reloads."""
-        peer_id = uuid.uuid4().hex
-        sync_config.add_peer(peer_id, "Persistent Peer", "https://host:8384")
+    def test_devices_persist(self, sync_config: Config) -> None:
+        """Devices persist across config reloads."""
+        device_id = uuid.uuid4().hex
+        sync_config.add_device(device_id, "Persistent Device", "https://host:8384")
 
         sync_config_2 = Config(config_dir=sync_config.config_dir)
-        peers = sync_config_2.get_peers()
+        devices = sync_config_2.get_devices()
 
-        assert len(peers) == 1
-        assert peers[0]["peer_id"] == peer_id
+        assert len(devices) == 1
+        assert devices[0]["device_id"] == device_id
 
 
 class TestCertsDir:

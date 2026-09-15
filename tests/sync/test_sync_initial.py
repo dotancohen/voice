@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 from voicecore import SyncClient
 
 from .conftest import (
@@ -38,7 +38,7 @@ class TestInitialSyncEmptyLocal:
     def test_initial_sync_pulls_all_notes(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Initial sync pulls all notes from peer."""
+        """Initial sync pulls all notes from device."""
         node_a, node_b = two_nodes_with_servers
 
         # Create notes on B
@@ -49,7 +49,7 @@ class TestInitialSyncEmptyLocal:
         assert get_note_count(node_b) == 10
 
         # A does initial sync with B
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -59,7 +59,7 @@ class TestInitialSyncEmptyLocal:
     def test_initial_sync_pulls_all_tags(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Initial sync pulls all tags from peer."""
+        """Initial sync pulls all tags from device."""
         node_a, node_b = two_nodes_with_servers
 
         # Create tags on B
@@ -70,7 +70,7 @@ class TestInitialSyncEmptyLocal:
         assert get_tag_count(node_b) == 5
 
         # A does initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -89,7 +89,7 @@ class TestInitialSyncEmptyLocal:
         grandchild = create_tag_on_node(node_b, "Grandchild", child)
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
@@ -109,11 +109,11 @@ class TestInitialSyncEmptyLocal:
         # Create tagged notes on B
         tag = create_tag_on_node(node_b, "Important")
         note = create_note_on_node(node_b, "Tagged note")
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.add_tag_to_note(note, tag)
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
@@ -136,7 +136,7 @@ class TestInitialSyncLocalHasData:
         note_b = create_note_on_node(node_b, "Remote note from B")
 
         # Initial sync from A to B
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -157,7 +157,7 @@ class TestInitialSyncLocalHasData:
         note_a = create_note_on_node(node_a, "Note from A")
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -184,11 +184,11 @@ class TestInitialSyncLocalHasData:
 
         # Modify on B (later) - use full second for timestamp precision
         time.sleep(1.1)
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "B's newer version")
 
         # A does initial sync - only B edited since last sync, so update applies cleanly
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
@@ -217,14 +217,14 @@ class TestInitialSyncLocalHasData:
         time.sleep(1.1)
 
         # Both sides edit (after last sync)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.update_note(note_id, "A's edit")
 
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.update_note(note_id, "B's edit")
 
         # A does initial sync - both edited, so conflict
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
@@ -249,7 +249,7 @@ class TestInitialSyncRemoteEmpty:
         tag = create_tag_on_node(node_a, "LocalTag")
 
         # Initial sync - should just push (plus pull system tags from B)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -272,7 +272,7 @@ class TestInitialSyncRemoteEmpty:
         assert get_note_count(node_b) == 0
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -301,7 +301,7 @@ class TestInitialSyncLargeDatasets:
             create_note_on_node(node_b, f"Note {i} " + "x" * 100)
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -320,7 +320,7 @@ class TestInitialSyncLargeDatasets:
             create_note_on_node(node_b, content)
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -346,7 +346,7 @@ class TestInitialSyncReturnsResults:
             create_note_on_node(node_b, f"Note {i}")
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -363,7 +363,7 @@ class TestInitialSyncReturnsResults:
             create_note_on_node(node_a, f"Note {i}")
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -375,7 +375,7 @@ class TestInitialSyncReturnsResults:
         """Initial sync reports success status."""
         node_a, node_b = two_nodes_with_servers
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         result = client.initial_sync(node_b.device_id_hex)
 
@@ -385,9 +385,9 @@ class TestInitialSyncReturnsResults:
 class TestInitialSyncErrorHandling:
     """Tests for initial sync error handling."""
 
-    def test_initial_sync_unknown_peer(self, sync_node_a: SyncNode):
-        """Initial sync with unknown peer fails gracefully."""
-        set_local_device_id(sync_node_a.device_id)
+    def test_initial_sync_unknown_device(self, sync_node_a: SyncNode):
+        """Initial sync with unknown device fails gracefully."""
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
 
         result = client.initial_sync("00000000000070008000000000099999")
@@ -395,18 +395,18 @@ class TestInitialSyncErrorHandling:
         assert result.success is False
         assert len(result.errors) > 0
 
-    def test_initial_sync_unreachable_peer(
+    def test_initial_sync_unreachable_device(
         self, sync_node_a: SyncNode, sync_node_b: SyncNode
     ):
-        """Initial sync with unreachable peer fails gracefully."""
-        # Add peer but don't start server
-        sync_node_a.config.add_peer(
-            peer_id=sync_node_b.device_id_hex,
-            peer_name="OfflinePeer",
-            peer_url=sync_node_b.url,
+        """Initial sync with unreachable device fails gracefully."""
+        # Add device but don't start server
+        sync_node_a.config.add_device(
+            device_id=sync_node_b.device_id_hex,
+            device_name="OfflineDevice",
+            device_url=sync_node_b.url,
         )
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
 
         result = client.initial_sync(sync_node_b.device_id_hex)
@@ -420,15 +420,15 @@ class TestInitialSyncErrorHandling:
         # Create local data
         note = create_note_on_node(sync_node_a, "Important local data")
 
-        # Add unreachable peer
-        sync_node_a.config.add_peer(
-            peer_id=sync_node_b.device_id_hex,
-            peer_name="OfflinePeer",
-            peer_url=sync_node_b.url,
+        # Add unreachable device
+        sync_node_a.config.add_device(
+            device_id=sync_node_b.device_id_hex,
+            device_name="OfflineDevice",
+            device_url=sync_node_b.url,
         )
 
         # Attempt initial sync (will fail)
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
         client = SyncClient(str(sync_node_a.config_dir))
         client.initial_sync(sync_node_b.device_id_hex)
 
@@ -451,7 +451,7 @@ class TestInitialSyncVsRegularSync:
         note1 = create_note_on_node(node_b, "Initial note")
 
         # Initial sync
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 
@@ -476,7 +476,7 @@ class TestInitialSyncVsRegularSync:
         # Create data and initial sync
         create_note_on_node(node_b, "Test note")
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         client = SyncClient(str(node_a.config_dir))
         client.initial_sync(node_b.device_id_hex)
 

@@ -23,9 +23,9 @@ class TestWebApiAttachmentDisplay:
 
     def test_note_response_has_content_before_attachments(self, tmp_path: Path) -> None:
         """Test that note API response structure has content field."""
-        from core.database import Database, set_local_device_id
+        from core.database import Database, set_this_device_id
 
-        set_local_device_id("00000000000070008000000000000001")
+        set_this_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")
 
         note_id = db.create_note("Note content appears here")
@@ -39,9 +39,9 @@ class TestWebApiAttachmentDisplay:
 
     def test_attachments_endpoint_returns_display_fields(self, tmp_path: Path) -> None:
         """Test that attachments have all required display fields."""
-        from core.database import Database, set_local_device_id
+        from core.database import Database, set_this_device_id
 
-        set_local_device_id("00000000000070008000000000000001")
+        set_this_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")
 
         note_id = db.create_note("Test note")
@@ -61,9 +61,9 @@ class TestWebApiAttachmentDisplay:
 
     def test_multiple_attachments_all_displayed(self, tmp_path: Path) -> None:
         """Test that all attachments are returned for a note."""
-        from core.database import Database, set_local_device_id
+        from core.database import Database, set_this_device_id
 
-        set_local_device_id("00000000000070008000000000000001")
+        set_this_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")
 
         note_id = db.create_note("Note with multiple attachments")
@@ -118,9 +118,9 @@ class TestTuiAttachmentDisplay:
 
     def test_tui_displays_attachment_fields(self, tmp_path: Path) -> None:
         """Test that TUI displays required attachment fields."""
-        from core.database import Database, set_local_device_id
+        from core.database import Database, set_this_device_id
 
-        set_local_device_id("00000000000070008000000000000001")
+        set_this_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")
 
         note_id = db.create_note("Test note")

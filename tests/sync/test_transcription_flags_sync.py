@@ -24,7 +24,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core import transcription_flags as flags
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 
 from .conftest import (
     DEVICE_A_ID,
@@ -52,11 +52,11 @@ def two_nodes_with_audiofiles(tmp_path: Path) -> Generator[Tuple[SyncNode, SyncN
         directory.mkdir()
         node.config.set_audiofile_directory(str(directory))
 
-    node_a.config.add_peer(
-        peer_id=node_b.device_id_hex, peer_name=node_b.name, peer_url=node_b.url
+    node_a.config.add_device(
+        device_id=node_b.device_id_hex, device_name=node_b.name, device_url=node_b.url
     )
-    node_b.config.add_peer(
-        peer_id=node_a.device_id_hex, peer_name=node_a.name, peer_url=node_a.url
+    node_b.config.add_device(
+        device_id=node_a.device_id_hex, device_name=node_a.name, device_url=node_a.url
     )
 
     start_sync_server(node_a)
@@ -75,7 +75,7 @@ def two_nodes_with_audiofiles(tmp_path: Path) -> Generator[Tuple[SyncNode, SyncN
 
 
 def _transcription_on(node: SyncNode, audio_id: str, content: str, state: str) -> str:
-    set_local_device_id(node.device_id)
+    set_this_device_id(node.device_id)
     return node.db.create_transcription(
         audio_file_id=audio_id,
         content=content,
@@ -98,7 +98,7 @@ class TestFlagsSurviveSync:
     ) -> None:
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("הקלטה.opus")
         transcription_id = _transcription_on(
             node_a, audio_id, "שלום עולם", flags.DEFAULT_FLAGS
@@ -117,7 +117,7 @@ class TestFlagsSurviveSync:
     ) -> None:
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("פגישה.opus")
         transcription_id = _transcription_on(
             node_a, audio_id, "תמלול", flags.DEFAULT_FLAGS
@@ -143,7 +143,7 @@ class TestFlagsSurviveSync:
     ) -> None:
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("הרצאה.opus")
         verified = flags.toggle_flag(flags.DEFAULT_FLAGS, "verified")
         transcription_id = _transcription_on(node_a, audio_id, "תמלול", verified)
@@ -168,7 +168,7 @@ class TestFlagsSurviveSync:
     ) -> None:
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("ראיון.opus")
         transcription_id = _transcription_on(
             node_a, audio_id, "תמלול", flags.DEFAULT_FLAGS
@@ -177,7 +177,7 @@ class TestFlagsSurviveSync:
         node_b.reload_db()
 
         # B is the phone: it turns Polished on
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         polished = flags.toggle_flag(flags.DEFAULT_FLAGS, "polished")
         node_b.db.update_transcription(transcription_id, "תמלול", state=polished)
 
@@ -199,7 +199,7 @@ class TestFlagsSurviveSync:
         """
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("contract.opus")
         transcription_id = _transcription_on(node_a, audio_id, "תמלול", case["field"])
 
@@ -218,7 +218,7 @@ class TestFlagsSurviveSync:
     ) -> None:
         node_a, node_b = two_nodes_with_audiofiles
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         audio_id = node_a.db.create_audio_file("שתיים.opus")
         verified = flags.toggle_flag(flags.DEFAULT_FLAGS, "verified")
         first = _transcription_on(node_a, audio_id, "ראשון", verified)

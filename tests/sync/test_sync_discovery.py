@@ -1,6 +1,6 @@
 """Finding each other on the local network (Stage 7): the announcement carries
 the hash of the account id, never the id; a browse finds a device of the
-account by that hash; an operation that does not reach its peer asks the
+account by that hash; an operation that does not reach its device asks the
 network and remembers the address that answers."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.discovery import Announcer, account_hash, browse, find_peer_url, looks_unreachable, run_with_discovery
+from src.core.discovery import Announcer, account_hash, browse, find_device_url, looks_unreachable, run_with_discovery
 
 ACCOUNT = "0199aaaaaaaa7000800000000000000a"
 OTHER = "0199aaaaaaaa7000800000000000000b"
@@ -26,7 +26,7 @@ class TestAccountHash:
 
 
 class TestUnreachable:
-    def test_a_refusal_is_not_an_unreachable_peer(self) -> None:
+    def test_a_refusal_is_not_an_unreachable_device(self) -> None:
         assert looks_unreachable(["Handshake failed: error sending request for url (https://desk:8384/sync/handshake): connect"])
         assert not looks_unreachable(["This device is not known there (DEVICE_UNKNOWN)"])
 
@@ -38,7 +38,7 @@ class TestOnTheLoopback:
         announcer = Announcer(ACCOUNT, DEVICE, "Desk", 8384, "AAAA", interfaces=LOOPBACK, addresses=["127.0.0.1"])
         announcer.start()
         try:
-            found = find_peer_url(ACCOUNT, DEVICE, timeout_seconds=6.0, interfaces=LOOPBACK)
+            found = find_device_url(ACCOUNT, DEVICE, timeout_seconds=6.0, interfaces=LOOPBACK)
             assert found is not None, "the listener announced on the loopback was not found"
             assert found.device_id == DEVICE
             assert found.name == "Desk"
@@ -51,12 +51,12 @@ class TestOnTheLoopback:
 
 class _Config:
     def __init__(self) -> None:
-        self.peers = [{"peer_id": DEVICE, "peer_name": "Desk", "peer_url": "https://10.9.9.9:1"}]
+        self.devices = [{"device_id": DEVICE, "device_name": "Desk", "device_url": "https://10.9.9.9:1"}]
         self.added = []
 
-    def add_peer(self, peer_id, name, url, fingerprint, allow_update):
-        self.added.append((peer_id, name, url, fingerprint))
-        self.peers[0]["peer_url"] = url
+    def add_device(self, device_id, name, url, fingerprint, allow_update):
+        self.added.append((device_id, name, url, fingerprint))
+        self.devices[0]["device_url"] = url
 
 
 class _Result:
@@ -69,18 +69,18 @@ class TestRunWithDiscovery:
         config = _Config()
         calls = []
 
-        def operation(peer_id):
-            calls.append(config.peers[0]["peer_url"])
+        def operation(device_id):
+            calls.append(config.devices[0]["device_url"])
             return _Result(len(calls) > 1)
 
         from src.core import discovery
-        monkeypatch.setattr(discovery, "find_peer_url", lambda *a, **k: discovery.Found(DEVICE, "Desk", ["https://192.168.1.7:8384"], "BBBB", account_hash(ACCOUNT)))
+        monkeypatch.setattr(discovery, "find_device_url", lambda *a, **k: discovery.Found(DEVICE, "Desk", ["https://192.168.1.7:8384"], "BBBB", account_hash(ACCOUNT)))
         # First run: reached, no browse
-        result = run_with_discovery(config, ACCOUNT, config.peers[0], lambda p: _Result(True))
+        result = run_with_discovery(config, ACCOUNT, config.devices[0], lambda p: _Result(True))
         assert result.success and config.added == []
         # Silence at the remembered address: browse, remember, run again
         calls.clear()
-        result = run_with_discovery(config, ACCOUNT, config.peers[0], lambda p: (calls.append(config.peers[0]["peer_url"]), _Result(len(calls) > 1, [] if len(calls) > 1 else ["Handshake failed: connect timed out"]))[1])
+        result = run_with_discovery(config, ACCOUNT, config.devices[0], lambda p: (calls.append(config.devices[0]["device_url"]), _Result(len(calls) > 1, [] if len(calls) > 1 else ["Handshake failed: connect timed out"]))[1])
         assert result.success
         assert calls == ["https://10.9.9.9:1", "https://192.168.1.7:8384"]
         assert config.added == [(DEVICE, "Desk", "https://192.168.1.7:8384", "BBBB")]
@@ -88,6 +88,6 @@ class TestRunWithDiscovery:
     def test_a_refusal_does_not_browse(self, monkeypatch) -> None:
         config = _Config()
         from src.core import discovery
-        monkeypatch.setattr(discovery, "find_peer_url", lambda *a, **k: pytest.fail("browsed after a refusal"))
-        result = run_with_discovery(config, ACCOUNT, config.peers[0], lambda p: _Result(False, ["Refused (DEVICE_UNKNOWN)"]))
+        monkeypatch.setattr(discovery, "find_device_url", lambda *a, **k: pytest.fail("browsed after a refusal"))
+        result = run_with_discovery(config, ACCOUNT, config.devices[0], lambda p: _Result(False, ["Refused (DEVICE_UNKNOWN)"]))
         assert not result.success and config.added == []

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from voicecore import SyncClient, upload_pending_audio_files
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 from core.storage_setup import SetupState, create_bucket, save, take_key
 from tests.local_s3 import REGION
 
@@ -31,15 +31,15 @@ def pair(tmp_path: Path):
         node.config.set_audiofile_directory(str(audio_dir))
     start_sync_server(node_b)
     assert node_b.wait_for_server()
-    node_a.config.add_peer(node_b.device_id_hex, node_b.name, node_b.url)
+    node_a.config.add_device(node_b.device_id_hex, node_b.name, node_b.url)
     yield node_a, node_b
     node_b.stop_server()
     node_a.db.close()
     node_b.db.close()
 
 
-def sync_a(node_a: SyncNode, node_b: SyncNode, operation: str = "sync_with_peer"):
-    set_local_device_id(node_a.device_id)
+def sync_a(node_a: SyncNode, node_b: SyncNode, operation: str = "sync_with_device"):
+    set_this_device_id(node_a.device_id)
     result = getattr(SyncClient(str(node_a.config_dir)), operation)(node_b.device_id_hex)
     assert result.success, result.errors
     return result
@@ -66,11 +66,11 @@ def test_a_copy_removed_on_one_device_while_another_uploads_is_known_on_both(pai
 
     # At once: A removes its copy to save space, once B promises to keep its
     # own (FILE-26); B uploads the file
-    set_local_device_id(node_a.device_id)
+    set_this_device_id(node_a.device_id)
     removed = SyncClient(str(node_a.config_dir)).remove_local_copy(audio_id)
     assert removed.endswith(f"{node_b.name} holds it"), removed
     assert not local_path(node_a, audio_id).exists()
-    set_local_device_id(node_b.device_id)
+    set_this_device_id(node_b.device_id)
     uploaded = upload_pending_audio_files(str(node_b.config_dir))
     assert (uploaded.uploaded, uploaded.failed) == (1, 0), uploaded.errors
 

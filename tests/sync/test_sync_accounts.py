@@ -82,10 +82,10 @@ class TestAccountIdentity:
         start_sync_server(node_b)
         try:
             assert node_b.wait_for_server()
-            node_a.config.add_peer(node_b.device_id_hex, node_b.name, node_b.url)
+            node_a.config.add_device(node_b.device_id_hex, node_b.name, node_b.url)
             client = SyncClient(str(node_a.config_dir))
 
-            result = client.sync_with_peer(node_b.device_id_hex)
+            result = client.sync_with_device(node_b.device_id_hex)
 
             assert not result.success
             # The headers name an account the server does not hold, so the
@@ -117,10 +117,10 @@ class TestSnapshots:
         """Before anything is applied, each side copies its database (SNAP-3)."""
         node_a, node_b = two_nodes_with_servers
         create_note_on_node(node_a, "לפני הסנכרון")
-        node_a.config.add_peer(node_b.device_id_hex, node_b.name, node_b.url)
+        node_a.config.add_device(node_b.device_id_hex, node_b.name, node_b.url)
         client = SyncClient(str(node_a.config_dir))
 
-        result = client.sync_with_peer(node_b.device_id_hex)
+        result = client.sync_with_device(node_b.device_id_hex)
 
         assert result.success, result.errors
         assert (node_a.config_dir / "snapshots").is_dir()
@@ -145,16 +145,16 @@ class TestSnapshots:
 
 
 class TestAccountMove:
-    def test_a_move_keeps_the_notes_and_forgets_the_peers(self, sync_node_a: SyncNode):
+    def test_a_move_keeps_the_notes_and_forgets_the_devices(self, sync_node_a: SyncNode):
         """ACCT-5: the deliberate way to merge accounts."""
         note_id = sync_node_a.db.create_note("עובר איתי")
-        sync_node_a.db.update_peer_sync_time("00000000000070008000000000000099", "Desk")
+        sync_node_a.db.update_device_sync_time("00000000000070008000000000000099", "Desk")
 
         sync_node_a.db.move_to_account(OTHER_ACCOUNT_ID)
 
         assert sync_node_a.db.account_id() == OTHER_ACCOUNT_ID
         assert sync_node_a.db.get_note(note_id) is not None
-        assert sync_node_a.db.get_peer_last_sync("00000000000070008000000000000099") is None
+        assert sync_node_a.db.get_device_last_sync("00000000000070008000000000000099") is None
         assert sync_node_a.db.list_snapshots(), "a snapshot was taken first"
 
     def test_a_move_needs_a_valid_id(self, sync_node_a: SyncNode):

@@ -54,7 +54,7 @@ class TestDeviceCommands:
         listed = run_cli(test_db_path.parent, "device", "list")
         assert "Lost phone" in listed.stdout
 
-        own = json.loads((test_db_path.parent / "config.json").read_text())["device_id"]
+        own = json.loads((test_db_path.parent / "config.json").read_text())["this_device_id"]
         refused = run_cli(test_db_path.parent, "device", "revoke", own)
         assert refused.returncode == 1
         assert "This is this device" in refused.stderr
@@ -62,6 +62,6 @@ class TestDeviceCommands:
         revoked = run_cli(test_db_path.parent, "device", "revoke", OTHER_DEVICE[:8])
         assert revoked.returncode == 0, revoked.stderr
         assert "Revoked Lost phone" in revoked.stdout
-        cards = {c["device_id"]: c for c in Database(test_db_path).list_devices()}
+        cards = {c["device_id"]: c for c in Database(test_db_path).list_device_cards()}
         assert cards[OTHER_DEVICE]["revoked"] is True
         assert cards[own]["revoked"] is False

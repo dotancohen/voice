@@ -16,18 +16,18 @@ the person who runs a sync server has to do. The rules themselves are in
 
 ## The connection is encrypted by default
 
-- `sync serve` (and File → Listen for peers in the GUI) serves **HTTPS** with
+- `sync serve` (and File → Listen for devices in the GUI) serves **HTTPS** with
   the machine's own self-signed certificate, `<root>/certs/server.crt` with its
   key `<root>/certs/server.key` (mode 0600). Both are made at the first start
   of the listener.
-- A caller verifies a peer's certificate in one of two ways, and verification
+- A caller verifies a device's certificate in one of two ways, and verification
   is never switched off:
-  - a peer with a pinned fingerprint is checked against that fingerprint only;
-  - a peer without one is checked against the system's root certificates, so a
+  - a device with a pinned fingerprint is checked against that fingerprint only;
+  - a device without one is checked against the system's root certificates, so a
     self-signed listener is refused.
 - **There is no trust on first use.** A fingerprint is pinned by pairing
   (`account join`, `account grant-host`: the setup text carries it as `f=`), by
-  `sync add-peer --fingerprint`, or by LAN discovery. A wrong certificate is
+  `sync add-device --fingerprint`, or by LAN discovery. A wrong certificate is
   refused with `CERTIFICATE_MISMATCH`.
 - A setup text shown by `account show-code` on an **indexed root** (a root with
   `accounts.db`) currently carries no `f=`: the code looks for the certificate
@@ -47,8 +47,8 @@ the person who runs a sync server has to do. The rules themselves are in
   key. The listener refuses a device it does not know (`DEVICE_UNKNOWN`), a
   wrong key (`KEY_WRONG`), a missing key (`KEY_MISSING`), an account it does
   not serve (`ACCOUNT_UNKNOWN`) and a revoked device (`DEVICE_REVOKED`).
-- Adding a peer by hand does not let a device in: only pairing gives a device a
-  key. `device revoke <id>` shuts a device out on every peer that has received
+- Adding a device by hand does not let a device in: only pairing gives a device a
+  key. `device revoke <id>` shuts a device out on every device that has received
   the revocation.
 - A setup text is valid for ten minutes and one use; five wrong tokens withdraw
   it. After three refusals from one address, each further refusal is answered

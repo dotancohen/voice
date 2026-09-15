@@ -1,5 +1,5 @@
 """Proof that it worked (Stage 10): the line "X notes and Y recordings are not
-duplicated off this device", the peers' last operation, and where a
+duplicated off this device", the devices' last operation, and where a
 recording's copies are."""
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def status(node: SyncNode) -> dict:
 
 
 class TestProof:
-    def test_a_note_a_peer_pulled_from_this_listener_counts_as_duplicated(self, tmp_path: Path) -> None:
+    def test_a_note_a_device_pulled_from_this_listener_counts_as_duplicated(self, tmp_path: Path) -> None:
         """D29: B pulls A's new note from A's listener; A counts it as duplicated,
         by the cursor B confirms, without A starting any operation."""
         a = create_sync_node("a", DEVICE_A_ID, tmp_path)
@@ -43,9 +43,9 @@ class TestProof:
         try:
             assert a.wait_for_server()
             b.db.close()
-            added = cli(b, "sync", "add-peer", a.device_id_hex, "A", a.url)
+            added = cli(b, "sync", "add-device", a.device_id_hex, "A", a.url)
             assert added.returncode == 0, added.stderr
-            pulled = cli(b, "sync", "now", "--peer", a.device_id_hex)
+            pulled = cli(b, "sync", "now", "--device", a.device_id_hex)
             assert pulled.returncode == 0, pulled.stderr
             assert status(a)["not_duplicated"]["notes"] == 0, "the note B holds is duplicated off A"
         finally:
@@ -69,17 +69,17 @@ class TestProof:
         start_sync_server(b)
         try:
             assert b.wait_for_server()
-            added = cli(a, "sync", "add-peer", b.device_id_hex, "B", b.url)
+            added = cli(a, "sync", "add-device", b.device_id_hex, "B", b.url)
             assert added.returncode == 0, added.stderr
-            synced = cli(a, "sync", "now", "--peer", b.device_id_hex)
+            synced = cli(a, "sync", "now", "--device", b.device_id_hex)
             assert synced.returncode == 0, synced.stderr
             after = status(a)
             assert after["not_duplicated"] == {"notes": 0, "recordings": 0}
-            peers = after["peers"]
-            assert len(peers) == 1
-            assert peers[0]["peer_id"] == b.device_id_hex
-            assert peers[0]["last_operation"] == "sync"
-            assert peers[0]["last_reached_at"] is not None
+            devices = after["devices"]
+            assert len(devices) == 1
+            assert devices[0]["device_id"] == b.device_id_hex
+            assert devices[0]["last_operation"] == "sync"
+            assert devices[0]["last_reached_at"] is not None
             text = cli(a, "sync", "status", fmt="text").stdout
             assert "B: last reached" in text and "last operation: sync" in text
         finally:

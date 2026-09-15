@@ -31,7 +31,7 @@ account with any company, or an internet connection:
 ## Major Features
 
 - Note-taking application with hierarchical tags.
-- Sync notes between your own devices, peer to peer: no central service.
+- Sync notes between your own devices, device to device: no central service.
 - Several accounts on one installation, and one server can host the accounts of
   several people.
 - GUI, TUI, CLI, and Web API interfaces.

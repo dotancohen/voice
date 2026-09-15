@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from voicecore import get_local_device_id
+from voicecore import get_this_device_id
 
 from src.core.models import UUID_SHORT_LEN
 
@@ -28,10 +28,10 @@ def place_names(db, config=None) -> Dict[str, str]:
     """The name of every device the database or the configuration knows, by id."""
     names: Dict[str, str] = {}
     if config is not None:
-        for peer in config.get_peers():
-            if peer.get("peer_name"):
-                names[peer["peer_id"]] = peer["peer_name"]
-    for card in db.list_devices():
+        for device in config.get_devices():
+            if device.get("device_name"):
+                names[device["device_id"]] = device["device_name"]
+    for card in db.list_device_cards():
         if card.get("name"):
             names.setdefault(card["device_id"], card["name"])
     return names
@@ -39,7 +39,7 @@ def place_names(db, config=None) -> Dict[str, str]:
 
 def place_label(place: str, names: Dict[str, str], here: Optional[str] = None) -> str:
     """"the bucket", "this device", a device's name, or the start of its id."""
-    here = here or get_local_device_id()
+    here = here or get_this_device_id()
     if place == "cloud":
         return "the bucket"
     if place == here:
@@ -113,7 +113,7 @@ MADE_HERE_BUT_MISSING = {
 
 def _here(config) -> Optional[str]:
     """This device's id from the configuration, when there is one."""
-    return config.get_device_id_hex() if config is not None else None
+    return config.get_this_device_id_hex() if config is not None else None
 
 
 def location_lines(db, audio_id: str, config=None) -> List[str]:

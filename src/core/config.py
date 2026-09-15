@@ -86,17 +86,17 @@ class Config:
 
     # ===== Sync Configuration Methods =====
 
-    def get_device_id_hex(self) -> str:
+    def get_this_device_id_hex(self) -> str:
         """Get the device ID as hex string."""
-        return self._rust_config.get_device_id_hex()
+        return self._rust_config.get_this_device_id_hex()
 
-    def get_device_name(self) -> str:
+    def get_this_device_name(self) -> str:
         """Get the human-readable device name."""
-        return self._rust_config.get_device_name()
+        return self._rust_config.get_this_device_name()
 
-    def set_device_name(self, name: str) -> None:
+    def set_this_device_name(self, name: str) -> None:
         """Set the device name."""
-        self._rust_config.set_device_name(name)
+        self._rust_config.set_this_device_name(name)
 
     def get_sync_config(self) -> Dict[str, Any]:
         """Get sync configuration."""
@@ -122,46 +122,46 @@ class Config:
         """Set the sync server port."""
         self._rust_config.set_sync_server_port(port)
 
-    def get_peers(self) -> List[Dict[str, Any]]:
-        """Get list of sync peers."""
-        return self._rust_config.get_peers()
+    def get_devices(self) -> List[Dict[str, Any]]:
+        """Get list of sync devices."""
+        return self._rust_config.get_devices()
 
-    def add_peer(
+    def add_device(
         self,
-        peer_id: str,
-        peer_name: str,
-        peer_url: str,
+        device_id: str,
+        device_name: str,
+        device_url: str,
         certificate_fingerprint: Optional[str] = None,
         allow_update: bool = True,
     ) -> None:
-        """Add a new sync peer."""
-        # Validate peer_id format
-        if not isinstance(peer_id, str) or len(peer_id) != 32:
-            raise ValidationError("peer_id", "must be 32 hex characters")
+        """Add a new sync device."""
+        # Validate device_id format
+        if not isinstance(device_id, str) or len(device_id) != 32:
+            raise ValidationError("device_id", "must be 32 hex characters")
         try:
-            int(peer_id, 16)
+            int(device_id, 16)
         except ValueError:
-            raise ValidationError("peer_id", "must be a valid hex string")
+            raise ValidationError("device_id", "must be a valid hex string")
 
         # Check for duplicate if allow_update is False
         if not allow_update:
-            existing = self.get_peer(peer_id)
+            existing = self.get_device(device_id)
             if existing is not None:
-                raise ValidationError("peer_id", "peer already exists")
+                raise ValidationError("device_id", "device already exists")
 
-        self._rust_config.add_peer(peer_id, peer_name, peer_url, certificate_fingerprint)
+        self._rust_config.add_device(device_id, device_name, device_url, certificate_fingerprint)
 
-    def remove_peer(self, peer_id: str) -> bool:
-        """Remove a sync peer."""
-        return self._rust_config.remove_peer(peer_id)
+    def remove_device(self, device_id: str) -> bool:
+        """Remove a sync device."""
+        return self._rust_config.remove_device(device_id)
 
-    def forget_peer(self, peer_id: str) -> bool:
-        """Forget a peer: it leaves the list and its card does not bring it back (Stage 5)."""
-        return self._rust_config.forget_peer(peer_id)
+    def forget_device(self, device_id: str) -> bool:
+        """Forget a device: it leaves the list and its card does not bring it back (Stage 5)."""
+        return self._rust_config.forget_device(device_id)
 
-    def rename_peer(self, peer_id: str, name: str) -> bool:
-        """A local name for a peer, shown in place of its card's."""
-        return self._rust_config.rename_peer(peer_id, name)
+    def rename_device(self, device_id: str, name: str) -> bool:
+        """A local name for a device, shown in place of its card's."""
+        return self._rust_config.rename_device(device_id, name)
 
     def listener_idle_stop_hours(self) -> int:
         """Hours of silence after which the listener stops itself; 0 means never."""
@@ -170,23 +170,23 @@ class Config:
     def set_listener_idle_stop_hours(self, hours: int) -> None:
         self._rust_config.set_listener_idle_stop_hours(hours)
 
-    def last_peer_id(self) -> str:
-        """The peer of the last operation, or an empty string."""
-        return self._rust_config.last_peer_id()
+    def last_device_id(self) -> str:
+        """The device of the last operation, or an empty string."""
+        return self._rust_config.last_device_id()
 
-    def set_last_peer(self, peer_id: str) -> None:
-        self._rust_config.set_last_peer(peer_id)
+    def set_last_device(self, device_id: str) -> None:
+        self._rust_config.set_last_device(device_id)
 
-    def is_forgotten(self, peer_id: str) -> bool:
-        return self._rust_config.is_forgotten(peer_id)
+    def is_forgotten(self, device_id: str) -> bool:
+        return self._rust_config.is_forgotten(device_id)
 
-    def get_peer(self, peer_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific peer by ID."""
-        return self._rust_config.get_peer(peer_id)
+    def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific device by ID."""
+        return self._rust_config.get_device(device_id)
 
-    def update_peer_certificate(self, peer_id: str, fingerprint: str) -> bool:
-        """Update a peer's certificate fingerprint (TOFU)."""
-        return self._rust_config.update_peer_certificate(peer_id, fingerprint)
+    def update_device_certificate(self, device_id: str, fingerprint: str) -> bool:
+        """Update a device's certificate fingerprint (TOFU)."""
+        return self._rust_config.update_device_certificate(device_id, fingerprint)
 
     def get_certs_dir(self) -> Path:
         """Get the directory for TLS certificates."""
@@ -258,7 +258,7 @@ class Config:
         # Return basic config structure
         return {
             "database_file": self._rust_config.get_database_file(),
-            "device_id": self.get_device_id_hex(),
-            "device_name": self.get_device_name(),
+            "this_device_id": self.get_this_device_id_hex(),
+            "this_device_name": self.get_this_device_name(),
             "sync": self.get_sync_config(),
         }

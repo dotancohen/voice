@@ -30,10 +30,10 @@ class TestDiagnostics:
         try:
             assert b.wait_for_server()
             a.db.close()
-            added = cli(a, "sync", "add-peer", b.device_id_hex, "B", b.url)
+            added = cli(a, "sync", "add-device", b.device_id_hex, "B", b.url)
             assert added.returncode == 0, added.stderr
 
-            synced = cli(a, "sync", "now", "--peer", b.device_id_hex)
+            synced = cli(a, "sync", "now", "--device", b.device_id_hex)
             assert synced.returncode == 0, synced.stderr
             result = json.loads(synced.stdout)
             assert result["success"]
@@ -51,7 +51,7 @@ class TestDiagnostics:
         finally:
             b.stop_server()
 
-    def test_the_check_names_a_refused_key_and_an_unreachable_peer(self, tmp_path: Path) -> None:
+    def test_the_check_names_a_refused_key_and_an_unreachable_device(self, tmp_path: Path) -> None:
         a = create_sync_node("a", DEVICE_A_ID, tmp_path)
         # Made in another account so that the fixture admits neither on the
         # other; then moved to a's account: same account, unknown device
@@ -62,14 +62,14 @@ class TestDiagnostics:
         try:
             assert b.wait_for_server()
             a.db.close()
-            cli(a, "sync", "add-peer", b.device_id_hex, "B", b.url)
+            cli(a, "sync", "add-device", b.device_id_hex, "B", b.url)
             checked = cli(a, "sync", "check", b.device_id_hex)
             assert checked.returncode == 1
             check = json.loads(checked.stdout)
             key = next(r for r in check["rows"] if r["name"] == "Key")
             assert not key["passed"] and key["code"] == "DEVICE_UNKNOWN", check
 
-            cli(a, "sync", "add-peer", "00000000000070008000000000000001", "Nobody", "http://127.0.0.1:1")
+            cli(a, "sync", "add-device", "00000000000070008000000000000001", "Nobody", "http://127.0.0.1:1")
             checked = cli(a, "sync", "check", "00000000000070008000000000000001")
             assert checked.returncode == 1
             rows = json.loads(checked.stdout)["rows"]

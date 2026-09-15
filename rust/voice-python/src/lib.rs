@@ -355,7 +355,7 @@ impl PyDatabase {
     /// `audio_dir`; None otherwise (FILE-25).
     #[pyo3(signature = (audio_id, audio_dir, here=None))]
     fn made_here_but_missing(&self, audio_id: &str, audio_dir: &str, here: Option<String>) -> PyResult<Option<String>> {
-        let here = here.unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        let here = here.unwrap_or_else(|| database::get_this_device_id().simple().to_string());
         self.inner_ref()?.made_here_but_missing(audio_id, std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
     }
 
@@ -494,24 +494,24 @@ impl PyDatabase {
     // Sync methods
     // ========================================================================
 
-    fn get_peer_last_sync(&self, peer_device_id: &str) -> PyResult<Option<i64>> {
+    fn get_device_last_sync(&self, from_device_id: &str) -> PyResult<Option<i64>> {
         self.inner_ref()?
-            .get_peer_last_sync(peer_device_id)
+            .get_device_last_sync(from_device_id)
             .map_err(voice_error_to_pyerr)
     }
 
-    /// Reset sync timestamps to NULL to force re-fetching all data from peers.
-    /// Unlike clearing sync peers, this preserves peer configuration.
+    /// Reset sync timestamps to NULL to force re-fetching all data from devices.
+    /// Unlike clearing sync devices, this preserves device configuration.
     fn reset_sync_timestamps(&self) -> PyResult<()> {
         self.inner_ref()?
             .reset_sync_timestamps()
             .map_err(voice_error_to_pyerr)
     }
 
-    #[pyo3(signature = (peer_device_id, peer_name=None))]
-    fn update_peer_sync_time(&self, peer_device_id: &str, peer_name: Option<&str>) -> PyResult<()> {
+    #[pyo3(signature = (from_device_id, device_name=None))]
+    fn update_device_sync_time(&self, from_device_id: &str, device_name: Option<&str>) -> PyResult<()> {
         self.inner_ref()?
-            .update_peer_sync_time(peer_device_id, peer_name)
+            .update_device_sync_time(from_device_id, device_name)
             .map_err(voice_error_to_pyerr)
     }
 
@@ -551,7 +551,7 @@ impl PyDatabase {
     }
 
     /// Move this database, notes and all, to another account (ACCT-5): a
-    /// snapshot first, then the id is rewritten and every peer forgotten.
+    /// snapshot first, then the id is rewritten and every device forgotten.
     fn move_to_account(&self, account_id: &str) -> PyResult<()> {
         self.inner_ref()?.move_to_account(account_id).map_err(voice_error_to_pyerr)
     }
@@ -559,7 +559,7 @@ impl PyDatabase {
     /// What is on this device only (Stage 10): notes and recordings, as a dict.
     #[pyo3(signature = (audio_dir=None))]
     fn not_duplicated<'py>(&self, py: Python<'py>, audio_dir: Option<&str>) -> PyResult<PyObject> {
-        let counts = self.inner_ref()?.not_duplicated(audio_dir.map(std::path::Path::new), &database::get_local_device_id().simple().to_string()).map_err(voice_error_to_pyerr)?;
+        let counts = self.inner_ref()?.not_duplicated(audio_dir.map(std::path::Path::new), &database::get_this_device_id().simple().to_string()).map_err(voice_error_to_pyerr)?;
         let d = PyDict::new(py);
         d.set_item("notes", counts.notes)?;
         d.set_item("recordings", counts.recordings)?;
@@ -588,7 +588,7 @@ impl PyDatabase {
     /// the device this process runs as when not given.
     #[pyo3(signature = (audio_dir, here=None))]
     fn check_files_here(&self, audio_dir: &str, here: Option<&str>) -> PyResult<(usize, usize)> {
-        let here = here.map(str::to_string).unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        let here = here.map(str::to_string).unwrap_or_else(|| database::get_this_device_id().simple().to_string());
         self.inner_ref()?.check_files_here(std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
     }
 
@@ -608,7 +608,7 @@ impl PyDatabase {
     /// no_copy_known.
     #[pyo3(signature = (audio_dir=None, here=None))]
     fn issues<'py>(&self, py: Python<'py>, audio_dir: Option<&str>, here: Option<&str>) -> PyResult<PyObject> {
-        let here = here.map(str::to_string).unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        let here = here.map(str::to_string).unwrap_or_else(|| database::get_this_device_id().simple().to_string());
         let found = voicecore_lib::issues::issues(&*self.inner_ref()?, audio_dir.map(std::path::Path::new), &here).map_err(voice_error_to_pyerr)?;
         let mut value = serde_json::to_value(&found).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         if let Some(list) = value.get_mut("recordings_not_in_cloud").and_then(|v| v.as_array_mut()) {
@@ -620,27 +620,27 @@ impl PyDatabase {
         json_value_to_pyobject(py, &value)
     }
 
-    /// The peers known to hold a copy of a recording, as dicts with peer_id and at.
+    /// The devices known to hold a copy of a recording, as dicts with device_id and at.
     fn copies_of<'py>(&self, py: Python<'py>, audio_id: &str) -> PyResult<PyObject> {
-        let copies = self.inner_ref()?.copies_of(audio_id, &database::get_local_device_id().simple().to_string()).map_err(voice_error_to_pyerr)?;
+        let copies = self.inner_ref()?.copies_of(audio_id, &database::get_this_device_id().simple().to_string()).map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
         for c in copies {
             let d = PyDict::new(py);
-            d.set_item("peer_id", c.peer_id)?;
+            d.set_item("device_id", c.device_id)?;
             d.set_item("at", c.at)?;
             list.append(d)?;
         }
         Ok(list.into_any().unbind())
     }
 
-    /// Every peer dealt with: peer_id, peer_name, last_reached_at, last_operation.
-    fn peer_summaries<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
-        let peers = self.inner_ref()?.peer_summaries().map_err(voice_error_to_pyerr)?;
+    /// Every device dealt with: device_id, device_name, last_reached_at, last_operation.
+    fn device_summaries<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let devices = self.inner_ref()?.device_summaries().map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
-        for p in peers {
+        for p in devices {
             let d = PyDict::new(py);
-            d.set_item("peer_id", p.peer_id)?;
-            d.set_item("peer_name", p.peer_name)?;
+            d.set_item("device_id", p.device_id)?;
+            d.set_item("device_name", p.device_name)?;
             d.set_item("last_reached_at", p.last_reached_at)?;
             d.set_item("last_operation", p.last_operation)?;
             list.append(d)?;
@@ -649,7 +649,7 @@ impl PyDatabase {
     }
 
     /// Every device of the account, as its card says (CARD-1).
-    fn list_devices<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn list_device_cards<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let cards = self.inner_ref()?.list_device_cards().map_err(voice_error_to_pyerr)?;
         let list = PyList::empty(py);
         for c in cards {
@@ -1211,7 +1211,7 @@ impl PyDatabase {
     /// device by default) states that it holds the file (FILE-22). Returns the hash.
     #[pyo3(signature = (audio_id, audio_dir, here=None))]
     fn store_content_hash(&self, audio_id: &str, audio_dir: &str, here: Option<String>) -> PyResult<String> {
-        let here = here.unwrap_or_else(|| database::get_local_device_id().simple().to_string());
+        let here = here.unwrap_or_else(|| database::get_this_device_id().simple().to_string());
         self.inner_ref()?.store_content_hash(audio_id, std::path::Path::new(audio_dir), &here).map_err(voice_error_to_pyerr)
     }
 
@@ -1592,14 +1592,14 @@ impl PyConfig {
         self.inner.lock().unwrap().set_public_url(url).map_err(voice_error_to_pyerr)
     }
 
-    fn get_device_id_hex(&self) -> PyResult<String> {
+    fn get_this_device_id_hex(&self) -> PyResult<String> {
         let cfg = self.inner.lock().unwrap();
-        Ok(cfg.device_id_hex().to_string())
+        Ok(cfg.this_device_id_hex().to_string())
     }
 
-    fn get_device_name(&self) -> PyResult<String> {
+    fn get_this_device_name(&self) -> PyResult<String> {
         let cfg = self.inner.lock().unwrap();
-        Ok(cfg.device_name().to_string())
+        Ok(cfg.this_device_name().to_string())
     }
 
     fn get_database_file(&self) -> PyResult<String> {
@@ -1668,63 +1668,63 @@ impl PyConfig {
         cfg.set(key, value).map_err(voice_error_to_pyerr)
     }
 
-    fn get_peers<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_devices<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let cfg = self.inner.lock().unwrap();
         let list = PyList::empty(py);
-        for peer in cfg.peers() {
+        for device in cfg.devices() {
             let dict = PyDict::new(py);
-            dict.set_item("peer_id", &peer.peer_id)?;
-            dict.set_item("peer_name", &peer.peer_name)?;
-            dict.set_item("peer_url", &peer.peer_url)?;
-            dict.set_item("certificate_fingerprint", &peer.certificate_fingerprint)?;
+            dict.set_item("device_id", &device.device_id)?;
+            dict.set_item("device_name", &device.device_name)?;
+            dict.set_item("device_url", &device.device_url)?;
+            dict.set_item("certificate_fingerprint", &device.certificate_fingerprint)?;
             list.append(dict)?;
         }
         Ok(list.into_any().unbind())
     }
 
-    fn get_peer<'py>(&self, py: Python<'py>, peer_id: &str) -> PyResult<Option<PyObject>> {
+    fn get_device<'py>(&self, py: Python<'py>, device_id: &str) -> PyResult<Option<PyObject>> {
         let cfg = self.inner.lock().unwrap();
-        match cfg.get_peer(peer_id) {
-            Some(peer) => {
+        match cfg.get_device(device_id) {
+            Some(device) => {
                 let dict = PyDict::new(py);
-                dict.set_item("peer_id", &peer.peer_id)?;
-                dict.set_item("peer_name", &peer.peer_name)?;
-                dict.set_item("peer_url", &peer.peer_url)?;
-                dict.set_item("certificate_fingerprint", &peer.certificate_fingerprint)?;
+                dict.set_item("device_id", &device.device_id)?;
+                dict.set_item("device_name", &device.device_name)?;
+                dict.set_item("device_url", &device.device_url)?;
+                dict.set_item("certificate_fingerprint", &device.certificate_fingerprint)?;
                 Ok(Some(dict.into_any().unbind()))
             }
             None => Ok(None),
         }
     }
 
-    #[pyo3(signature = (peer_id, peer_name, peer_url, certificate_fingerprint=None, allow_update=true))]
-    fn add_peer(
+    #[pyo3(signature = (device_id, device_name, device_url, certificate_fingerprint=None, allow_update=true))]
+    fn add_device(
         &self,
-        peer_id: &str,
-        peer_name: &str,
-        peer_url: &str,
+        device_id: &str,
+        device_name: &str,
+        device_url: &str,
         certificate_fingerprint: Option<&str>,
         allow_update: bool,
     ) -> PyResult<()> {
         let mut cfg = self.inner.lock().unwrap();
-        cfg.add_peer(
-            peer_id,
-            peer_name,
-            peer_url,
+        cfg.add_device(
+            device_id,
+            device_name,
+            device_url,
             certificate_fingerprint,
             allow_update,
         )
         .map_err(voice_error_to_pyerr)
     }
 
-    /// Forget a peer (Stage 5): it leaves the list and its card does not bring it back.
-    fn forget_peer(&self, peer_id: &str) -> PyResult<bool> {
-        self.inner.lock().unwrap().forget_peer(peer_id).map_err(voice_error_to_pyerr)
+    /// Forget a device (Stage 5): it leaves the list and its card does not bring it back.
+    fn forget_device(&self, device_id: &str) -> PyResult<bool> {
+        self.inner.lock().unwrap().forget_device(device_id).map_err(voice_error_to_pyerr)
     }
 
-    /// A local name for a peer, shown in place of its card's.
-    fn rename_peer(&self, peer_id: &str, name: &str) -> PyResult<bool> {
-        self.inner.lock().unwrap().rename_peer(peer_id, name).map_err(voice_error_to_pyerr)
+    /// A local name for a device, shown in place of its card's.
+    fn rename_device(&self, device_id: &str, name: &str) -> PyResult<bool> {
+        self.inner.lock().unwrap().rename_device(device_id, name).map_err(voice_error_to_pyerr)
     }
 
     /// Hours of silence after which the listener stops itself; 0 means never.
@@ -1736,27 +1736,27 @@ impl PyConfig {
         self.inner.lock().unwrap().set_listener_idle_stop_hours(hours).map_err(voice_error_to_pyerr)
     }
 
-    /// The peer of the last operation, or an empty string.
-    fn last_peer_id(&self) -> String {
-        self.inner.lock().unwrap().last_peer().map(|p| p.peer_id.clone()).unwrap_or_default()
+    /// The device of the last operation, or an empty string.
+    fn last_device_id(&self) -> String {
+        self.inner.lock().unwrap().last_device().map(|p| p.device_id.clone()).unwrap_or_default()
     }
 
-    fn set_last_peer(&self, peer_id: &str) -> PyResult<()> {
-        self.inner.lock().unwrap().set_last_peer(peer_id).map_err(voice_error_to_pyerr)
+    fn set_last_device(&self, device_id: &str) -> PyResult<()> {
+        self.inner.lock().unwrap().set_last_device(device_id).map_err(voice_error_to_pyerr)
     }
 
-    fn is_forgotten(&self, peer_id: &str) -> bool {
-        self.inner.lock().unwrap().is_forgotten(peer_id)
+    fn is_forgotten(&self, device_id: &str) -> bool {
+        self.inner.lock().unwrap().is_forgotten(device_id)
     }
 
-    fn remove_peer(&self, peer_id: &str) -> PyResult<bool> {
+    fn remove_device(&self, device_id: &str) -> PyResult<bool> {
         let mut cfg = self.inner.lock().unwrap();
-        cfg.remove_peer(peer_id).map_err(voice_error_to_pyerr)
+        cfg.remove_device(device_id).map_err(voice_error_to_pyerr)
     }
 
-    fn update_peer_certificate(&self, peer_id: &str, fingerprint: &str) -> PyResult<bool> {
+    fn update_device_certificate(&self, device_id: &str, fingerprint: &str) -> PyResult<bool> {
         let mut cfg = self.inner.lock().unwrap();
-        cfg.update_peer_certificate(peer_id, fingerprint)
+        cfg.update_device_certificate(device_id, fingerprint)
             .map_err(voice_error_to_pyerr)
     }
 
@@ -1780,9 +1780,9 @@ impl PyConfig {
         Ok(cfg.warning_color(theme).to_string())
     }
 
-    fn set_device_name(&self, name: &str) -> PyResult<()> {
+    fn set_this_device_name(&self, name: &str) -> PyResult<()> {
         let mut cfg = self.inner.lock().unwrap();
-        cfg.set_device_name(name).map_err(voice_error_to_pyerr)
+        cfg.set_this_device_name(name).map_err(voice_error_to_pyerr)
     }
 
     fn get_audiofile_directory(&self) -> PyResult<Option<String>> {
@@ -1811,16 +1811,16 @@ impl PyConfig {
         let dict = PyDict::new(py);
         dict.set_item("enabled", sync_cfg.enabled)?;
         dict.set_item("server_port", sync_cfg.server_port)?;
-        let peers_list = PyList::empty(py);
-        for peer in &sync_cfg.peers {
-            let peer_dict = PyDict::new(py);
-            peer_dict.set_item("peer_id", &peer.peer_id)?;
-            peer_dict.set_item("peer_name", &peer.peer_name)?;
-            peer_dict.set_item("peer_url", &peer.peer_url)?;
-            peer_dict.set_item("certificate_fingerprint", &peer.certificate_fingerprint)?;
-            peers_list.append(peer_dict)?;
+        let devices_list = PyList::empty(py);
+        for device in &sync_cfg.devices {
+            let device_dict = PyDict::new(py);
+            device_dict.set_item("device_id", &device.device_id)?;
+            device_dict.set_item("device_name", &device.device_name)?;
+            device_dict.set_item("device_url", &device.device_url)?;
+            device_dict.set_item("certificate_fingerprint", &device.certificate_fingerprint)?;
+            devices_list.append(device_dict)?;
         }
-        dict.set_item("peers", peers_list)?;
+        dict.set_item("devices", devices_list)?;
         Ok(dict.into_any().unbind())
     }
 
@@ -1860,10 +1860,10 @@ pub struct PySyncResult {
     pushed: i64,
     #[pyo3(get)]
     conflicts: i64,
-    /// Recordings sent to the peer (deliver, exchange, send)
+    /// Recordings sent to the device (deliver, exchange, send)
     #[pyo3(get)]
     sent: i64,
-    /// Recordings fetched from the peer (exchange, fetch)
+    /// Recordings fetched from the device (exchange, fetch)
     #[pyo3(get)]
     fetched: i64,
     /// Bytes of recordings moved either way
@@ -1877,7 +1877,7 @@ pub struct PySyncResult {
     /// The id of the operation, on every request of it and in both logs
     #[pyo3(get)]
     request_id: String,
-    /// The peer's clock minus this device's, in seconds, past a minute; else 0
+    /// The device's clock minus this device's, in seconds, past a minute; else 0
     #[pyo3(get)]
     clock_skew_seconds: i64,
 }
@@ -1900,7 +1900,7 @@ impl From<sync_client::SyncResult> for PySyncResult {
     }
 }
 
-/// Sync client for synchronizing with peers
+/// Sync client for synchronizing with devices
 /// Safe to use and free on any thread: the core's client keeps its database,
 /// configuration and connections behind locks of its own.
 #[pyclass(name = "SyncClient")]
@@ -1965,26 +1965,26 @@ impl PySyncClient {
     }
 
     /// Join an account from a setup text (PAIR-4). Returns a dict with
-    /// account_id, peer_id, peer_name and peer_url.
+    /// account_id, device_id, device_name and device_url.
     fn join<'py>(&self, py: Python<'py>, setup_text: &str) -> PyResult<PyObject> {
         let joined = self.run(py, self.inner.join(setup_text)).map_err(voice_error_to_pyerr)?;
         let dict = PyDict::new(py);
         dict.set_item("account_id", joined.account_id)?;
-        dict.set_item("peer_id", joined.peer_id)?;
-        dict.set_item("peer_name", joined.peer_name)?;
-        dict.set_item("peer_url", joined.peer_url)?;
+        dict.set_item("device_id", joined.device_id)?;
+        dict.set_item("device_name", joined.device_name)?;
+        dict.set_item("device_url", joined.device_url)?;
         Ok(dict.into_any().unbind())
     }
 
     /// Move this device to another account by its code (Stage 1): a dict
-    /// with account_id, peer_id, peer_name, peer_url and tags_merged.
+    /// with account_id, device_id, device_name, device_url and tags_merged.
     fn move_to<'py>(&self, py: Python<'py>, setup_text: &str) -> PyResult<PyObject> {
         let (joined, merged) = self.run(py, self.inner.move_to(setup_text)).map_err(voice_error_to_pyerr)?;
         let dict = PyDict::new(py);
         dict.set_item("account_id", joined.account_id)?;
-        dict.set_item("peer_id", joined.peer_id)?;
-        dict.set_item("peer_name", joined.peer_name)?;
-        dict.set_item("peer_url", joined.peer_url)?;
+        dict.set_item("device_id", joined.device_id)?;
+        dict.set_item("device_name", joined.device_name)?;
+        dict.set_item("device_url", joined.device_url)?;
         dict.set_item("tags_merged", merged)?;
         Ok(dict.into_any().unbind())
     }
@@ -1994,9 +1994,9 @@ impl PySyncClient {
         let joined = self.run(py, self.inner.grant_host(setup_text, label)).map_err(voice_error_to_pyerr)?;
         let dict = PyDict::new(py);
         dict.set_item("account_id", joined.account_id)?;
-        dict.set_item("peer_id", joined.peer_id)?;
-        dict.set_item("peer_name", joined.peer_name)?;
-        dict.set_item("peer_url", joined.peer_url)?;
+        dict.set_item("device_id", joined.device_id)?;
+        dict.set_item("device_name", joined.device_name)?;
+        dict.set_item("device_url", joined.device_url)?;
         Ok(dict.into_any().unbind())
     }
 
@@ -2012,10 +2012,10 @@ impl PySyncClient {
         self.inner.cancel();
     }
 
-    /// Check the connection to a peer (Stage 12): one row per thing that
+    /// Check the connection to a device (Stage 12): one row per thing that
     /// can be wrong, as dicts with name, passed, detail and code.
-    fn check<'py>(&self, py: Python<'py>, peer_id: &str) -> PyResult<PyObject> {
-        let rows = self.run(py, self.inner.check(peer_id));
+    fn check<'py>(&self, py: Python<'py>, device_id: &str) -> PyResult<PyObject> {
+        let rows = self.run(py, self.inner.check(device_id));
         let list = pyo3::types::PyList::empty(py);
         for row in rows {
             let d = PyDict::new(py);
@@ -2036,53 +2036,53 @@ impl PySyncClient {
         self.run(py, self.inner.remove_local_copy(audio_id)).map_err(voice_error_to_pyerr)
     }
 
-    /// Perform full bidirectional sync with a peer
-    fn sync_with_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.run(py, self.inner.sync_with_peer(peer_id));
+    /// Perform full bidirectional sync with a device
+    fn sync_with_device(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.sync_with_device(device_id));
         Ok(PySyncResult::from(result))
     }
 
-    /// Deliver: sync, then send the recordings the peer lacks.
-    fn deliver(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.run(py, self.inner.deliver(peer_id))))
+    /// Deliver: sync, then send the recordings the device lacks.
+    fn deliver(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.deliver(device_id))))
     }
 
     /// Exchange: sync, then send and fetch.
-    fn exchange(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.run(py, self.inner.exchange(peer_id))))
+    fn exchange(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.exchange(device_id))))
     }
 
-    /// Send the recordings the peer lacks, without a sync.
-    fn send_to_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.run(py, self.inner.send_to_peer(peer_id))))
+    /// Send the recordings the device lacks, without a sync.
+    fn send_to_device(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.send_to_device(device_id))))
     }
 
-    /// Fetch the recordings this device lacks from the peer, without a sync.
-    fn fetch_from_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        Ok(PySyncResult::from(self.run(py, self.inner.fetch_from_peer(peer_id))))
+    /// Fetch the recordings this device lacks from the device, without a sync.
+    fn fetch_from_device(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        Ok(PySyncResult::from(self.run(py, self.inner.fetch_from_device(device_id))))
     }
 
-    /// Pull changes from a peer (one-way)
-    fn pull_from_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.run(py, self.inner.pull_from_peer(peer_id));
+    /// Pull changes from a device (one-way)
+    fn pull_from_device(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.pull_from_device(device_id));
         Ok(PySyncResult::from(result))
     }
 
-    /// Push changes to a peer (one-way)
-    fn push_to_peer(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.run(py, self.inner.push_to_peer(peer_id));
+    /// Push changes to a device (one-way)
+    fn push_to_device(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.push_to_device(device_id));
         Ok(PySyncResult::from(result))
     }
 
-    /// Perform initial sync (full dataset transfer) with a peer
-    fn initial_sync(&self, py: Python<'_>, peer_id: &str) -> PyResult<PySyncResult> {
-        let result = self.run(py, self.inner.initial_sync(peer_id));
+    /// Perform initial sync (full dataset transfer) with a device
+    fn initial_sync(&self, py: Python<'_>, device_id: &str) -> PyResult<PySyncResult> {
+        let result = self.run(py, self.inner.initial_sync(device_id));
         Ok(PySyncResult::from(result))
     }
 
-    /// Check if a peer is reachable
-    fn check_peer_status<'py>(&self, py: Python<'py>, peer_id: &str) -> PyResult<PyObject> {
-        let result = self.runtime.block_on(self.inner.check_peer_status(peer_id));
+    /// Check if a device is reachable
+    fn check_device_status<'py>(&self, py: Python<'py>, device_id: &str) -> PyResult<PyObject> {
+        let result = self.runtime.block_on(self.inner.check_device_status(device_id));
         let dict = PyDict::new(py);
         for (key, value) in result {
             dict.set_item(key, json_value_to_pyobject(py, &value)?)?;
@@ -2090,12 +2090,12 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
-    /// Fetch one recording from a peer
+    /// Fetch one recording from a device
     /// Returns a dict with {"success": bool, "bytes": int} or {"success": false, "error": str}
-    fn fetch_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, dest_path: &str) -> PyResult<PyObject> {
+    fn fetch_audio_file(&self, py: Python<'_>, device_url: &str, audio_id: &str, dest_path: &str) -> PyResult<PyObject> {
         let dest = std::path::Path::new(dest_path);
         let result = self.runtime.block_on(
-            self.inner.fetch_audio_file(peer_url, audio_id, dest, 0, 0, 1)
+            self.inner.fetch_audio_file(device_url, audio_id, dest, 0, 0, 1)
         );
         let dict = PyDict::new(py);
         match result {
@@ -2111,12 +2111,12 @@ impl PySyncClient {
         Ok(dict.into_any().unbind())
     }
 
-    /// Send one recording to a peer
+    /// Send one recording to a device
     /// Returns a dict with {"success": bool, "bytes": int} or {"success": false, "error": str}
-    fn send_audio_file(&self, py: Python<'_>, peer_url: &str, audio_id: &str, source_path: &str) -> PyResult<PyObject> {
+    fn send_audio_file(&self, py: Python<'_>, device_url: &str, audio_id: &str, source_path: &str) -> PyResult<PyObject> {
         let source = std::path::Path::new(source_path);
         let result = self.runtime.block_on(
-            self.inner.send_audio_file(peer_url, audio_id, source, 0, 0, 0, 1)
+            self.inner.send_audio_file(device_url, audio_id, source, 0, 0, 0, 1)
         );
         let dict = PyDict::new(py);
         match result {
@@ -2307,16 +2307,16 @@ fn certificate_fingerprint(config_dir: Option<&str>) -> PyResult<String> {
     Ok(fingerprint)
 }
 
-/// Sync with all configured peers
+/// Sync with all configured devices
 ///
 /// Args:
 ///     config_dir: Path to config directory (optional, uses default if None)
 ///
 /// Returns:
-///     Dict mapping peer_id to SyncResult
+///     Dict mapping device_id to SyncResult
 #[pyfunction]
 #[pyo3(signature = (config_dir=None))]
-fn sync_all_peers<'py>(
+fn sync_all_devices<'py>(
     py: Python<'py>,
     config_dir: Option<&str>,
 ) -> PyResult<PyObject> {
@@ -2329,18 +2329,18 @@ fn sync_all_peers<'py>(
     let cfg = config::Config::new(config_path, None).map_err(voice_error_to_pyerr)?;
     let db = database::Database::new(cfg.database_file()).map_err(voice_error_to_pyerr)?;
 
-    // Wrap in Arc<Mutex<>> for sync_all_peers
+    // Wrap in Arc<Mutex<>> for sync_all_devices
     let db_arc = Arc::new(Mutex::new(db));
     let config_arc = Arc::new(Mutex::new(cfg));
 
     // Run sync
-    let results = py.allow_threads(|| runtime.block_on(sync_client::sync_all_peers(db_arc, config_arc)));
+    let results = py.allow_threads(|| runtime.block_on(sync_client::sync_all_devices(db_arc, config_arc)));
 
     // Convert to Python dict
     let dict = PyDict::new(py);
-    for (peer_id, result) in results {
+    for (device_id, result) in results {
         let py_result = PySyncResult::from(result);
-        dict.set_item(peer_id, py_result.into_pyobject(py)?)?;
+        dict.set_item(device_id, py_result.into_pyobject(py)?)?;
     }
     Ok(dict.into_any().unbind())
 }
@@ -2414,7 +2414,7 @@ fn cloud_context(
         )
     })?;
     let key = cfg.recording_key();
-    let here = cfg.device_id_hex().to_string();
+    let here = cfg.this_device_id_hex().to_string();
     Ok((runtime, db, std::path::PathBuf::from(audiofile_dir), key, here))
 }
 
@@ -2510,7 +2510,7 @@ fn upload_pending_audio_files(py: Python<'_>, config_dir: Option<&str>) -> PyRes
     })?;
     let audiofile_path = std::path::PathBuf::from(audiofile_dir);
     let key = cfg.recording_key();
-    let here = cfg.device_id_hex().to_string();
+    let here = cfg.this_device_id_hex().to_string();
 
     // Run the upload without the interpreter lock; the database moves in
     let result: Result<file_storage::UploadPendingResult, file_storage::FileStorageError> =
@@ -2646,8 +2646,7 @@ fn start_sync_server(
             .and_then(|i| i.list())
             .map_err(voice_error_to_pyerr)?;
         println!("Starting the sync server for every account of {}...", root);
-        println!("  Device ID:   {}", machine.device_id_hex());
-        println!("  Device Name: {}", machine.device_name());
+        println!("  This device: {} ({})", machine.this_device_name(), machine.this_device_id_hex());
         println!("  Listening:   {}://{}:{}", if plain_http { "http" } else { "https" }, host, server_port);
         if served.is_empty() {
             println!("  Accounts:    none yet; 'account host' prints the text a holder needs to grant one");
@@ -2682,8 +2681,7 @@ fn start_sync_server(
 
     // Print server info
     println!("Starting Rust sync server...");
-    println!("  Device ID:   {}", cfg.device_id_hex());
-    println!("  Device Name: {}", cfg.device_name());
+    println!("  This device: {} ({})", cfg.this_device_name(), cfg.this_device_id_hex());
     println!("  Listening:   {}://{}:{}", if plain_http { "http" } else { "https" }, host, server_port);
     println!("  Account:     {}", db.account_id().unwrap_or_default());
     println!("  Endpoints:   /sync/status, /sync/changes, /sync/apply");
@@ -2997,7 +2995,7 @@ fn stop_sync_server() -> PyResult<()> {
     Ok(())
 }
 
-/// Apply sync changes from a peer to the local database.
+/// Apply sync changes from a device to the local database.
 ///
 /// This is the same logic used by the sync server's /sync/apply endpoint.
 ///
@@ -3011,21 +3009,21 @@ fn stop_sync_server() -> PyResult<()> {
 ///         - device_id: Source device UUID hex string
 ///         - device_name: Optional source device name
 ///         - data: Dict with entity-specific data
-///     peer_device_id: UUID hex string of the peer device
-///     peer_device_name: Optional name of the peer device
+///     from_device_id: UUID hex string of the device device
+///     from_device_name: Optional name of the device device
 ///
 /// Returns:
 ///     Dict with keys: applied, conflicts, errors
 #[pyfunction]
-#[pyo3(signature = (db, changes, peer_device_id, peer_device_name=None, local_device_id=None, local_device_name=None))]
+#[pyo3(signature = (db, changes, from_device_id, from_device_name=None, this_device_id=None, this_device_name=None))]
 fn apply_sync_changes<'py>(
     py: Python<'py>,
     db: &PyDatabase,
     changes: pyo3::Bound<'py, PyList>,
-    peer_device_id: &str,
-    peer_device_name: Option<&str>,
-    local_device_id: Option<&str>,
-    local_device_name: Option<&str>,
+    from_device_id: &str,
+    from_device_name: Option<&str>,
+    this_device_id: Option<&str>,
+    this_device_name: Option<&str>,
 ) -> PyResult<PyObject> {
     let db_guard = db.inner_ref()?;
     let db_ref: &database::Database = &db_guard;
@@ -3093,13 +3091,13 @@ fn apply_sync_changes<'py>(
     }
 
     // Apply changes
-    let (applied, conflicts, errors) = sync_server::apply_changes_from_peer(
+    let (applied, conflicts, errors) = sync_server::apply_changes_from_device(
         db_ref,
         &rust_changes,
-        peer_device_id,
-        peer_device_name,
-        local_device_id,
-        local_device_name,
+        from_device_id,
+        from_device_name,
+        this_device_id,
+        this_device_name,
     )
     .map_err(voice_error_to_pyerr)?;
 
@@ -3408,26 +3406,26 @@ fn py_validate_audio_extension(filename: &str) -> PyResult<()> {
 // ============================================================================
 
 #[pyfunction]
-#[pyo3(name = "set_local_device_id")]
-fn py_set_local_device_id(device_id: &str) -> PyResult<()> {
+#[pyo3(name = "set_this_device_id")]
+fn py_set_this_device_id(device_id: &str) -> PyResult<()> {
     let uuid = validation::validate_uuid_hex(device_id, "device_id").map_err(voice_error_to_pyerr)?;
-    database::set_local_device_id(uuid);
+    database::set_this_device_id(uuid);
     Ok(())
 }
 
 #[pyfunction]
-#[pyo3(name = "get_local_device_id")]
-fn py_get_local_device_id() -> PyResult<String> {
-    let uuid = database::get_local_device_id();
+#[pyo3(name = "get_this_device_id")]
+fn py_get_this_device_id() -> PyResult<String> {
+    let uuid = database::get_this_device_id();
     Ok(validation::uuid_to_hex(&uuid))
 }
 
 /// Human-readable name stamped on every version this device creates, so that
 /// conflicts can say which devices disagreed.
 #[pyfunction]
-#[pyo3(name = "set_local_device_name")]
-fn py_set_local_device_name(name: &str) -> PyResult<()> {
-    database::set_local_device_name(name);
+#[pyo3(name = "set_this_device_name")]
+fn py_set_this_device_name(name: &str) -> PyResult<()> {
+    database::set_this_device_name(name);
     Ok(())
 }
 
@@ -3442,9 +3440,9 @@ fn py_set_local_timezone(offset_seconds: i32, name: Option<String>) -> PyResult<
 }
 
 #[pyfunction]
-#[pyo3(name = "get_local_device_name")]
-fn py_get_local_device_name() -> Option<String> {
-    database::get_local_device_name()
+#[pyo3(name = "get_this_device_name")]
+fn py_get_this_device_name() -> Option<String> {
+    database::get_this_device_name()
 }
 
 // ============================================================================
@@ -3467,7 +3465,7 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register sync client classes and functions
     m.add_class::<PySyncResult>()?;
     m.add_class::<PySyncClient>()?;
-    m.add_function(wrap_pyfunction!(sync_all_peers, m)?)?;
+    m.add_function(wrap_pyfunction!(sync_all_devices, m)?)?;
 
     // Register sync server functions
     m.add_function(wrap_pyfunction!(start_sync_server, m)?)?;
@@ -3562,10 +3560,10 @@ fn voicecore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_validate_audio_extension, m)?)?;
 
     // Register database helper functions
-    m.add_function(wrap_pyfunction!(py_set_local_device_id, m)?)?;
-    m.add_function(wrap_pyfunction!(py_get_local_device_id, m)?)?;
-    m.add_function(wrap_pyfunction!(py_set_local_device_name, m)?)?;
-    m.add_function(wrap_pyfunction!(py_get_local_device_name, m)?)?;
+    m.add_function(wrap_pyfunction!(py_set_this_device_id, m)?)?;
+    m.add_function(wrap_pyfunction!(py_get_this_device_id, m)?)?;
+    m.add_function(wrap_pyfunction!(py_set_this_device_name, m)?)?;
+    m.add_function(wrap_pyfunction!(py_get_this_device_name, m)?)?;
     m.add_function(wrap_pyfunction!(py_set_local_timezone, m)?)?;
 
     Ok(())

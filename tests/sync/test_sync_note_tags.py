@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 
 from .conftest import (
     SyncNode,
@@ -37,7 +37,7 @@ class TestNoteTAgAssociationSync:
     def test_note_with_tag_syncs(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Note with tag association syncs to peer."""
+        """Note with tag association syncs to device."""
         node_a, node_b = two_nodes_with_servers
 
         # Create tag and note on A
@@ -45,7 +45,7 @@ class TestNoteTAgAssociationSync:
         note_id = create_note_on_node(node_a, "Tagged note content")
 
         # Associate tag with note
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Sync to B
@@ -72,7 +72,7 @@ class TestNoteTAgAssociationSync:
         note_id = create_note_on_node(node_a, "Multi-tagged note")
 
         # Add all tags
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag1)
         node_a.db.add_tag_to_note(note_id, tag2)
         node_a.db.add_tag_to_note(note_id, tag3)
@@ -102,7 +102,7 @@ class TestNoteTAgAssociationSync:
 
         # Create tag and add to note
         tag_id = create_tag_on_node(node_a, "NewTag")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Sync again
@@ -122,13 +122,13 @@ class TestNoteTagDeletion:
     def test_remove_tag_from_note_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Tag removal propagates to peers."""
+        """Tag removal propagates to devices."""
         node_a, node_b = two_nodes_with_servers
 
         # Create note with tag
         tag_id = create_tag_on_node(node_a, "ToRemove")
         note_id = create_note_on_node(node_a, "Note content")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Initial sync
@@ -143,7 +143,7 @@ class TestNoteTagDeletion:
         time.sleep(1.1)
 
         # Remove tag on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
 
         # Sync again - removal propagates
@@ -166,7 +166,7 @@ class TestNoteTagDeletion:
         tag3 = create_tag_on_node(node_a, "Keep2")
 
         note_id = create_note_on_node(node_a, "Note content")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag1)
         node_a.db.add_tag_to_note(note_id, tag2)
         node_a.db.add_tag_to_note(note_id, tag3)
@@ -178,7 +178,7 @@ class TestNoteTagDeletion:
         time.sleep(1.1)
 
         # Remove middle tag on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag2)
 
         # Sync again - removal propagates
@@ -210,7 +210,7 @@ class TestNoteTagReactivation:
         # Create note with tag
         tag_id = create_tag_on_node(node_a, "Toggle")
         note_id = create_note_on_node(node_a, "Note content")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Sync
@@ -225,7 +225,7 @@ class TestNoteTagReactivation:
         time.sleep(1.1)
 
         # Remove tag locally on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
 
         # Verify local removal on A
@@ -236,7 +236,7 @@ class TestNoteTagReactivation:
         time.sleep(1.1)
 
         # Re-add tag locally on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Verify local re-add on A
@@ -250,7 +250,7 @@ class TestNoteTagReactivation:
         note_b = node_b.db.get_note(note_id)
         assert "Toggle" in (note_b.get("tag_names") or "")
 
-    def test_tag_removal_propagates_to_peer(
+    def test_tag_removal_propagates_to_device(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
         """When A removes a tag, B also removes it."""
@@ -259,7 +259,7 @@ class TestNoteTagReactivation:
         # Create note with tag on A
         tag_id = create_tag_on_node(node_a, "Shared")
         note_id = create_note_on_node(node_a, "Note content")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Sync both ways
@@ -278,7 +278,7 @@ class TestNoteTagReactivation:
         time.sleep(1.1)
 
         # Remove on A
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.remove_tag_from_note(note_id, tag_id)
 
         # Verify A removed locally
@@ -344,7 +344,7 @@ class TestTagHierarchySync:
 
         # Create note and tag with child
         note_id = create_note_on_node(node_a, "Project note")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, child_id)
 
         # Sync
@@ -372,7 +372,7 @@ class TestTagHierarchySync:
         assert child_b.get("parent_id") == parent1
 
         # Reparent on A, under another parent, then to the top level
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         assert node_a.db.reparent_tag(child, parent2)
         sync_nodes(node_a, node_b)
         node_b.reload_db()
@@ -400,7 +400,7 @@ class TestComplexNoteTagScenarios:
         note_ids = []
         for i in range(20):
             note_id = create_note_on_node(node_a, f"Note {i}")
-            set_local_device_id(node_a.device_id)
+            set_this_device_id(node_a.device_id)
             node_a.db.add_tag_to_note(note_id, tag_id)
             note_ids.append(note_id)
 
@@ -427,7 +427,7 @@ class TestComplexNoteTagScenarios:
 
         # Create one note and add all tags
         note_id = create_note_on_node(node_a, "Multi-tagged note")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         for tag_id in tag_ids:
             node_a.db.add_tag_to_note(note_id, tag_id)
 
@@ -461,11 +461,11 @@ class TestComplexNoteTagScenarios:
         time.sleep(1.1)
 
         # A tags note1
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note1, tag_id)
 
         # B tags note2
-        set_local_device_id(node_b.device_id)
+        set_this_device_id(node_b.device_id)
         node_b.db.add_tag_to_note(note2, tag_id)
 
         # Sync both ways
@@ -492,7 +492,7 @@ class TestComplexNoteTagScenarios:
         note1 = create_note_on_node(node_a, "Note 1")
         note2 = create_note_on_node(node_a, "Note 2")
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note1, tag_id)
         node_a.db.add_tag_to_note(note2, tag_id)
 
@@ -508,14 +508,14 @@ class TestComplexNoteTagScenarios:
     def test_tag_note_then_delete_note_propagates(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Deleting a tagged note propagates when peer hasn't edited."""
+        """Deleting a tagged note propagates when device hasn't edited."""
         node_a, node_b = two_nodes_with_servers
 
         # Create tag and note
         tag_id = create_tag_on_node(node_a, "Tag")
         note_id = create_note_on_node(node_a, "To be deleted")
 
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
 
         # Sync
@@ -529,7 +529,7 @@ class TestComplexNoteTagScenarios:
         time.sleep(1.1)
 
         # Delete note on A (B has same content - never edited)
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.delete_note(note_id)
 
         # Verify A has no notes
@@ -552,7 +552,7 @@ class TestNoteTagEdgeCases:
         """Tagging nonexistent note is handled."""
         tag_id = create_tag_on_node(sync_node_a, "Tag")
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         # This should either fail gracefully or raise an appropriate error
         # depending on implementation
@@ -568,7 +568,7 @@ class TestNoteTagEdgeCases:
         """Adding nonexistent tag to note is handled."""
         note_id = create_note_on_node(sync_node_a, "Note")
 
-        set_local_device_id(sync_node_a.device_id)
+        set_this_device_id(sync_node_a.device_id)
 
         try:
             sync_node_a.db.add_tag_to_note(
@@ -588,7 +588,7 @@ class TestNoteTagEdgeCases:
         note_id = create_note_on_node(node_a, "Note")
 
         # Rapid add/remove cycles
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         for _ in range(5):
             node_a.db.add_tag_to_note(note_id, tag_id)
             node_a.db.remove_tag_from_note(note_id, tag_id)
@@ -604,7 +604,7 @@ class TestNoteTagEdgeCases:
         time.sleep(1.1)
 
         # Add tag finally
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag_id)
         sync_nodes(node_a, node_b)
         node_b.reload_db()
@@ -623,7 +623,7 @@ class TestNoteTagEdgeCases:
         tag2 = create_tag_on_node(node_a, "Important")
 
         note_id = create_note_on_node(node_a, "Unicode tagged")
-        set_local_device_id(node_a.device_id)
+        set_this_device_id(node_a.device_id)
         node_a.db.add_tag_to_note(note_id, tag1)
 
         # Sync

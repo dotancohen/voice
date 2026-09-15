@@ -16,7 +16,7 @@ from typing import List
 import pytest
 
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 TEST_DEVICE_ID = "00000000000070008000000000000001"
 
@@ -44,7 +44,7 @@ def local_name_of(config_dir: Path, audio_id: str) -> str:
 @pytest.fixture
 def storage_env(test_config_dir: Path, tmp_path: Path):
     """Config with an audio directory and a DB containing one note with one pending file."""
-    set_local_device_id(TEST_DEVICE_ID)
+    set_this_device_id(TEST_DEVICE_ID)
     audio_dir = tmp_path / "audio"
     audio_dir.mkdir()
     config = Config(config_dir=test_config_dir)

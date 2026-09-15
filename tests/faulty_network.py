@@ -2,7 +2,7 @@
 way devices really lose their connections.
 
 `FaultyLink` is a TCP proxy on this machine between a client (the core's sync
-client, or its bucket client) and a server (a peer's listener, or an S3
+client, or its bucket client) and a server (a device's listener, or an S3
 server). Point the client at the link's port instead of the server's, then
 tell the link how to fail:
 

@@ -17,7 +17,7 @@ from typing import Generator
 import pytest
 
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 
 # Device ID for large_db fixture
@@ -62,7 +62,7 @@ def large_db(test_config_dir: Path) -> Generator[Database, None, None]:
         Database instance with large dataset.
     """
     # Set device ID before creating database
-    set_local_device_id(LARGE_DB_DEVICE_ID)
+    set_this_device_id(LARGE_DB_DEVICE_ID)
 
     db_path = test_config_dir / "large_test.db"
     db = Database(db_path)

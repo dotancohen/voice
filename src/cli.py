@@ -45,7 +45,7 @@ from src.core.synced_settings import reconcile_transcription_settings, set_synce
 from src.core.models import AUDIO_FILE_FORMATS, UUID_SHORT_LEN
 from src.core.search import resolve_tag_term
 from src.core.timestamp_utils import format_timestamp, datetime_to_timestamp
-from voicecore import SyncClient, sync_all_peers, start_sync_server
+from voicecore import SyncClient, sync_all_devices, start_sync_server
 from src.core.validation import ValidationError
 
 
@@ -493,7 +493,7 @@ def cmd_import_audiofiles(db: Database, config: Config, args: argparse.Namespace
 
             # Copy file to audiofile_directory
             manager.import_file(audio_path, row["disk_name"])
-            db.store_content_hash(audio_file_id, manager.audiofile_directory, config.get_device_id_hex())
+            db.store_content_hash(audio_file_id, manager.audiofile_directory, config.get_this_device_id_hex())
 
             # Create Note with audio reference
             # Use file_created_at for note's created_at for chronological sorting
@@ -550,7 +550,7 @@ def _describe_copies(db: Database, config: Config, af: Dict[str, Any], audiofile
     from src.core.issues_text import place_label, place_names
 
     names = place_names(db, config)
-    here = config.get_device_id_hex()
+    here = config.get_this_device_id_hex()
     places = [place_label(loc["place"], names, here) for loc in db.file_locations(af["id"]) if loc["present"]]
     return ", ".join(places) if places else "nowhere known"
 
@@ -564,7 +564,7 @@ def cmd_issues(db: Database, config: Config, args: argparse.Namespace) -> int:
     from src.core.issues_text import issue_sections, place_names
 
     audiofile_dir = config.get_audiofile_directory()
-    here = config.get_device_id_hex()
+    here = config.get_this_device_id_hex()
     issues = db.issues(audiofile_dir, here)
     if args.format == "json":
         print(json.dumps(issues, indent=2, ensure_ascii=False))
@@ -1509,8 +1509,8 @@ def cmd_transcribe_note(db: Database, config: Config, args: argparse.Namespace) 
 
 def cmd_device_list(db: Database, config: Config, args: argparse.Namespace) -> int:
     """Every device of the account, as its card says."""
-    devices = db.list_devices()
-    own = config.get_device_id_hex()
+    devices = db.list_device_cards()
+    own = config.get_this_device_id_hex()
     if args.format == "json":
         print(json.dumps(devices, indent=2))
         return 0
@@ -1535,8 +1535,8 @@ def cmd_device_list(db: Database, config: Config, args: argparse.Namespace) -> i
 
 
 def cmd_device_revoke(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Revoke a device: its card says so, and every peer refuses it once told."""
-    matches = [c for c in db.list_devices() if c["device_id"].startswith(args.device_id)]
+    """Revoke a device: its card says so, and every device refuses it once told."""
+    matches = [c for c in db.list_device_cards() if c["device_id"].startswith(args.device_id)]
     if not matches:
         print(f"Error: No device starts with {args.device_id}. Run 'device list'.", file=sys.stderr)
         return 1
@@ -1544,11 +1544,11 @@ def cmd_device_revoke(db: Database, config: Config, args: argparse.Namespace) ->
         print(f"Error: {len(matches)} devices start with {args.device_id}; give more of the id.", file=sys.stderr)
         return 1
     card = matches[0]
-    if card["device_id"] == config.get_device_id_hex():
+    if card["device_id"] == config.get_this_device_id_hex():
         print("Error: This is this device. Revoke it from another device of the account.", file=sys.stderr)
         return 1
     db.revoke_device(card["device_id"])
-    print(f"Revoked {card['name'] or card['device_id']}. Every peer refuses it once this has reached them.")
+    print(f"Revoked {card['name'] or card['device_id']}. Every device refuses it once this has reached them.")
     print("It still holds the bucket key, if one was configured; replace the key if that matters.")
     return 0
 
@@ -1793,8 +1793,8 @@ def cmd_account_grant_host(config: Config, args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps(granted))
     else:
-        print(f"{granted['peer_name']} ({granted['peer_id']}) at {granted['peer_url']} now hosts account {granted['account_id']}.")
-        print(f"Run 'sync deliver {granted['peer_id']}' to send it your notes and recordings.")
+        print(f"{granted['device_name']} ({granted['device_id']}) at {granted['device_url']} now hosts account {granted['account_id']}.")
+        print(f"Run 'sync deliver {granted['device_id']}' to send it your notes and recordings.")
     return 0
 
 
@@ -1818,7 +1818,7 @@ def cmd_account_join(db: Database, config: Config, args: argparse.Namespace) -> 
         print(json.dumps(joined))
     else:
         print(f"Joined account {joined['account_id']}.")
-        print(f"Peer: {joined['peer_name']} ({joined['peer_id']}) at {joined['peer_url']}")
+        print(f"Device: {joined['device_name']} ({joined['device_id']}) at {joined['device_url']}")
         print("Run 'sync now' to exchange notes.")
     return 0
 
@@ -1888,15 +1888,15 @@ def cmd_account_move(db: Database, config: Config, args: argparse.Namespace) -> 
         if args.format == "json":
             print(json.dumps({**moved, "notes_moved": notes}))
         else:
-            print(f"Moved {notes} notes from account {current} to {moved['account_id']} through {moved['peer_name']}; {moved['tags_merged']} tags with one path became one.")
-            print("A snapshot was taken first; every earlier peer was forgotten.")
+            print(f"Moved {notes} notes from account {current} to {moved['account_id']} through {moved['device_name']}; {moved['tags_merged']} tags with one path became one.")
+            print("A snapshot was taken first; every earlier device was forgotten.")
         return 0
     if args.to_account == current:
         print("Error: That is already this database's account.", file=sys.stderr)
         return 1
     db.move_to_account(args.to_account)
     print(f"Moved {notes} notes from account {current} to {args.to_account}.")
-    print("Every peer was forgotten; the next sync exchanges everything. A snapshot was taken first.")
+    print("Every device was forgotten; the next sync exchanges everything. A snapshot was taken first.")
     return 0
 
 
@@ -1920,13 +1920,13 @@ def cmd_account_backup(config: Config, args: argparse.Namespace) -> int:
     return 0
 
 
-def _peer_by_prefix(config: Config, prefix: str) -> Optional[Dict[str, Any]]:
-    matches = [p for p in config.get_peers() if p["peer_id"].startswith(prefix)]
+def _device_by_prefix(config: Config, prefix: str) -> Optional[Dict[str, Any]]:
+    matches = [p for p in config.get_devices() if p["device_id"].startswith(prefix)]
     return matches[0] if len(matches) == 1 else None
 
 
 def cmd_sync_check(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Check the connection to a peer, or with --all every peer and the bucket as one table (Stage 12, Stage 8)."""
+    """Check the connection to a device, or with --all every device and the bucket as one table (Stage 12, Stage 8)."""
     if getattr(args, "all", False):
         from src.core.storage_setup import check_all_paths, devices_of
         rows = check_all_paths(str(config.get_config_dir()), devices_of(config))
@@ -1937,18 +1937,18 @@ def cmd_sync_check(db: Database, config: Config, args: argparse.Namespace) -> in
             for r in rows:
                 print(f"{'ok  ' if r['passed'] else 'FAIL'}  {r['name']}: {r['detail']}{'  (' + r['code'] + ')' if r['code'] else ''}")
         return 0 if passed else 1
-    if not args.peer_id:
-        print("Error: give a peer id, or --all.", file=sys.stderr)
+    if not args.device_id:
+        print("Error: give a device id, or --all.", file=sys.stderr)
         return 1
-    peer = _peer_by_prefix(config, args.peer_id)
-    if peer is None:
-        print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
+    device = _device_by_prefix(config, args.device_id)
+    if device is None:
+        print(f"Error: No single device starts with {args.device_id}. Run 'sync list-devices'.", file=sys.stderr)
         return 1
     client = SyncClient(str(config.get_config_dir()))
-    rows = client.check(peer["peer_id"])
+    rows = client.check(device["device_id"])
     passed = all(r["passed"] for r in rows)
     if args.format == "json":
-        print(json.dumps({"peer_id": peer["peer_id"], "passed": passed, "rows": rows}, indent=2))
+        print(json.dumps({"device_id": device["device_id"], "passed": passed, "rows": rows}, indent=2))
         return 0 if passed else 1
     width = max(len(r["name"]) for r in rows)
     for r in rows:
@@ -1965,17 +1965,17 @@ def _request_line(result: Any) -> str:
 
 
 def cmd_sync_operation(db: Database, config: Config, operation: str, args: argparse.Namespace) -> int:
-    """Deliver, exchange, send or fetch with one peer (the terms table)."""
-    peer = _peer_by_prefix(config, args.peer_id)
-    if peer is None:
-        print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
+    """Deliver, exchange, send or fetch with one device (the terms table)."""
+    device = _device_by_prefix(config, args.device_id)
+    if device is None:
+        print(f"Error: No single device starts with {args.device_id}. Run 'sync list-devices'.", file=sys.stderr)
         return 1
     from src.core.discovery import run_with_discovery
     client = SyncClient(str(config.get_config_dir()))
-    method = getattr(client, {"deliver": "deliver", "exchange": "exchange", "send": "send_to_peer", "fetch": "fetch_from_peer"}[operation])
-    result = run_with_discovery(config, db.account_id(), peer, method)
+    method = getattr(client, {"deliver": "deliver", "exchange": "exchange", "send": "send_to_device", "fetch": "fetch_from_device"}[operation])
+    result = run_with_discovery(config, db.account_id(), device, method)
     if args.format == "json":
-        print(json.dumps({"peer_id": peer["peer_id"], "operation": operation, **_sync_result_to_json(result)}, indent=2))
+        print(json.dumps({"device_id": device["device_id"], "operation": operation, **_sync_result_to_json(result)}, indent=2))
         return 0 if result.success else 1
     verb = operation.capitalize()
     parts = []
@@ -1989,9 +1989,9 @@ def cmd_sync_operation(db: Database, config: Config, operation: str, args: argpa
         parts.append(f"{result.bytes_moved / (1024 * 1024):.1f} MB moved")
     sentence = ", ".join(parts) if parts else "nothing to move"
     if result.success:
-        print(f"{verb} with {peer['peer_name']}: {sentence}.")
+        print(f"{verb} with {device['device_name']}: {sentence}.")
     else:
-        print(f"{verb} with {peer['peer_name']} failed: {sentence}.")
+        print(f"{verb} with {device['device_name']} failed: {sentence}.")
         for error in result.errors:
             print(f"  - {error}")
     _print_sync_warnings(result, "  ")
@@ -2021,38 +2021,38 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
     Returns:
         Exit code (0 for success)
     """
-    device_id = config.get_device_id_hex()
-    device_name = config.get_device_name()
+    this_device_id = config.get_this_device_id_hex()
+    this_device_name = config.get_this_device_name()
     sync_config = config.get_sync_config()
 
     if args.format == "json":
         status = {
             "account_id": db.account_id(),
-            "device_id": device_id,
-            "device_name": device_name,
+            "this_device_id": this_device_id,
+            "this_device_name": this_device_name,
             "sync_enabled": sync_config.get("enabled", False),
             "server_port": sync_config.get("server_port", 8384),
-            "peer_count": len(sync_config.get("peers", [])),
+            "device_count": len(sync_config.get("devices", [])),
         }
         # Get conflict counts
         conflict_mgr = ConflictManager(db)
         status["conflicts"] = conflict_mgr.get_unresolved_count()
         status["not_duplicated"] = db.not_duplicated(config.get_audiofile_directory())
-        status["peers"] = db.peer_summaries()
+        status["devices"] = db.device_summaries()
         print(json.dumps(status, indent=2))
     else:
         print(f"Account: {db.account_id()}")
-        print(f"Device ID: {device_id}")
-        print(f"Device Name: {device_name}")
+        print(f"This device's name: {this_device_name}")
+        print(f"This device's ID: {this_device_id}")
         print(f"Sync Enabled: {sync_config.get('enabled', False)}")
         print(f"Server Port: {sync_config.get('server_port', 8384)}")
-        print(f"Configured Peers: {len(sync_config.get('peers', []))}")
+        print(f"Other devices of this account: {len(sync_config.get('devices', []))}")
         print()
         print(not_duplicated_sentence(db.not_duplicated(config.get_audiofile_directory())))
-        for peer in db.peer_summaries():
-            reached = format_timestamp(peer["last_reached_at"]) if peer.get("last_reached_at") else "never"
-            operation = f", last operation: {peer['last_operation']}" if peer.get("last_operation") else ""
-            print(f"  {peer['peer_name'] or peer['peer_id']}: last reached {reached}{operation}")
+        for device in db.device_summaries():
+            reached = format_timestamp(device["last_reached_at"]) if device.get("last_reached_at") else "never"
+            operation = f", last operation: {device['last_operation']}" if device.get("last_operation") else ""
+            print(f"  {device['device_name'] or device['device_id']}: last reached {reached}{operation}")
 
         # Show conflict counts
         conflict_mgr = ConflictManager(db)
@@ -2074,8 +2074,8 @@ def cmd_sync_status(db: Database, config: Config, args: argparse.Namespace) -> i
     return 0
 
 
-def cmd_sync_list_peers(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """List configured sync peers.
+def cmd_sync_list_devices(db: Database, config: Config, args: argparse.Namespace) -> int:
+    """List configured sync devices.
 
     Args:
         config: Config instance
@@ -2084,37 +2084,37 @@ def cmd_sync_list_peers(db: Database, config: Config, args: argparse.Namespace) 
     Returns:
         Exit code (0 for success)
     """
-    peers = config.get_peers()
-    last = config.last_peer_id()
-    summaries = {p["peer_id"]: p for p in db.peer_summaries()}
-    for peer in peers:
-        summary = summaries.get(peer["peer_id"], {})
-        peer["last_reached_at"] = summary.get("last_reached_at")
-        peer["last_operation"] = summary.get("last_operation") or ""
-        peer["is_last"] = peer["peer_id"] == last
+    devices = config.get_devices()
+    last = config.last_device_id()
+    summaries = {p["device_id"]: p for p in db.device_summaries()}
+    for device in devices:
+        summary = summaries.get(device["device_id"], {})
+        device["last_reached_at"] = summary.get("last_reached_at")
+        device["last_operation"] = summary.get("last_operation") or ""
+        device["is_last"] = device["device_id"] == last
 
     if args.format == "json":
-        print(json.dumps(peers, indent=2))
+        print(json.dumps(devices, indent=2))
     elif args.format == "csv":
-        print("peer_id,peer_name,peer_url,fingerprint")
-        for peer in peers:
-            fp = peer.get("certificate_fingerprint", "")
-            print(f'{peer["peer_id"]},{peer["peer_name"]},{peer.get("peer_url", "")},{fp}')
+        print("device_id,device_name,device_url,fingerprint")
+        for device in devices:
+            fp = device.get("certificate_fingerprint", "")
+            print(f'{device["device_id"]},{device["device_name"]},{device.get("device_url", "")},{fp}')
     else:
-        if not peers:
-            print("No sync peers configured.")
+        if not devices:
+            print("No other devices of this account are known yet.")
             return 0
 
-        print(f"Configured Peers ({len(peers)}):\n")
-        for peer in peers:
-            print(f"  ID: {peer['peer_id']}{'  (last used)' if peer['is_last'] else ''}")
-            print(f"  Name: {peer['peer_name']}")
-            if peer["last_reached_at"]:
-                print(f"  Last reached: {format_timestamp(peer['last_reached_at'])}, last operation: {peer['last_operation']}")
-            if peer.get("peer_url"):
-                print(f"  URL: {peer['peer_url']}")
-            if peer.get("certificate_fingerprint"):
-                fp = peer["certificate_fingerprint"]
+        print(f"Other devices of this account ({len(devices)}):\n")
+        for device in devices:
+            print(f"  ID: {device['device_id']}{'  (last used)' if device['is_last'] else ''}")
+            print(f"  Name: {device['device_name']}")
+            if device["last_reached_at"]:
+                print(f"  Last reached: {format_timestamp(device['last_reached_at'])}, last operation: {device['last_operation']}")
+            if device.get("device_url"):
+                print(f"  URL: {device['device_url']}")
+            if device.get("certificate_fingerprint"):
+                fp = device["certificate_fingerprint"]
                 # Truncate fingerprint for display
                 print(f"  Fingerprint: {fp[:20]}...")
             print()
@@ -2122,8 +2122,8 @@ def cmd_sync_list_peers(db: Database, config: Config, args: argparse.Namespace) 
     return 0
 
 
-def cmd_sync_add_peer(config: Config, args: argparse.Namespace) -> int:
-    """Add a new sync peer.
+def cmd_sync_add_device(config: Config, args: argparse.Namespace) -> int:
+    """Add a new sync device.
 
     Args:
         config: Config instance
@@ -2132,33 +2132,33 @@ def cmd_sync_add_peer(config: Config, args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, 1 for error)
     """
-    peer_id = args.peer_id
-    peer_name = args.peer_name
-    peer_url = args.peer_url
+    device_id = args.device_id
+    device_name = args.device_name
+    device_url = args.device_url
     fingerprint = getattr(args, 'fingerprint', None)
 
     try:
-        config.add_peer(
-            peer_id=peer_id,
-            peer_name=peer_name,
-            peer_url=peer_url,
+        config.add_device(
+            device_id=device_id,
+            device_name=device_name,
+            device_url=device_url,
             certificate_fingerprint=fingerprint,
-            allow_update=False,  # Reject if peer already exists
+            allow_update=False,  # Reject if device already exists
         )
     except ValidationError as e:
         print(f"Error: {e.message}", file=sys.stderr)
         return 1
 
     if args.format == "json":
-        print(json.dumps({"added": True, "peer_id": peer_id, "peer_name": peer_name}))
+        print(json.dumps({"added": True, "device_id": device_id, "device_name": device_name}))
     else:
-        print(f"Added peer: {peer_name} ({peer_id})")
+        print(f"Added device: {device_name} ({device_id})")
 
     return 0
 
 
-def cmd_sync_remove_peer(config: Config, args: argparse.Namespace) -> int:
-    """Remove a sync peer.
+def cmd_sync_forget_device(config: Config, args: argparse.Namespace) -> int:
+    """Remove a sync device.
 
     Args:
         config: Config instance
@@ -2167,45 +2167,45 @@ def cmd_sync_remove_peer(config: Config, args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, 1 for error)
     """
-    peer_id = args.peer_id
+    device_id = args.device_id
 
-    # Check if peer exists
-    existing = config.get_peer(peer_id)
+    # Check if device exists
+    existing = config.get_device(device_id)
     if not existing:
-        print(f"Error: Peer with ID {peer_id} not found", file=sys.stderr)
+        print(f"Error: Device with ID {device_id} not found", file=sys.stderr)
         return 1
 
-    peer_name = existing.get("peer_name", "Unknown")
-    config.forget_peer(peer_id)
+    device_name = existing.get("device_name", "Unknown")
+    config.forget_device(device_id)
 
     if args.format == "json":
-        print(json.dumps({"removed": True, "peer_id": peer_id}))
+        print(json.dumps({"removed": True, "device_id": device_id}))
     else:
-        print(f"Forgot peer: {peer_name} ({peer_id}). Its card will not bring it back; add it again to undo.")
+        print(f"Forgot device: {device_name} ({device_id}). Its card will not bring it back; add it again to undo.")
 
     return 0
 
 
-def cmd_sync_rename_peer(config: Config, args: argparse.Namespace) -> int:
-    """A local name for a peer, shown in place of its card's (Stage 5)."""
-    peer = _peer_by_prefix(config, args.peer_id)
-    if peer is None:
-        print(f"Error: No single peer starts with {args.peer_id}. Run 'sync list-peers'.", file=sys.stderr)
+def cmd_sync_rename_device(config: Config, args: argparse.Namespace) -> int:
+    """A local name for a device, shown in place of its card's (Stage 5)."""
+    device = _device_by_prefix(config, args.device_id)
+    if device is None:
+        print(f"Error: No single device starts with {args.device_id}. Run 'sync list-devices'.", file=sys.stderr)
         return 1
     try:
-        config.rename_peer(peer["peer_id"], args.name)
+        config.rename_device(device["device_id"], args.name)
     except Exception as e:  # noqa: BLE001
         print(f"Error: {e}", file=sys.stderr)
         return 1
     if args.format == "json":
-        print(json.dumps({"renamed": True, "peer_id": peer["peer_id"], "name": args.name}))
+        print(json.dumps({"renamed": True, "device_id": device["device_id"], "name": args.name}))
     else:
-        print(f"{peer['peer_id']} is called {args.name} on this device.")
+        print(f"{device['device_id']} is called {args.name} on this device.")
     return 0
 
 
 def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Perform sync with peers.
+    """Perform sync with devices.
 
     Args:
         db: Database instance
@@ -2215,22 +2215,22 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, 1 for any failures)
     """
-    peer_id = getattr(args, 'peer_id', None)
+    device_id = getattr(args, 'device_id', None)
 
-    if peer_id:
-        # Sync with specific peer; when it is not reached at the remembered
+    if device_id:
+        # Sync with specific device; when it is not reached at the remembered
         # address, the network is asked where it is (Stage 7)
         from src.core.discovery import run_with_discovery
         client = SyncClient(str(config.get_config_dir()))
-        peer = _peer_by_prefix(config, peer_id) or {"peer_id": peer_id, "peer_name": peer_id[:UUID_SHORT_LEN], "peer_url": ""}
-        peer_id = peer["peer_id"]
-        result = run_with_discovery(config, db.account_id(), peer, client.sync_with_peer)
+        device = _device_by_prefix(config, device_id) or {"device_id": device_id, "device_name": device_id[:UUID_SHORT_LEN], "device_url": ""}
+        device_id = device["device_id"]
+        result = run_with_discovery(config, db.account_id(), device, client.sync_with_device)
 
         if args.format == "json":
-            print(json.dumps({"peer_id": peer_id, **_sync_result_to_json(result)}, indent=2))
+            print(json.dumps({"device_id": device_id, **_sync_result_to_json(result)}, indent=2))
         else:
             if result.success:
-                print(f"Sync with {peer_id} completed:")
+                print(f"Sync with {device_id} completed:")
                 print(f"  Pulled: {result.pulled} changes")
                 print(f"  Pushed: {result.pushed} changes")
                 if result.conflicts > 0:
@@ -2243,7 +2243,7 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
                 if _request_line(result):
                     print(_request_line(result))
             else:
-                print(f"Sync with {peer_id} failed:")
+                print(f"Sync with {device_id} failed:")
                 for error in result.errors:
                     print(f"  - {error}")
                 _print_sync_warnings(result, "  ")
@@ -2251,14 +2251,14 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
                     print(_request_line(result))
                 return 1
     else:
-        # Sync with all peers
-        results = sync_all_peers(str(config.get_config_dir()))
+        # Sync with all devices
+        results = sync_all_devices(str(config.get_config_dir()))
 
         if not results:
             if args.format == "json":
-                print(json.dumps({"message": "No peers configured"}))
+                print(json.dumps({"message": "No devices configured"}))
             else:
-                print("No peers configured for sync.")
+                print("No devices configured for sync.")
             return 0
 
         all_success = all(r.success for r in results.values())
@@ -2267,19 +2267,19 @@ def cmd_sync_now(db: Database, config: Config, args: argparse.Namespace) -> int:
             output = {pid: _sync_result_to_json(result) for pid, result in results.items()}
             print(json.dumps(output, indent=2))
         else:
-            print(f"Sync completed with {len(results)} peer(s):\n")
+            print(f"Sync completed with {len(results)} device(s):\n")
             for pid, result in results.items():
-                peer = config.get_peer(pid)
-                peer_name = peer.get("peer_name", pid) if peer else pid
+                device = config.get_device(pid)
+                device_name = device.get("device_name", pid) if device else pid
 
                 if result.success:
-                    print(f"  {peer_name}: OK (↓{result.pulled} ↑{result.pushed})")
+                    print(f"  {device_name}: OK (↓{result.pulled} ↑{result.pushed})")
                     if result.conflicts > 0:
                         print(f"    Errors: {result.conflicts}")
                         for error in result.errors:
                             print(f"      - {error}")
                 else:
-                    print(f"  {peer_name}: FAILED")
+                    print(f"  {device_name}: FAILED")
                     for error in result.errors:
                         print(f"    - {error}")
                 _print_sync_warnings(result, "    ")
@@ -2453,7 +2453,7 @@ def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
 
     Without content the merged value is accepted as it stands. With
     --content-file or --content the field is set to the given text. Either
-    way a new version is written, so the resolution reaches every peer.
+    way a new version is written, so the resolution reaches every device.
     """
     conflict_mgr = ConflictManager(db)
     content: Optional[str] = None
@@ -2485,7 +2485,7 @@ def cmd_sync_resolve(db: Database, args: argparse.Namespace) -> int:
 
 
 CONFIG_KEYS = {
-    "device_name": "Name shown on conflicts and in sync logs",
+    "this_device_name": "This device's name, shown on conflicts, in sync logs and on the other devices",
     "audiofile_directory": "Folder for audio files on this device",
     "default_interface": "Interface when none is given: gui, tui, cli or web",
     "sync.server_port": "Port of this device's sync server",
@@ -2500,8 +2500,8 @@ def cmd_config(config: Config, args: argparse.Namespace) -> int:
     if sub == "set":
         key, value = args.key, args.value
         try:
-            if key == "device_name":
-                config.set_device_name(value)
+            if key == "this_device_name":
+                config.set_this_device_name(value)
             elif key == "audiofile_directory":
                 path = Path(value).expanduser()
                 path.mkdir(parents=True, exist_ok=True)
@@ -2527,8 +2527,8 @@ def cmd_config(config: Config, args: argparse.Namespace) -> int:
         sync_cfg = config.get_sync_config()
         return {
             "directory": str(config.get_config_dir()),
-            "device_id": config.get_device_id_hex(),
-            "device_name": config.get_device_name(),
+            "this_device_id": config.get_this_device_id_hex(),
+            "this_device_name": config.get_this_device_name(),
             "audiofile_directory": config.get_audiofile_directory(),
             "default_interface": config.get("default_interface"),
             "sync.server_port": sync_cfg.get("server_port"),
@@ -2599,7 +2599,7 @@ def cmd_sync_reset_timestamps(db: Database, args: argparse.Namespace) -> int:
     """Reset sync timestamps to force re-fetching all data.
 
     This clears the 'last synced' timestamps, causing the next regular sync
-    to exchange all data with peers. Server configuration is preserved.
+    to exchange all data with devices. Server configuration is preserved.
 
     Args:
         db: Database instance
@@ -2614,7 +2614,7 @@ def cmd_sync_reset_timestamps(db: Database, args: argparse.Namespace) -> int:
             print(json.dumps({"success": True, "message": "Sync timestamps reset"}))
         else:
             print("Sync timestamps reset successfully.")
-            print("The next sync will exchange all data with peers.")
+            print("The next sync will exchange all data with devices.")
         return 0
     except Exception as e:
         if args.format == "json":
@@ -2625,9 +2625,9 @@ def cmd_sync_reset_timestamps(db: Database, args: argparse.Namespace) -> int:
 
 
 def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace) -> int:
-    """Perform full re-sync with peers (fetches all data).
+    """Perform full re-sync with devices (fetches all data).
 
-    This performs an initial sync (full dataset transfer) with each peer,
+    This performs an initial sync (full dataset transfer) with each device,
     fetching all data regardless of last_sync timestamps. Useful when
     attachments or transcriptions are missing.
 
@@ -2639,16 +2639,16 @@ def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace)
     Returns:
         Exit code (0 for success, 1 for any failures)
     """
-    peer_id = getattr(args, 'peer_id', None)
+    device_id = getattr(args, 'device_id', None)
 
-    if peer_id:
-        # Full resync with specific peer
+    if device_id:
+        # Full resync with specific device
         client = SyncClient(str(config.get_config_dir()))
-        result = client.initial_sync(peer_id)
+        result = client.initial_sync(device_id)
 
         if args.format == "json":
             print(json.dumps({
-                "peer_id": peer_id,
+                "device_id": device_id,
                 "success": result.success,
                 "pulled": result.pulled,
                 "pushed": result.pushed,
@@ -2657,7 +2657,7 @@ def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace)
             }, indent=2))
         else:
             if result.success:
-                print(f"Full re-sync with {peer_id} completed:")
+                print(f"Full re-sync with {device_id} completed:")
                 print(f"  Pulled: {result.pulled} changes")
                 print(f"  Pushed: {result.pushed} changes")
                 if result.conflicts > 0:
@@ -2666,27 +2666,27 @@ def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace)
                         print(f"    - {error}")
                 _print_sync_warnings(result, "  ")
             else:
-                print(f"Full re-sync with {peer_id} failed:")
+                print(f"Full re-sync with {device_id} failed:")
                 for error in result.errors:
                     print(f"  - {error}")
                 _print_sync_warnings(result, "  ")
                 return 1
     else:
-        # Full resync with all peers
-        peers = config.get_peers()
-        if not peers:
+        # Full resync with all devices
+        devices = config.get_devices()
+        if not devices:
             if args.format == "json":
-                print(json.dumps({"message": "No peers configured"}))
+                print(json.dumps({"message": "No devices configured"}))
             else:
-                print("No peers configured for sync.")
+                print("No devices configured for sync.")
             return 0
 
         client = SyncClient(str(config.get_config_dir()))
         results = {}
         all_success = True
 
-        for peer in peers:
-            pid = peer["peer_id"]
+        for device in devices:
+            pid = device["device_id"]
             result = client.initial_sync(pid)
             results[pid] = result
             if not result.success:
@@ -2704,19 +2704,19 @@ def cmd_sync_full_resync(db: Database, config: Config, args: argparse.Namespace)
                 }
             print(json.dumps(output, indent=2))
         else:
-            print(f"Full re-sync completed with {len(results)} peer(s):\n")
+            print(f"Full re-sync completed with {len(results)} device(s):\n")
             for pid, result in results.items():
-                peer = config.get_peer(pid)
-                peer_name = peer.get("peer_name", pid) if peer else pid
+                device = config.get_device(pid)
+                device_name = device.get("device_name", pid) if device else pid
 
                 if result.success:
-                    print(f"  {peer_name}: OK (↓{result.pulled} ↑{result.pushed})")
+                    print(f"  {device_name}: OK (↓{result.pulled} ↑{result.pushed})")
                     if result.conflicts > 0:
                         print(f"    Conflicts: {result.conflicts}")
                         for error in result.errors:
                             print(f"      - {error}")
                 else:
-                    print(f"  {peer_name}: FAILED")
+                    print(f"  {device_name}: FAILED")
                     for error in result.errors:
                         print(f"    - {error}")
                 _print_sync_warnings(result, "    ")
@@ -2772,7 +2772,7 @@ def _announcers(config_dir: Optional[str], root: Optional[str], port: int) -> Li
             accounts = [Database(Path(machine.get("database_file"))).account_id()]
         except Exception:  # noqa: BLE001
             accounts = []
-    return [Announcer(a, machine.get_device_id_hex(), machine.get_device_name(), port, fingerprint) for a in accounts if a]
+    return [Announcer(a, machine.get_this_device_id_hex(), machine.get_this_device_name(), port, fingerprint) for a in accounts if a]
 
 
 def _serve(config_dir: Optional[str], root: Optional[str], port: int, args: argparse.Namespace) -> int:
@@ -2815,15 +2815,15 @@ def cmd_sync_discover(db: Database, config: Config, args: argparse.Namespace) ->
     from src.core.discovery import browse
 
     found = browse(db.account_id(), float(getattr(args, "timeout", 3.0)))
-    known = {p["peer_id"] for p in config.get_peers()}
+    known = {p["device_id"] for p in config.get_devices()}
     if args.format == "json":
-        print(json.dumps([{"device_id": f.device_id, "name": f.name, "urls": f.urls, "certificate_fingerprint": f.certificate_fingerprint, "is_peer": f.device_id in known} for f in found], indent=2))
+        print(json.dumps([{"device_id": f.device_id, "name": f.name, "urls": f.urls, "certificate_fingerprint": f.certificate_fingerprint, "is_known_device": f.device_id in known} for f in found], indent=2))
         return 0
     if not found:
         print("No device of this account is announcing on this network.")
         return 0
     for f in found:
-        mark = "peer" if f.device_id in known else "not a peer yet: sync add-peer, or pair"
+        mark = "device" if f.device_id in known else "not a device yet: sync add-device, or pair"
         print(f"{f.name} ({f.device_id[:UUID_SHORT_LEN]}) at {', '.join(f.urls)}  [{mark}]")
     return 0
 
@@ -3988,7 +3988,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # sync command with subcommands
     sync_parser = cli_subparsers.add_parser(
         "sync",
-        help="Sync operations (status, peers, conflicts)"
+        help="Sync operations (status, devices, conflicts)"
     )
     sync_subparsers = sync_parser.add_subparsers(dest="sync_command", help="Sync commands")
 
@@ -4000,50 +4000,50 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     discover_parser.add_argument("--timeout", type=float, default=3.0, help="Seconds to listen for answers (default 3)")
 
     # sync check
-    check_parser = sync_subparsers.add_parser("check", help="Check the connection to a peer: reachability, certificate, account, key, clock, free space, listener, each with its code")
-    check_parser.add_argument("peer_id", type=str, nargs="?", help="Peer device ID, or a unique prefix of it")
-    check_parser.add_argument("--all", action="store_true", help="Every peer and the bucket, as one table")
+    check_parser = sync_subparsers.add_parser("check", help="Check the connection to a device: reachability, certificate, account, key, clock, free space, listener, each with its code")
+    check_parser.add_argument("device_id", type=str, nargs="?", help="Device device ID, or a unique prefix of it")
+    check_parser.add_argument("--all", action="store_true", help="Every device and the bucket, as one table")
 
-    # sync list-peers
-    sync_subparsers.add_parser("list-peers", help="List configured sync peers")
+    # sync list-devices
+    sync_subparsers.add_parser("list-devices", help="List configured sync devices")
 
-    # sync add-peer
-    add_peer_parser = sync_subparsers.add_parser("add-peer", help="Add a new sync peer")
-    add_peer_parser.add_argument("peer_id", type=str, help="Peer device ID (32 hex characters)")
-    add_peer_parser.add_argument("peer_name", type=str, help="Peer display name")
-    add_peer_parser.add_argument("peer_url", type=str, help="Peer URL (e.g., https://host:8384)")
-    add_peer_parser.add_argument(
+    # sync add-device
+    add_device_parser = sync_subparsers.add_parser("add-device", help="Add a new sync device")
+    add_device_parser.add_argument("device_id", type=str, help="Device device ID (32 hex characters)")
+    add_device_parser.add_argument("device_name", type=str, help="Device display name")
+    add_device_parser.add_argument("device_url", type=str, help="Device URL (e.g., https://host:8384)")
+    add_device_parser.add_argument(
         "--fingerprint",
         type=str,
-        help="Certificate fingerprint (optional, for pre-trusted peers)"
+        help="Certificate fingerprint (optional, for pre-trusted devices)"
     )
 
     # sync deliver / exchange / send / fetch: the file operations of the terms table
     for name, help_text in [
-        ("deliver", "Sync, then send the recordings the peer lacks"),
-        ("exchange", "Sync, then send the recordings the peer lacks and fetch the ones this device lacks"),
-        ("send", "Send the recordings the peer lacks, without a sync"),
-        ("fetch", "Fetch the recordings this device lacks from the peer, without a sync"),
+        ("deliver", "Sync, then send the recordings the device lacks"),
+        ("exchange", "Sync, then send the recordings the device lacks and fetch the ones this device lacks"),
+        ("send", "Send the recordings the device lacks, without a sync"),
+        ("fetch", "Fetch the recordings this device lacks from the device, without a sync"),
     ]:
         op_parser = sync_subparsers.add_parser(name, help=help_text)
-        op_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
+        op_parser.add_argument("device_id", type=str, help="Device device ID, or a unique prefix of it")
 
-    # sync remove-peer
-    remove_peer_parser = sync_subparsers.add_parser("remove-peer", help="Forget a peer on this device: it leaves the list and its card does not bring it back")
-    remove_peer_parser.add_argument("peer_id", type=str, help="Peer device ID to forget")
+    # sync forget-device
+    forget_device_parser = sync_subparsers.add_parser("forget-device", help="Forget a device on this device: it leaves the list and its card does not bring it back")
+    forget_device_parser.add_argument("device_id", type=str, help="Device device ID to forget")
 
-    # sync rename-peer
-    rename_peer_parser = sync_subparsers.add_parser("rename-peer", help="A local name for a peer, shown in place of its card's")
-    rename_peer_parser.add_argument("peer_id", type=str, help="Peer device ID, or a unique prefix of it")
-    rename_peer_parser.add_argument("name", type=str, help="The name")
+    # sync rename-device
+    rename_device_parser = sync_subparsers.add_parser("rename-device", help="A local name for a device, shown in place of its card's")
+    rename_device_parser.add_argument("device_id", type=str, help="Device device ID, or a unique prefix of it")
+    rename_device_parser.add_argument("name", type=str, help="The name")
 
     # sync now
-    sync_now_parser = sync_subparsers.add_parser("now", help="Perform sync with peers")
+    sync_now_parser = sync_subparsers.add_parser("now", help="Perform sync with devices")
     sync_now_parser.add_argument(
-        "--peer",
-        dest="peer_id",
+        "--device",
+        dest="device_id",
         type=str,
-        help="Sync with specific peer ID (default: all peers)"
+        help="Sync with specific device ID (default: all devices)"
     )
 
     # sync conflicts
@@ -4125,7 +4125,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     # sync reset-timestamps
     sync_subparsers.add_parser(
         "reset-timestamps",
-        help="Reset sync timestamps to force re-fetching all data from peers"
+        help="Reset sync timestamps to force re-fetching all data from devices"
     )
 
     # sync full-resync
@@ -4134,10 +4134,10 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         help="Perform full re-sync (fetches all data regardless of timestamps)"
     )
     full_resync_parser.add_argument(
-        "--peer",
-        dest="peer_id",
+        "--device",
+        dest="device_id",
         type=str,
-        help="Full re-sync with specific peer ID (default: all peers)"
+        help="Full re-sync with specific device ID (default: all devices)"
     )
 
     # calculate-missing-data command
@@ -4239,7 +4239,7 @@ def add_cli_subparser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     device_subparsers.add_parser("list", help="Every device of the account, with its name, fingerprint and state")
     device_revoke_parser = device_subparsers.add_parser(
         "revoke",
-        help="Revoke a device: it is refused by every peer once the revocation has reached them. One way"
+        help="Revoke a device: it is refused by every device once the revocation has reached them. One way"
     )
     device_revoke_parser.add_argument("device_id", help="The device id, or a unique prefix of it")
 
@@ -4577,14 +4577,14 @@ def run(config_dir: Optional[Path], args: argparse.Namespace) -> int:
                 return 1
             if sync_cmd == "status":
                 return cmd_sync_status(db, config, args)
-            elif sync_cmd == "list-peers":
-                return cmd_sync_list_peers(db, config, args)
-            elif sync_cmd == "add-peer":
-                return cmd_sync_add_peer(config, args)
-            elif sync_cmd == "remove-peer":
-                return cmd_sync_remove_peer(config, args)
-            elif sync_cmd == "rename-peer":
-                return cmd_sync_rename_peer(config, args)
+            elif sync_cmd == "list-devices":
+                return cmd_sync_list_devices(db, config, args)
+            elif sync_cmd == "add-device":
+                return cmd_sync_add_device(config, args)
+            elif sync_cmd == "forget-device":
+                return cmd_sync_forget_device(config, args)
+            elif sync_cmd == "rename-device":
+                return cmd_sync_rename_device(config, args)
             elif sync_cmd == "now":
                 return cmd_sync_now(db, config, args)
             elif sync_cmd == "check":

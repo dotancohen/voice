@@ -2,9 +2,9 @@
 
 Tests all sync CLI subcommands:
 - sync status
-- sync list-peers
-- sync add-peer
-- sync remove-peer
+- sync list-devices
+- sync add-device
+- sync forget-device
 - sync now
 - sync conflicts
 - sync resolve
@@ -25,7 +25,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from core.database import set_local_device_id
+from core.database import set_this_device_id
 
 from .conftest import (
     SyncNode,
@@ -88,8 +88,8 @@ class TestSyncStatusCLI:
         )
 
         assert code == 0
-        assert "Device ID:" in stdout
-        assert "Device Name:" in stdout
+        assert "This device's ID:" in stdout
+        assert "This device's name:" in stdout
         assert "NodeA" in stdout
 
     def test_sync_status_json_format(self, sync_node_a: SyncNode):
@@ -101,19 +101,19 @@ class TestSyncStatusCLI:
 
         assert code == 0
         data = json.loads(stdout)
-        assert "device_id" in data
-        assert "device_name" in data
-        assert data["device_name"] == "NodeA"
+        assert "this_device_id" in data
+        assert "this_device_name" in data
+        assert data["this_device_name"] == "NodeA"
 
-    def test_sync_status_shows_peer_count(self, sync_node_a: SyncNode):
-        """Sync status shows number of configured peers."""
+    def test_sync_status_shows_device_count(self, sync_node_a: SyncNode):
+        """Sync status shows number of configured devices."""
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
             ["sync", "status"],
         )
 
         assert code == 0
-        assert "Configured Peers:" in stdout
+        assert "Other devices of this account:" in stdout
 
     def test_sync_status_shows_conflicts(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -132,179 +132,179 @@ class TestSyncStatusCLI:
         assert "total" in data["conflicts"]
 
 
-class TestSyncListPeersCLI:
-    """Tests for 'sync list-peers' command."""
+class TestSyncListDevicesCLI:
+    """Tests for 'sync list-devices' command."""
 
-    def test_list_peers_empty(self, sync_node_a: SyncNode):
-        """List peers when none configured."""
+    def test_list_devices_empty(self, sync_node_a: SyncNode):
+        """List devices when none configured."""
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["sync", "list-peers"],
+            ["sync", "list-devices"],
         )
 
         assert code == 0
-        assert "No sync peers configured" in stdout
+        assert "No other devices of this account are known yet." in stdout
 
-    def test_list_peers_with_peer(
+    def test_list_devices_with_device(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """List peers shows configured peer."""
+        """List devices shows configured device."""
         node_a, node_b = two_nodes_with_servers
 
         code, stdout, stderr = run_cli_command(
             node_a.config_dir,
-            ["sync", "list-peers"],
+            ["sync", "list-devices"],
         )
 
         assert code == 0
         assert "NodeB" in stdout
         assert node_b.device_id_hex in stdout
 
-    def test_list_peers_json(
+    def test_list_devices_json(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """List peers in JSON format."""
+        """List devices in JSON format."""
         node_a, node_b = two_nodes_with_servers
 
         code, stdout, stderr = run_cli_command(
             node_a.config_dir,
-            ["--format", "json", "sync", "list-peers"],
+            ["--format", "json", "sync", "list-devices"],
         )
 
         assert code == 0
         data = json.loads(stdout)
         assert len(data) == 1
-        assert data[0]["peer_name"] == "NodeB"
+        assert data[0]["device_name"] == "NodeB"
 
-    def test_list_peers_csv(
+    def test_list_devices_csv(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """List peers in CSV format."""
+        """List devices in CSV format."""
         node_a, node_b = two_nodes_with_servers
 
         code, stdout, stderr = run_cli_command(
             node_a.config_dir,
-            ["--format", "csv", "sync", "list-peers"],
+            ["--format", "csv", "sync", "list-devices"],
         )
 
         assert code == 0
-        assert "peer_id,peer_name,peer_url" in stdout
+        assert "device_id,device_name,device_url" in stdout
         assert "NodeB" in stdout
 
 
-class TestSyncAddPeerCLI:
-    """Tests for 'sync add-peer' command."""
+class TestSyncAddDeviceCLI:
+    """Tests for 'sync add-device' command."""
 
-    def test_add_peer_success(self, sync_node_a: SyncNode):
-        """Add a peer successfully."""
-        peer_id = "00000000000070008000000000000099"
-        peer_name = "TestPeer"
-        peer_url = "http://192.168.1.100:8384"
+    def test_add_device_success(self, sync_node_a: SyncNode):
+        """Add a device successfully."""
+        device_id = "00000000000070008000000000000099"
+        device_name = "TestDevice"
+        device_url = "http://192.168.1.100:8384"
 
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["sync", "add-peer", peer_id, peer_name, peer_url],
+            ["sync", "add-device", device_id, device_name, device_url],
         )
 
         assert code == 0
-        assert "Added peer:" in stdout
-        assert peer_name in stdout
+        assert "Added device:" in stdout
+        assert device_name in stdout
 
-    def test_add_peer_json_output(self, sync_node_a: SyncNode):
-        """Add peer with JSON output."""
-        peer_id = "00000000000070008000000000000099"
-        peer_name = "TestPeer"
-        peer_url = "http://192.168.1.100:8384"
+    def test_add_device_json_output(self, sync_node_a: SyncNode):
+        """Add device with JSON output."""
+        device_id = "00000000000070008000000000000099"
+        device_name = "TestDevice"
+        device_url = "http://192.168.1.100:8384"
 
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["--format", "json", "sync", "add-peer", peer_id, peer_name, peer_url],
+            ["--format", "json", "sync", "add-device", device_id, device_name, device_url],
         )
 
         assert code == 0
         data = json.loads(stdout)
         assert data["added"] is True
-        assert data["peer_name"] == peer_name
+        assert data["device_name"] == device_name
 
-    def test_add_peer_with_fingerprint(self, sync_node_a: SyncNode):
-        """Add peer with certificate fingerprint."""
-        peer_id = "00000000000070008000000000000099"
-        peer_name = "SecurePeer"
-        peer_url = "https://192.168.1.100:8384"
+    def test_add_device_with_fingerprint(self, sync_node_a: SyncNode):
+        """Add device with certificate fingerprint."""
+        device_id = "00000000000070008000000000000099"
+        device_name = "SecureDevice"
+        device_url = "https://192.168.1.100:8384"
         fingerprint = "SHA256:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
 
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["sync", "add-peer", peer_id, peer_name, peer_url,
+            ["sync", "add-device", device_id, device_name, device_url,
              "--fingerprint", fingerprint],
         )
 
         assert code == 0
-        assert "Added peer:" in stdout
+        assert "Added device:" in stdout
 
-    def test_add_peer_invalid_id(self, sync_node_a: SyncNode):
-        """Add peer with invalid device ID fails."""
+    def test_add_device_invalid_id(self, sync_node_a: SyncNode):
+        """Add device with invalid device ID fails."""
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["sync", "add-peer", "invalid-id", "TestPeer", "http://localhost:8384"],
+            ["sync", "add-device", "invalid-id", "TestDevice", "http://localhost:8384"],
         )
 
         assert code == 1
         assert "Error" in stderr or "error" in stderr.lower() or "invalid" in stderr.lower()
 
-    def test_add_peer_duplicate_fails(
+    def test_add_device_duplicate_fails(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Adding same peer twice fails."""
+        """Adding same device twice fails."""
         node_a, node_b = two_nodes_with_servers
 
-        # Try to add node_b again (already a peer)
+        # Try to add node_b again (already a device)
         code, stdout, stderr = run_cli_command(
             node_a.config_dir,
-            ["sync", "add-peer", node_b.device_id_hex, "NodeB2", node_b.url],
+            ["sync", "add-device", node_b.device_id_hex, "NodeB2", node_b.url],
         )
 
         assert code == 1
         assert "Error" in stderr or "already" in stderr.lower()
 
 
-class TestSyncRemovePeerCLI:
-    """Tests for 'sync remove-peer' command."""
+class TestSyncRemoveDeviceCLI:
+    """Tests for 'sync forget-device' command."""
 
-    def test_remove_peer_success(
+    def test_remove_device_success(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Remove a peer successfully."""
+        """Remove a device successfully."""
         node_a, node_b = two_nodes_with_servers
 
         code, stdout, stderr = run_cli_command(
             node_a.config_dir,
-            ["sync", "remove-peer", node_b.device_id_hex],
+            ["sync", "forget-device", node_b.device_id_hex],
         )
 
         assert code == 0
-        assert "Forgot peer:" in stdout
+        assert "Forgot device:" in stdout
 
-    def test_remove_peer_json_output(
+    def test_remove_device_json_output(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Remove peer with JSON output."""
+        """Remove device with JSON output."""
         node_a, node_b = two_nodes_with_servers
 
         code, stdout, stderr = run_cli_command(
             node_a.config_dir,
-            ["--format", "json", "sync", "remove-peer", node_b.device_id_hex],
+            ["--format", "json", "sync", "forget-device", node_b.device_id_hex],
         )
 
         assert code == 0
         data = json.loads(stdout)
         assert data["removed"] is True
 
-    def test_remove_peer_not_found(self, sync_node_a: SyncNode):
-        """Remove non-existent peer fails."""
+    def test_remove_device_not_found(self, sync_node_a: SyncNode):
+        """Remove non-existent device fails."""
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
-            ["sync", "remove-peer", "00000000000070008000000000000099"],
+            ["sync", "forget-device", "00000000000070008000000000000099"],
         )
 
         assert code == 1
@@ -314,15 +314,15 @@ class TestSyncRemovePeerCLI:
 class TestSyncNowCLI:
     """Tests for 'sync now' command."""
 
-    def test_sync_now_no_peers(self, sync_node_a: SyncNode):
-        """Sync now with no peers configured."""
+    def test_sync_now_no_devices(self, sync_node_a: SyncNode):
+        """Sync now with no devices configured."""
         code, stdout, stderr = run_cli_command(
             sync_node_a.config_dir,
             ["sync", "now"],
         )
 
         assert code == 0
-        assert "No peers configured" in stdout
+        assert "No devices configured" in stdout
 
     def test_sync_now_success(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -341,15 +341,15 @@ class TestSyncNowCLI:
         assert code == 0
         assert "Sync completed" in stdout or "OK" in stdout
 
-    def test_sync_now_with_peer_id(
+    def test_sync_now_with_device_id(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
     ):
-        """Sync with specific peer."""
+        """Sync with specific device."""
         node_a, node_b = two_nodes_with_servers
 
         code, stdout, stderr = run_cli_command(
             node_a.config_dir,
-            ["sync", "now", "--peer", node_b.device_id_hex],
+            ["sync", "now", "--device", node_b.device_id_hex],
         )
 
         assert code == 0
@@ -373,11 +373,11 @@ class TestSyncNowCLI:
 
     def test_sync_now_server_unreachable(self, sync_node_a: SyncNode):
         """Sync fails when server is unreachable."""
-        # Add peer with non-existent server
-        sync_node_a.config.add_peer(
-            peer_id="00000000000070008000000000000099",
-            peer_name="DeadServer",
-            peer_url="http://127.0.0.1:59999",  # Non-existent port
+        # Add device with non-existent server
+        sync_node_a.config.add_device(
+            device_id="00000000000070008000000000000099",
+            device_name="DeadServer",
+            device_url="http://127.0.0.1:59999",  # Non-existent port
         )
 
         code, stdout, stderr = run_cli_command(
@@ -647,7 +647,7 @@ class TestCLIEdgeCases:
         )
 
         # Should work - config is created automatically
-        assert code == 0 or "Device ID:" in stdout
+        assert code == 0 or "This device's ID:" in stdout
 
     def test_concurrent_cli_commands(
         self, two_nodes_with_servers: Tuple[SyncNode, SyncNode]
@@ -795,9 +795,9 @@ class TestConfigDirAndConfigCommands:
 
     def test_config_set_and_get(self, sync_node_a: SyncNode, tmp_path: Path):
         env = {"VOICE_CONFIG_DIR": str(sync_node_a.config_dir)}
-        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "set", "device_name", "מחשב"], env)
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "set", "this_device_name", "מחשב"], env)
         assert code == 0, stderr
-        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "get", "device_name"], env)
+        code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "get", "this_device_name"], env)
         assert stdout.splitlines()[-1] == "מחשב"
         audio = tmp_path / "audio-דיר"
         code, stdout, stderr = self._run(sync_node_a.config_dir, ["cli", "config", "set", "audiofile_directory", str(audio)], env)
@@ -813,6 +813,6 @@ class TestConfigDirAndConfigCommands:
         env = os.environ.copy()
         env["VOICE_CONFIG_DIR"] = str(sync_node_a.config_dir)
         script = Path(__file__).parent.parent.parent / "bin" / "voice"
-        proc = subprocess.run([str(script), "cli", "config", "get", "device_id"], env=env, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run([str(script), "cli", "config", "get", "this_device_id"], env=env, capture_output=True, text=True, timeout=60)
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.splitlines()[-1] == sync_node_a.device_id_hex

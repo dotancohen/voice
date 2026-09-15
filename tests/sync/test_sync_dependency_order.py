@@ -18,10 +18,10 @@ class TestSyncDependencyOrder:
         self, tmp_path: Path
     ) -> None:
         """Test that note_attachment can sync even if it comes before its parents."""
-        from core.database import Database, set_local_device_id
+        from core.database import Database, set_this_device_id
         from tests.sync_support import SyncChange, apply_sync_changes
 
-        set_local_device_id("00000000000070008000000000000001")
+        set_this_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")
 
         # Simulate changes arriving in WRONG order:
@@ -74,7 +74,7 @@ class TestSyncDependencyOrder:
 
         # This should NOT fail with FOREIGN KEY constraint
         applied, conflicts, errors = apply_sync_changes(
-            db, changes, "00000000000070008000000000000002", "TestPeer"
+            db, changes, "00000000000070008000000000000002", "TestDevice"
         )
 
         # All should be applied successfully
@@ -95,10 +95,10 @@ class TestSyncDependencyOrder:
         self, tmp_path: Path
     ) -> None:
         """Test that note_tag can sync even if it comes before the tag."""
-        from core.database import Database, set_local_device_id
+        from core.database import Database, set_this_device_id
         from tests.sync_support import SyncChange, apply_sync_changes
 
-        set_local_device_id("00000000000070008000000000000001")
+        set_this_device_id("00000000000070008000000000000001")
         db = Database(tmp_path / "notes.db")
 
         # Wrong order: note_tag, then note, then tag
@@ -145,7 +145,7 @@ class TestSyncDependencyOrder:
         ]
 
         applied, conflicts, errors = apply_sync_changes(
-            db, changes, "00000000000070008000000000000002", "TestPeer"
+            db, changes, "00000000000070008000000000000002", "TestDevice"
         )
 
         assert len(errors) == 0, f"Expected no errors, got: {errors}"

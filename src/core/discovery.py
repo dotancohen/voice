@@ -33,7 +33,7 @@ def account_hash(account_id: str) -> str:
 
 
 def looks_unreachable(errors: Sequence[str]) -> bool:
-    """Whether a result's errors say the peer was not reached, as opposed to refused."""
+    """Whether a result's errors say the device was not reached, as opposed to refused."""
     return any(mark in sentence for sentence in errors for mark in UNREACHABLE_MARKS)
 
 
@@ -169,7 +169,7 @@ def browse(
     return found
 
 
-def find_peer_url(account_id: str, device_id: str, timeout_seconds: float = 3.0, interfaces: Optional[Sequence[str]] = None) -> Optional[Found]:
+def find_device_url(account_id: str, device_id: str, timeout_seconds: float = 3.0, interfaces: Optional[Sequence[str]] = None) -> Optional[Found]:
     """One device of the account, by id, or None within the timeout."""
     for entry in browse(account_id, timeout_seconds, device_id=device_id, interfaces=interfaces):
         if entry.device_id == device_id:
@@ -177,23 +177,23 @@ def find_peer_url(account_id: str, device_id: str, timeout_seconds: float = 3.0,
     return None
 
 
-def run_with_discovery(config, account_id: str, peer: dict, operation: Callable[[str], object], timeout_seconds: float = 3.0):
-    """Run an operation with the remembered address; when the peer is not
+def run_with_discovery(config, account_id: str, device: dict, operation: Callable[[str], object], timeout_seconds: float = 3.0):
+    """Run an operation with the remembered address; when the device is not
     reached, browse for it, remember the address that answers, and run
     once more (Stage 7: the remembered address first, then the network)."""
-    result = operation(peer["peer_id"])
+    result = operation(device["device_id"])
     if getattr(result, "success", False) or not looks_unreachable(list(getattr(result, "errors", []))):
         return result
     try:
-        found = find_peer_url(account_id, peer["peer_id"], timeout_seconds)
+        found = find_device_url(account_id, device["device_id"], timeout_seconds)
     except Exception as e:  # noqa: BLE001 - no network, no browse
-        logger.info(f"Could not browse the network for {peer['peer_id'][:8]}: {e}")
+        logger.info(f"Could not browse the network for {device['device_id'][:8]}: {e}")
         return result
     if found is None or not found.urls:
         return result
     url = found.urls[0]
-    if url.rstrip("/") == (peer.get("peer_url") or "").rstrip("/"):
+    if url.rstrip("/") == (device.get("device_url") or "").rstrip("/"):
         return result
-    logger.info(f"{peer['peer_name']} answered from {url}; remembering it")
-    config.add_peer(peer["peer_id"], peer["peer_name"], url, found.certificate_fingerprint or None, True)
-    return operation(peer["peer_id"])
+    logger.info(f"{device['device_name']} answered from {url}; remembering it")
+    config.add_device(device["device_id"], device["device_name"], url, found.certificate_fingerprint or None, True)
+    return operation(device["device_id"])

@@ -25,7 +25,7 @@ from core.cloud_storage import (
     missing_audio_files,
 )
 from core.config import Config
-from core.database import Database, set_local_device_id
+from core.database import Database, set_this_device_id
 
 TEST_DEVICE_ID = "00000000000070008000000000000001"
 
@@ -33,7 +33,7 @@ TEST_DEVICE_ID = "00000000000070008000000000000001"
 @pytest.fixture
 def cloud_env(test_config_dir: Path, tmp_path: Path):
     """Config + database + audio directory wired together like a real install."""
-    set_local_device_id(TEST_DEVICE_ID)
+    set_this_device_id(TEST_DEVICE_ID)
     audio_dir = tmp_path / "audio"
     audio_dir.mkdir()
     config = Config(config_dir=test_config_dir)
@@ -162,7 +162,7 @@ class TestDownloadWithoutNetwork:
         assert result.errors == []
 
     def test_download_requires_audio_directory(self, test_config_dir: Path) -> None:
-        set_local_device_id(TEST_DEVICE_ID)
+        set_this_device_id(TEST_DEVICE_ID)
         config = Config(config_dir=test_config_dir)  # no audiofile_directory
         with pytest.raises(RuntimeError) as excinfo:
             download_missing_audio_files(config.get_config_dir())

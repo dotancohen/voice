@@ -158,7 +158,7 @@ class TestConflictResolution:
         exchange(a, b)
         return a, b, note_id
 
-    def test_accept_resolves_here_and_on_peer(self, pair):
+    def test_accept_resolves_here_and_on_device(self, pair):
         a, b, note_id = self._conflicted(pair)
         mgr = ConflictManager(a)
         conflict = mgr.get_conflicts()[0]

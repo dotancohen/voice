@@ -73,8 +73,9 @@ class TestTheConsolePages:
             words += [page.title(), page.subTitle()] + texts_of(page)
             assert not page.findChildren(QPushButton), f"Next is the only button on {page.title()}"
         joined = " ".join(words).lower()
+        # The owner: "Don't use the word peer - use the word Device"
         assert "peer" not in joined
-        assert "every peer and the bucket" not in joined and "yours to make" not in joined
+        assert "every device and the bucket" not in joined and "yours to make" not in joined
 
 
 @pytest.mark.gui

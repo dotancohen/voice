@@ -680,7 +680,7 @@ class IssuesScreen(ModalScreen[None]):
     def action_reload(self) -> None:
         from src.core.issues_text import issue_sections, place_names
 
-        here = self.config.get_device_id_hex()
+        here = self.config.get_this_device_id_hex()
         issues = self.db.issues(self.config.get("audiofile_directory"), here)
         sections = issue_sections(issues, place_names(self.db, self.config), here)
         if not sections:
@@ -1750,7 +1750,7 @@ class NoteDetail(Container, NoteEditorMixin):
             self.app.notify("Select a note with a recording first", severity="warning")
             return
         if self.audiofile_directory:
-            self.db.check_files_here(self.audiofile_directory, self.app.config.get_device_id_hex())
+            self.db.check_files_here(self.audiofile_directory, self.app.config.get_this_device_id_hex())
         self.app.notify("\n".join(location_lines(self.db, audio_file["id"], self.app.config)), title=f"Where the copies of {audio_file['filename']} are", timeout=15)
 
     def action_remove_local_copy(self) -> None:

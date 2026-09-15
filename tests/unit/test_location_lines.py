@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from voicecore import get_local_device_id
+from voicecore import get_this_device_id
 
 from core.database import Database
 from src.core import issues_text
@@ -21,12 +21,12 @@ class FakeConfig:
     def get_config_dir(self) -> Path:
         return Path(self._audio_dir)
 
-    def get_peers(self) -> list:
+    def get_devices(self) -> list:
         return []
 
-    def get_device_id_hex(self) -> str:
+    def get_this_device_id_hex(self) -> str:
         # This process's device, the one the database stamps as a recording's origin
-        return get_local_device_id()
+        return get_this_device_id()
 
 
 def test_an_imported_recording_whose_file_is_not_there_says_so(tmp_path: Path) -> None:

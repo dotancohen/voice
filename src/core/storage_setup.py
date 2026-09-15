@@ -354,7 +354,7 @@ def replace_key(db, key_id: str, secret: str) -> Optional[str]:
 
 def devices_of(config) -> List[Tuple[str, str]]:
     """(id, name) of every other device this one syncs with, read from the configuration."""
-    return [(p["peer_id"], p["peer_name"] or p["peer_id"][:12]) for p in config.get_peers()]
+    return [(p["device_id"], p["device_name"] or p["device_id"][:12]) for p in config.get_devices()]
 
 
 def check_all_paths(config_dir: str, devices: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
@@ -377,18 +377,18 @@ def check_all_paths(config_dir: str, devices: List[Tuple[str, str]]) -> List[Dic
 def checklist(config, db, listening: bool) -> List[Dict[str, Any]]:
     """The checklist at the top of the sync dialogue (Stage 8): each row its
     state and the one thing that completes it."""
-    peers = config.get_peers()
+    devices = config.get_devices()
     bucket = saved_state(db)
     counts = db.not_duplicated(config.get_audiofile_directory())
-    summaries = db.peer_summaries()
+    summaries = db.device_summaries()
     last = max((p for p in summaries if p.get("last_reached_at")), key=lambda p: p["last_reached_at"], default=None)
     rows = [
         {
             "name": "Paired devices",
-            "done": bool(peers),
-            "detail": f"{len(peers)} peer{'s' if len(peers) != 1 else ''}" if peers else "None yet",
-            "action": "" if peers else "show_code",
-            "action_label": "" if peers else "Show my code",
+            "done": bool(devices),
+            "detail": f"{len(devices)} device{'s' if len(devices) != 1 else ''}" if devices else "None yet",
+            "action": "" if devices else "show_code",
+            "action_label": "" if devices else "Show my code",
         },
         {
             "name": "Bucket",
@@ -400,21 +400,21 @@ def checklist(config, db, listening: bool) -> List[Dict[str, Any]]:
         {
             "name": "Listener",
             "done": listening,
-            "detail": "Listening for peers" if listening else "Not listening",
+            "detail": "Listening for devices" if listening else "Not listening",
             "action": "" if listening else "listen",
-            "action_label": "" if listening else "Listen for peers",
+            "action_label": "" if listening else "Listen for devices",
         },
         {
             "name": "Not duplicated",
             "done": counts["notes"] == 0 and counts["recordings"] == 0,
             "detail": f"{counts['notes']} notes and {counts['recordings']} recordings on this device only" if counts["notes"] or counts["recordings"] else "Everything is somewhere else too",
-            "action": "" if (counts["notes"] == 0 and counts["recordings"] == 0) or not peers else "exchange",
-            "action_label": "" if (counts["notes"] == 0 and counts["recordings"] == 0) or not peers else "Exchange",
+            "action": "" if (counts["notes"] == 0 and counts["recordings"] == 0) or not devices else "exchange",
+            "action_label": "" if (counts["notes"] == 0 and counts["recordings"] == 0) or not devices else "Exchange",
         },
         {
             "name": "Last exchange",
             "done": last is not None,
-            "detail": f"{last['peer_name'] or last['peer_id'][:8]}, {last['last_operation']}" if last else "Never",
+            "detail": f"{last['device_name'] or last['device_id'][:8]}, {last['last_operation']}" if last else "Never",
             "action": "",
             "action_label": "",
         },
